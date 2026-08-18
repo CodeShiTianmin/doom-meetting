@@ -39,6 +39,9 @@ public class LikeService {
         }
         RoomMember member = memberRepository.findByRoomAndIdentity(room, identity)
                 .orElseThrow(() -> new BusinessException(403, "非房间成员, 禁止点赞"));
+        if (!member.getOnline()) {
+            throw new BusinessException(403, "成员已离会, 禁止点赞");
+        }
 
         RoomLike like = new RoomLike();
         like.setRoom(room);

@@ -74,7 +74,12 @@ public class PlaybackService {
                 default -> { }
             }
             if (request.positionSeconds() != null) {
-                room.setPlaybackPositionSeconds(Math.max(0, request.positionSeconds()));
+                double position = Math.max(0, request.positionSeconds());
+                if (room.getCurrentContent() != null
+                        && room.getCurrentContent().getDurationSeconds() != null) {
+                    position = Math.min(position, room.getCurrentContent().getDurationSeconds());
+                }
+                room.setPlaybackPositionSeconds(position);
             }
             room.setPlaybackUpdatedAt(LocalDateTime.now());
             roomRepository.save(room);

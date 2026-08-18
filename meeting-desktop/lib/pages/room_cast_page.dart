@@ -67,7 +67,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
   void _onRoomEvent(Map<String, dynamic> event) {
     final type = event['type'] as String?;
-    final data = (event['data'] as Map<String, dynamic>?) ?? const {};
+    final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
       case 'PLAYBACK_CONTROL':
         // 手机端播放控制指令 -> 本房间独立播放器执行
