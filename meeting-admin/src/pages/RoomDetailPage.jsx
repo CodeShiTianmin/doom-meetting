@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
-  Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions,
-  DialogContent, DialogTitle, Divider, FormControlLabel, Grid, LinearProgress,
-  List, ListItem, ListItemText, MenuItem, Switch, Table, TableBody, TableCell,
-  TableHead, TableRow, TextField, Typography,
+  Alert, Box, Button, Card, CardContent, Chip, Divider, FormControlLabel,
+  Grid, LinearProgress, List, ListItem, ListItemText, Switch, Table,
+  TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from '@mui/material'
 import CastIcon from '@mui/icons-material/Cast'
 import CloseIcon from '@mui/icons-material/Close'
@@ -13,7 +12,7 @@ import FavoriteIcon from '@mui/icons-material/Favorite'
 import SmartphoneIcon from '@mui/icons-material/Smartphone'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  castContent, closeRoom, getRoom, listContents, listRoomEvents, listRoomLikes,
+  castContent, closeRoom, createContent, getRoom, listRoomEvents,
   regenerateInvite, updateRoomSettings,
 } from '../api'
 import { subscribeRoom } from '../api/ws'
@@ -33,20 +32,15 @@ function formatSeconds(total) {
 export default function RoomDetailPage() {
   const { id } = useParams()
   const [room, setRoom] = useState(null)
-  const [likes, setLikes] = useState([])
   const [events, setEvents] = useState([])
-  const [contents, setContents] = useState([])
-  const [castDialog, setCastDialog] = useState(false)
-  const [castContentId, setCastContentId] = useState('')
+  const [casting, setCasting] = useState(false)
   const [error, setError] = useState('')
   const [remaining, setRemaining] = useState(null)
+  const fileInputRef = useRef(null)
 
   const refresh = useCallback(async () => {
-    const [r, l, e] = await Promise.all([
-      getRoom(id), listRoomLikes(id), listRoomEvents(id),
-    ])
+    const [r, e] = await Promise.all([getRoom(id), listRoomEvents(id)])
     setRoom(r)
-    setLikes(l)
     setEvents(e)
     setRemaining(r.remainingSeconds)
   }, [id])
@@ -85,22 +79,23 @@ export default function RoomDetailPage() {
     }
   }
 
-  const openCast = async () => {
-    setCastDialog(true)
+  const onFileSelected = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setCasting(true)
     try {
-      setContents(await listContents())
-    } catch {
-      setContents([])
-    }
-  }
-
-  const doCast = async () => {
-    try {
-      await castContent(id, Number(castContentId))
-      setCastDialog(false)
+      const content = await createContent({
+        name: file.name,
+        type: 'LOCAL_FILE',
+        localPath: file.name,
+      })
+      await castContent(id, content.id)
       await refresh()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setCasting(false)
     }
   }
 
@@ -139,8 +134,20 @@ export default function RoomDetailPage() {
         <Chip label={`房号 ${room.roomCode}`} />
         <RoomStatusChip status={room.status} />
         <Box sx={{ flexGrow: 1 }} />
-        <Button variant="outlined" startIcon={<CastIcon />} onClick={openCast} disabled={closed}>
-          投放内容
+        <input
+          ref={fileInputRef}
+          type="file"
+          hidden
+          accept="video/*,audio/*,image/*,.pdf,.ppt,.pptx,.doc,.docx"
+          onChange={onFileSelected}
+        />
+        <Button
+          variant="contained"
+          startIcon={<CastIcon />}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={closed || casting}
+        >
+          {casting ? '投放中…' : '选择文件投放'}
         </Button>
         <Button variant="outlined" color="error" startIcon={<CloseIcon />} onClick={doClose} disabled={closed}>
           关闭房间
@@ -235,9 +242,9 @@ export default function RoomDetailPage() {
         </Grid>
       </Grid>
 
-      <Grid container spacing={2.5}>
+      <Grid container spacing={2.5} alignItems="stretch">
         {/* 主区: 成员 + 事件日志 */}
-        <Grid item xs={12} md={8}>
+        <Grid item xs={12} md={8} sx={{ display: 'flex', flexDirection: 'column' }}>
           <Card sx={{ mb: 2.5 }}>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2 }}>
@@ -269,10 +276,11 @@ export default function RoomDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent>
+          <Card sx={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <CardContent sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <Typography variant="h6" sx={{ mb: 2 }}>事件日志</Typography>
-              <Table size="small">
+              <Box sx={{ flex: 1, minHeight: 0, maxHeight: 360, overflow: 'auto' }}>
+              <Table size="small" stickyHeader>
                 <TableHead>
                   <TableRow>
                     <TableCell>类型</TableCell>
@@ -290,11 +298,12 @@ export default function RoomDetailPage() {
                   ))}
                 </TableBody>
               </Table>
+              </Box>
             </CardContent>
           </Card>
         </Grid>
 
-        {/* 侧栏: 设置 + 二维码 + 点赞记录 */}
+        {/* 侧栏: 设置 + 二维码 */}
         <Grid item xs={12} md={4}>
           <Card sx={{ mb: 2.5 }}>
             <CardContent>
@@ -356,7 +365,7 @@ export default function RoomDetailPage() {
             </CardContent>
           </Card>
 
-          <Card sx={{ mb: 2.5 }}>
+          <Card>
             <CardContent sx={{ textAlign: 'center' }}>
               <Typography variant="h6" sx={{ mb: 2 }}>入会二维码</Typography>
               {room.qrContent && !closed ? (
@@ -380,52 +389,8 @@ export default function RoomDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                <FavoriteIcon sx={{ verticalAlign: 'middle', mr: 1, color: '#ec407a' }} />
-                点赞记录(共 {room.likeCount})
-              </Typography>
-              <List dense disablePadding sx={{ maxHeight: 220, overflow: 'auto' }}>
-                {likes.map((like) => (
-                  <ListItem key={like.id} disableGutters>
-                    <ListItemText
-                      primary={like.nickname}
-                      secondary={like.likedAt?.replace('T', ' ')}
-                    />
-                  </ListItem>
-                ))}
-                {likes.length === 0 && <Typography color="text.secondary">暂无点赞</Typography>}
-              </List>
-            </CardContent>
-          </Card>
         </Grid>
       </Grid>
-
-      <Dialog open={castDialog} onClose={() => setCastDialog(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>投放内容到房间 {room.roomCode}</DialogTitle>
-        <DialogContent sx={{ pt: '12px !important' }}>
-          <TextField
-            select
-            fullWidth
-            label="选择内容"
-            value={castContentId}
-            onChange={(e) => setCastContentId(e.target.value)}
-          >
-            {contents.map((content) => (
-              <MenuItem key={content.id} value={content.id}>
-                {content.name}（{content.type}）
-              </MenuItem>
-            ))}
-          </TextField>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCastDialog(false)}>取消</Button>
-          <Button variant="contained" onClick={doCast} disabled={!castContentId}>
-            立即投放
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   )
 }

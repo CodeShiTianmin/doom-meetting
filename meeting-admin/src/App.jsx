@@ -4,9 +4,8 @@ import MainLayout from './layout/MainLayout.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import RoomsPage from './pages/RoomsPage.jsx'
 import RoomDetailPage from './pages/RoomDetailPage.jsx'
-import ContentsPage from './pages/ContentsPage.jsx'
 import SchedulesPage from './pages/SchedulesPage.jsx'
-import LikesPage from './pages/LikesPage.jsx'
+import UsersPage from './pages/UsersPage.jsx'
 
 function RequireAuth({ children }) {
   const token = localStorage.getItem('admin_token')
@@ -30,9 +29,8 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="rooms" element={<RoomsPage />} />
         <Route path="rooms/:id" element={<RoomDetailPage />} />
-        <Route path="contents" element={<ContentsPage />} />
         <Route path="schedules" element={<SchedulesPage />} />
-        <Route path="likes" element={<LikesPage />} />
+        <Route path="users" element={<UsersPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

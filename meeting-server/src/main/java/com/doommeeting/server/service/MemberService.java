@@ -232,6 +232,14 @@ public class MemberService {
                 ? properties.getRoom().getMaxClients() : room.getMaxMembers();
     }
 
+    public long countOnline(Room room) {
+        return memberRepository.countByRoomAndOnlineTrue(room);
+    }
+
+    public int maxMembersOf(Room room) {
+        return maxMembers(room);
+    }
+
     private void clearUnderstaffed(Room room) {
         if (Boolean.TRUE.equals(room.getUnderstaffedAlert()) || room.getUnderstaffedSince() != null) {
             room.setUnderstaffedAlert(false);

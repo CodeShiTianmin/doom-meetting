@@ -24,6 +24,7 @@ export default function LoginPage() {
       const data = await login(username, password)
       localStorage.setItem('admin_token', data.token)
       localStorage.setItem('admin_name', data.displayName || data.username)
+      localStorage.setItem('admin_username', data.username)
       navigate('/dashboard')
     } catch (err) {
       setError(err.message)
