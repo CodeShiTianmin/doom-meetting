@@ -1,0 +1,37 @@
+name: meeting_app
+description: 多房并发投屏会议系统 - 手机客户端 (Flutter)
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 媒体: LiveKit SFU 客户端 (WebRTC, DTLS-SRTP 加密)
+  livekit_client: ^2.2.4
+  # 业务信令: STOMP over WebSocket
+  stomp_dart_client: ^2.0.0
+  # HTTP 客户端
+  dio: ^5.4.3
+  # 二维码扫码入会
+  mobile_scanner: ^5.1.1
+  # 麦克风/摄像头权限
+  permission_handler: ^11.3.1
+  # 会议中屏幕常亮
+  wakelock_plus: ^1.2.5
+  # 本地音量调节
+  volume_controller: ^2.0.7
+  # 本地亮度调节
+  screen_brightness: ^1.0.1
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
