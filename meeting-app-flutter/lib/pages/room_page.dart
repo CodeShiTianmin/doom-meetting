@@ -45,6 +45,8 @@ class _RoomPageState extends State<RoomPage> {
   bool _micOn = true;
   bool _camOn = false;
   bool _frontCamera = true;
+  bool _speakerOn = true;
+  lk.ConnectionQuality _networkQuality = lk.ConnectionQuality.unknown;
   double _brightness = 0.7;
   double _volume = 0.8;
   double? _draggingPosition;
@@ -152,6 +154,12 @@ class _RoomPageState extends State<RoomPage> {
           setState(() => _peerVideoTrack = null);
         }
       })
+      ..on<lk.ParticipantConnectionQualityUpdatedEvent>((event) {
+        // 网络质量指示(本机)
+        if (event.participant is lk.LocalParticipant && mounted) {
+          setState(() => _networkQuality = event.connectionQuality);
+        }
+      })
       ..on<lk.RoomDisconnectedEvent>((event) {
         if (_closedReason == null && mounted) {
           setState(() {
@@ -229,6 +237,15 @@ class _RoomPageState extends State<RoomPage> {
               .firstOrNull
           : null;
     });
+  }
+
+  /// 扬声器/听筒切换
+  Future<void> _toggleSpeaker() async {
+    final next = !_speakerOn;
+    try {
+      await lk.Hardware.instance.setSpeakerphoneOn(next);
+    } catch (_) {}
+    setState(() => _speakerOn = next);
   }
 
   Future<void> _switchCamera() async {
@@ -544,6 +561,8 @@ class _RoomPageState extends State<RoomPage> {
                 warning: _remainingSeconds != null && _remainingSeconds! <= 300),
             const SizedBox(width: 6),
             _infoChip(Icons.favorite, '${state.likeCount}'),
+            const SizedBox(width: 6),
+            _networkChip(),
           ],
         ),
       ),
@@ -567,6 +586,32 @@ class _RoomPageState extends State<RoomPage> {
               style: TextStyle(
                   fontSize: 11,
                   color: warning ? Colors.orange : Colors.white70)),
+        ],
+      ),
+    );
+  }
+
+  /// 网络质量指示
+  Widget _networkChip() {
+    final (color, label) = switch (_networkQuality) {
+      lk.ConnectionQuality.excellent => (Colors.green, '网络优'),
+      lk.ConnectionQuality.good => (Colors.lightGreen, '网络良'),
+      lk.ConnectionQuality.poor => (Colors.orange, '网络差'),
+      lk.ConnectionQuality.lost => (Colors.red, '已断开'),
+      _ => (Colors.white38, '网络--'),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color, width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.network_check, size: 13, color: color),
+          const SizedBox(width: 3),
+          Text(label, style: TextStyle(fontSize: 11, color: color)),
         ],
       ),
     );
@@ -664,6 +709,10 @@ class _RoomPageState extends State<RoomPage> {
                 IconButton.filledTonal(
                   onPressed: _camOn ? _switchCamera : null,
                   icon: const Icon(Icons.cameraswitch),
+                ),
+                IconButton.filledTonal(
+                  onPressed: _toggleSpeaker,
+                  icon: Icon(_speakerOn ? Icons.volume_up : Icons.hearing),
                 ),
                 IconButton.filled(
                   style: IconButton.styleFrom(

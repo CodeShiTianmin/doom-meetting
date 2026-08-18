@@ -43,6 +43,13 @@ app:
     api-secret: ${LIVEKIT_API_SECRET:devsecret-devsecret-devsecret-32}
     ws-url: ${LIVEKIT_WS_URL:wss://localhost:7880}
     token-ttl-minutes: 180
+  mobile-app:
+    # 手机 App 版本检查与 APK 私发下载(不上架应用商店)
+    latest-version-code: ${APP_MOBILE_LATEST_VERSION_CODE:1}
+    latest-version-name: ${APP_MOBILE_LATEST_VERSION_NAME:1.0.0}
+    apk-download-url: ${APP_MOBILE_APK_DOWNLOAD_URL:}
+    min-supported-version-code: ${APP_MOBILE_MIN_SUPPORTED_VERSION_CODE:1}
+    release-notes: ${APP_MOBILE_RELEASE_NOTES:}
 
 default-admin:
   username: ${DEFAULT_ADMIN_USERNAME:admin}

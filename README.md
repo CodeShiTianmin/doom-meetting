@@ -9,6 +9,7 @@
 | `meeting-server/` | 后台业务 + 信令 | Java 17 + Spring Boot 3 + MySQL 8 + Spring Security(JWT) + WebSocket(STOMP) |
 | `meeting-admin/` | 公司管理系统(PC 端) | Vite + React 18 + Material UI |
 | `meeting-app-flutter/` | 手机客户端 App | Flutter 3 + livekit_client + STOMP |
+| `meeting-desktop/` | 公司 PC 投屏端(Windows) | Flutter Desktop + livekit_client + flutter_webrtc + media_kit |
 | `deploy/` | 一键部署 | Docker Compose(Nginx + Spring Boot + LiveKit + coturn + MySQL) |
 
 ## 核心功能
@@ -33,6 +34,11 @@ cd meeting-admin && npm install && npm run dev
 
 # 手机端 (Flutter, 支持 Android/iOS)
 cd meeting-app-flutter && flutter pub get && flutter run \
+  --dart-define=API_BASE_URL=http://<后端地址>:8080 \
+  --dart-define=WS_URL=ws://<后端地址>:8080/ws
+
+# PC 投屏端 (Flutter Desktop / Windows)
+cd meeting-desktop && flutter pub get && flutter run -d windows \
   --dart-define=API_BASE_URL=http://<后端地址>:8080 \
   --dart-define=WS_URL=ws://<后端地址>:8080/ws
 

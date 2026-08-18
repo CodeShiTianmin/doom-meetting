@@ -15,6 +15,7 @@ public class AppProperties {
     private Invite invite = new Invite();
     private Room room = new Room();
     private Livekit livekit = new Livekit();
+    private MobileApp mobileApp = new MobileApp();
 
     @Getter
     @Setter
@@ -36,6 +37,17 @@ public class AppProperties {
         private int maxClients = 2;
         private int understaffedAlertMinutes = 3;
         private int heartbeatTimeoutSeconds = 60;
+    }
+
+    /** 手机 App 版本检查与 APK 私发下载(不上架应用商店) */
+    @Getter
+    @Setter
+    public static class MobileApp {
+        private int latestVersionCode = 1;
+        private String latestVersionName = "1.0.0";
+        private String apkDownloadUrl = "";
+        private int minSupportedVersionCode = 1;
+        private String releaseNotes = "";
     }
 
     @Getter
