@@ -22,7 +22,7 @@ import java.util.UUID;
 
 /**
  * 手机客户端入会/离会/心跳。
- * 两个手机客户端全部就位 -> 判定"就位" -> 推送 PC 端显示"该房间已运行" -> 开始会议计时。
+ * 全部成员就位(人数上限可设置, 默认 2) -> 推送 PC 端显示"该房间已运行" -> 开始会议计时。
  */
 @Service
 @RequiredArgsConstructor
@@ -57,9 +57,9 @@ public class MemberService {
         if (invite.getUsedCount() >= invite.getMaxUses()) {
             throw new BusinessException(403, "入会凭证使用次数已达上限");
         }
-        // 房间人数硬限制: 手机客户端 ≤ 2 (PC 投屏端为后台隐藏角色, 不计入)
+        // 房间人数硬限制: 手机客户端 ≤ 成员数上限 (PC 投屏端为后台隐藏角色, 不计入)
         long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
-        if (onlineCount >= properties.getRoom().getMaxClients()) {
+        if (onlineCount >= maxMembers(room)) {
             throw new BusinessException(403, "房间人数已满");
         }
 
@@ -80,25 +80,7 @@ public class MemberService {
                 "nickname", member.getNickname(),
                 "onlineCount", onlineCount + 1));
 
-        // 2 个手机客户端全部就位 -> 房间运行, 开始会议计时
-        if (onlineCount + 1 >= properties.getRoom().getMaxClients()
-                && room.getStatus() == RoomStatus.WAITING) {
-            room.setStatus(RoomStatus.RUNNING);
-            room.setMeetingStartAt(LocalDateTime.now());
-            room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
-            room.setUnderstaffedAlert(false);
-            room.setUnderstaffedSince(null);
-            roomRepository.save(room);
-            eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                    "2 个手机客户端已就位, 会议开始计时");
-            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
-                    "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
-                    "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
-                    "durationMinutes", room.getDurationMinutes()));
-        } else if (onlineCount + 1 >= properties.getRoom().getMaxClients()) {
-            // 运行中重新满员, 解除缺人预警
-            clearUnderstaffed(room);
-        }
+        startOrRecoverIfFull(room, onlineCount + 1);
 
         ContentItem content = room.getCurrentContent();
         return new JoinRoomResponse(
@@ -144,7 +126,7 @@ public class MemberService {
 
         // 进入缺人状态, 开始计时(超过阈值后台亮红灯)
         if (room.getStatus() != RoomStatus.CLOSED
-                && onlineCount < properties.getRoom().getMaxClients()
+                && onlineCount < maxMembers(room)
                 && room.getUnderstaffedSince() == null) {
             room.setUnderstaffedSince(LocalDateTime.now());
             roomRepository.save(room);
@@ -156,7 +138,24 @@ public class MemberService {
         Room room = roomService.getRoomByCode(roomCode);
         memberRepository.findByRoomAndIdentity(room, identity).ifPresent(member -> {
             member.setLastHeartbeatAt(LocalDateTime.now());
-            memberRepository.save(member);
+            // 心跳超时被判定离线的成员恢复心跳后自动重新上线
+            if (!member.getOnline()
+                    && room.getStatus() != RoomStatus.CLOSED
+                    && memberRepository.countByRoomAndOnlineTrue(room) < maxMembers(room)) {
+                member.setOnline(true);
+                member.setLeftAt(null);
+                memberRepository.save(member);
+                long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
+                eventLogService.log(room, RoomEventType.MEMBER_JOINED,
+                        member.getNickname() + " 心跳恢复, 重新上线");
+                notificationService.pushToRoomAndAdmin(room.getRoomCode(), "MEMBER_JOINED", Map.of(
+                        "identity", member.getIdentity(),
+                        "nickname", member.getNickname(),
+                        "onlineCount", onlineCount));
+                startOrRecoverIfFull(room, onlineCount);
+            } else {
+                memberRepository.save(member);
+            }
         });
     }
 
@@ -182,7 +181,7 @@ public class MemberService {
                     "onlineCount", onlineCount,
                     "reason", "HEARTBEAT_TIMEOUT"));
 
-            if (onlineCount < properties.getRoom().getMaxClients()
+            if (onlineCount < maxMembers(room)
                     && room.getUnderstaffedSince() == null) {
                 room.setUnderstaffedSince(now);
                 roomRepository.save(room);
@@ -203,6 +202,34 @@ public class MemberService {
                 "identity", member.getIdentity(),
                 "nickname", member.getNickname(),
                 "detail", request.detail() == null ? "" : request.detail()));
+    }
+
+    /** 全部成员就位 -> 房间运行开始会议计时; 运行中重新满员 -> 解除缺人预警 */
+    private void startOrRecoverIfFull(Room room, long onlineCount) {
+        if (onlineCount < maxMembers(room)) {
+            return;
+        }
+        if (room.getStatus() == RoomStatus.WAITING) {
+            room.setStatus(RoomStatus.RUNNING);
+            room.setMeetingStartAt(LocalDateTime.now());
+            room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
+            room.setUnderstaffedAlert(false);
+            room.setUnderstaffedSince(null);
+            roomRepository.save(room);
+            eventLogService.log(room, RoomEventType.ROOM_RUNNING,
+                    maxMembers(room) + " 个手机客户端已就位, 会议开始计时");
+            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
+                    "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
+                    "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
+                    "durationMinutes", room.getDurationMinutes()));
+        } else {
+            clearUnderstaffed(room);
+        }
+    }
+
+    private int maxMembers(Room room) {
+        return room.getMaxMembers() == null
+                ? properties.getRoom().getMaxClients() : room.getMaxMembers();
     }
 
     private void clearUnderstaffed(Room room) {

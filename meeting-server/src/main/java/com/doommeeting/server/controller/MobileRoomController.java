@@ -87,6 +87,7 @@ public class MobileRoomController {
         state.put("screenshotAllowed", room.getScreenshotAllowed());
         state.put("recordingForbidden", room.getRecordingForbidden());
         state.put("durationMinutes", room.getDurationMinutes());
+        state.put("maxMembers", room.getMaxMembers());
         state.put("meetingStartAt", room.getMeetingStartAt());
         state.put("meetingEndAt", room.getMeetingEndAt());
         if (room.getStatus() == RoomStatus.RUNNING && room.getMeetingEndAt() != null) {

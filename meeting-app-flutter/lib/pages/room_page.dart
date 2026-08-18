@@ -92,7 +92,6 @@ class _RoomPageState extends State<RoomPage> {
       _brightness = current;
     } catch (_) {}
     try {
-      VolumeController().listener((volume) {});
       final current = await VolumeController().getVolume();
       _volume = current;
     } catch (_) {}
@@ -279,7 +278,7 @@ class _RoomPageState extends State<RoomPage> {
         break;
       case 'ROOM_RUNNING':
         _refreshState();
-        _showToast('两位客户已就位, 会议开始');
+        _showToast('全部客户已就位, 会议开始');
         break;
       case 'CONTENT_CAST':
         _refreshState();
@@ -403,6 +402,9 @@ class _RoomPageState extends State<RoomPage> {
     _clockTimer?.cancel();
     _ws.disconnect();
     _recordingGuard.stop();
+    try {
+      VolumeController().removeListener();
+    } catch (_) {}
     _lkListener?.dispose();
     _lkRoom?.dispose();
     WakelockPlus.disable();
@@ -510,7 +512,7 @@ class _RoomPageState extends State<RoomPage> {
           if (!state.running)
             const Padding(
               padding: EdgeInsets.only(top: 4),
-              child: Text('两位客户全部就位后会议开始计时',
+              child: Text('全部客户就位后会议开始计时',
                   style: TextStyle(color: Colors.white38, fontSize: 12)),
             ),
         ],

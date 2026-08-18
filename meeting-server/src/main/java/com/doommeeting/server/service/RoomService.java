@@ -25,7 +25,7 @@ import java.util.UUID;
 
 /**
  * 房间业务: 创建/查询/设置/投放/关闭。
- * 房间模型: 单房间 2 个手机客户端成员; 公司 PC 端以后台身份推流管理, 不出现在房间内。
+ * 房间模型: 单房间成员数可设置(默认 2 个手机客户端); 公司 PC 端以后台身份推流管理, 不出现在房间内。
  */
 @Service
 @RequiredArgsConstructor
@@ -49,6 +49,8 @@ public class RoomService {
         room.setRoomCode(generateRoomCode());
         room.setName(request.name());
         room.setDurationMinutes(request.durationMinutes());
+        room.setMaxMembers(request.maxMembers() == null
+                ? properties.getRoom().getMaxClients() : request.maxMembers());
         room.setVideoCallEnabled(request.videoCallEnabled() == null || request.videoCallEnabled());
         room.setCameraEnabled(request.cameraEnabled() == null || request.cameraEnabled());
         room.setCreatedBy(createdBy);
@@ -105,6 +107,28 @@ public class RoomService {
             }
             detail.append(" 会议时长=").append(request.durationMinutes()).append("分钟");
         }
+        if (request.maxMembers() != null) {
+            long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
+            if (request.maxMembers() < onlineCount) {
+                throw new BusinessException("成员数上限不能小于当前在线人数(" + onlineCount + ")");
+            }
+            room.setMaxMembers(request.maxMembers());
+            detail.append(" 成员数上限=").append(request.maxMembers()).append("人");
+            InviteToken activeInvite = latestInvite(room);
+            if (activeInvite != null) {
+                activeInvite.setMaxUses(Math.max(activeInvite.getUsedCount(), request.maxMembers()));
+                inviteTokenRepository.save(activeInvite);
+            }
+            if (onlineCount >= request.maxMembers()) {
+                if (room.getStatus() == RoomStatus.WAITING) {
+                    startMeeting(room);
+                }
+                room.setUnderstaffedAlert(false);
+                room.setUnderstaffedSince(null);
+            } else if (room.getUnderstaffedSince() == null) {
+                room.setUnderstaffedSince(LocalDateTime.now());
+            }
+        }
         roomRepository.save(room);
         eventLogService.log(room, RoomEventType.SETTINGS_CHANGED, detail.toString());
         // 功能开关实时下发到房间(手机端立即生效)
@@ -112,8 +136,22 @@ public class RoomService {
                 "videoCallEnabled", room.getVideoCallEnabled(),
                 "cameraEnabled", room.getCameraEnabled(),
                 "durationMinutes", room.getDurationMinutes(),
+                "maxMembers", room.getMaxMembers(),
                 "meetingEndAt", String.valueOf(room.getMeetingEndAt())));
         return toResponse(room, latestInvite(room));
+    }
+
+    /** 成员数上限调整后已满员的等待房间立即进入运行状态 */
+    private void startMeeting(Room room) {
+        room.setStatus(RoomStatus.RUNNING);
+        room.setMeetingStartAt(LocalDateTime.now());
+        room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
+        eventLogService.log(room, RoomEventType.ROOM_RUNNING,
+                "成员数上限调整后已满员, 会议开始计时");
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
+                "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
+                "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
+                "durationMinutes", room.getDurationMinutes()));
     }
 
     /** PC 端立即投放内容到指定房间(不同房间不同内容并行, 不串音不串频) */
@@ -219,7 +257,8 @@ public class RoomService {
         invite.setRoom(room);
         invite.setToken(UUID.randomUUID().toString().replace("-", ""));
         invite.setExpireAt(LocalDateTime.now().plusMinutes(properties.getInvite().getExpireMinutes()));
-        invite.setMaxUses(properties.getRoom().getMaxClients());
+        invite.setMaxUses(room.getMaxMembers() == null
+                ? properties.getRoom().getMaxClients() : room.getMaxMembers());
         inviteTokenRepository.save(invite);
         return invite;
     }
@@ -261,6 +300,7 @@ public class RoomService {
                 room.getScreenshotAllowed(),
                 room.getRecordingForbidden(),
                 room.getDurationMinutes(),
+                room.getMaxMembers(),
                 room.getMeetingStartAt(),
                 room.getMeetingEndAt(),
                 remainingSeconds,

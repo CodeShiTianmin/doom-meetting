@@ -15,6 +15,8 @@ public class RoomDtos {
             @NotNull(message = "会议时长不能为空")
             @Min(value = 1, message = "会议时长至少1分钟")
             @Max(value = 720, message = "会议时长最多720分钟") Integer durationMinutes,
+            @Min(value = 1, message = "成员数至少1人")
+            @Max(value = 50, message = "成员数最多50人") Integer maxMembers,
             Boolean videoCallEnabled,
             Boolean cameraEnabled,
             Long contentId) {
@@ -23,7 +25,9 @@ public class RoomDtos {
     public record RoomSettingsRequest(
             Boolean videoCallEnabled,
             Boolean cameraEnabled,
-            Integer durationMinutes) {
+            Integer durationMinutes,
+            @Min(value = 1, message = "成员数至少1人")
+            @Max(value = 50, message = "成员数最多50人") Integer maxMembers) {
     }
 
     public record RoomResponse(
@@ -36,6 +40,7 @@ public class RoomDtos {
             Boolean screenshotAllowed,
             Boolean recordingForbidden,
             Integer durationMinutes,
+            Integer maxMembers,
             LocalDateTime meetingStartAt,
             LocalDateTime meetingEndAt,
             Long remainingSeconds,

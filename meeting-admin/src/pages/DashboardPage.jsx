@@ -16,19 +16,32 @@ import RedAlertLight from '../components/RedAlertLight.jsx'
 
 function StatCard({ icon, label, value, color }) {
   return (
-    <Card sx={{ height: '100%' }}>
+    <Card
+      sx={{
+        height: '100%',
+        position: 'relative',
+        overflow: 'hidden',
+        '&:hover': { transform: 'translateY(-3px)', boxShadow: `0 10px 28px ${color}33` },
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          top: 0, left: 0, right: 0, height: 4,
+          background: `linear-gradient(90deg, ${color}, ${color}88)`,
+        },
+      }}
+    >
       <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <Box
           sx={{
             width: 52, height: 52, borderRadius: 3, display: 'flex',
             alignItems: 'center', justifyContent: 'center',
-            background: `${color}22`, color,
+            background: `linear-gradient(135deg, ${color}26, ${color}12)`, color,
           }}
         >
           {icon}
         </Box>
         <Box>
-          <Typography variant="h5">{value}</Typography>
+          <Typography variant="h5" sx={{ fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
           <Typography variant="body2" color="text.secondary">{label}</Typography>
         </Box>
       </CardContent>
@@ -109,7 +122,7 @@ export default function DashboardPage() {
                   >
                     <ListItemText
                       primary={`${room.name}（${room.roomCode}）`}
-                      secondary={`在线 ${room.onlineMemberCount}/2 · 点赞 ${room.likeCount} · 当前内容: ${room.contentName || '未投放'}`}
+                      secondary={`在线 ${room.onlineMemberCount}/${room.maxMembers ?? 2} · 点赞 ${room.likeCount} · 当前内容: ${room.contentName || '未投放'}`}
                     />
                   </ListItem>
                 ))}
