@@ -130,10 +130,7 @@ class CastSession extends ChangeNotifier {
     final participant = _lkRoom?.localParticipant;
     if (participant != null) {
       for (final publication in participant.trackPublications.values.toList()) {
-        final track = publication.track;
-        if (track != null) {
-          await participant.removePublishedTrack(track.sid ?? '');
-        }
+        await participant.removePublishedTrack(publication.sid);
       }
     }
     await _player?.dispose();

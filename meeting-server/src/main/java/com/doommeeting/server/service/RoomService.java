@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -71,9 +72,18 @@ public class RoomService {
 
     @Transactional(readOnly = true)
     public List<RoomResponse> listRooms(String status) {
-        List<Room> rooms = (status == null || status.isBlank())
-                ? roomRepository.findAllByOrderByCreatedAtDesc()
-                : roomRepository.findByStatusOrderByCreatedAtDesc(RoomStatus.valueOf(status));
+        List<Room> rooms;
+        if (status == null || status.isBlank()) {
+            rooms = roomRepository.findAllByOrderByCreatedAtDesc();
+        } else {
+            RoomStatus roomStatus;
+            try {
+                roomStatus = RoomStatus.valueOf(status.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException("无效的房间状态: " + status);
+            }
+            rooms = roomRepository.findByStatusOrderByCreatedAtDesc(roomStatus);
+        }
         return rooms.stream().map(room -> toResponse(room, latestInvite(room))).toList();
     }
 
@@ -266,7 +276,7 @@ public class RoomService {
     public InviteToken latestInvite(Room room) {
         return inviteTokenRepository.findByRoom(room).stream()
                 .filter(t -> !t.getRevoked())
-                .reduce((first, second) -> second)
+                .max(Comparator.comparing(InviteToken::getId))
                 .orElse(null);
     }
 

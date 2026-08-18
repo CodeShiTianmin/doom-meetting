@@ -106,10 +106,28 @@ class _RoomPageState extends State<RoomPage> {
         _state = state;
         _remainingSeconds = state.remainingSeconds ?? _remainingSeconds;
       });
+      await _enforceFeatureToggles(state);
       if (state.closed && _closedReason == null) {
         _onRoomClosed('会议已结束');
       }
     } catch (_) {}
+  }
+
+  /// PC 端关闭视频通话/摄像头后, 已开启的麦克风/摄像头立即关闭
+  Future<void> _enforceFeatureToggles(RoomState state) async {
+    if (!state.videoCallEnabled && _micOn) {
+      await _lkRoom?.localParticipant?.setMicrophoneEnabled(false);
+      if (mounted) setState(() => _micOn = false);
+    }
+    if (!state.camAllowed && _camOn) {
+      await _lkRoom?.localParticipant?.setCameraEnabled(false);
+      if (mounted) {
+        setState(() {
+          _camOn = false;
+          _selfVideoTrack = null;
+        });
+      }
+    }
   }
 
   void _tickClock() {
@@ -260,7 +278,7 @@ class _RoomPageState extends State<RoomPage> {
 
   void _onRoomEvent(Map<String, dynamic> event) {
     final type = event['type'] as String?;
-    final data = (event['data'] as Map<String, dynamic>?) ?? const {};
+    final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
       case 'PLAYBACK_CONTROL':
         setState(() {

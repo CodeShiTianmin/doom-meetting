@@ -25,7 +25,8 @@ public class RoomDtos {
     public record RoomSettingsRequest(
             Boolean videoCallEnabled,
             Boolean cameraEnabled,
-            Integer durationMinutes,
+            @Min(value = 1, message = "会议时长至少1分钟")
+            @Max(value = 720, message = "会议时长最多720分钟") Integer durationMinutes,
             @Min(value = 1, message = "成员数至少1人")
             @Max(value = 50, message = "成员数最多50人") Integer maxMembers) {
     }
