@@ -81,6 +81,13 @@ class ApiClient {
         data: {'identity': identity, 'detail': detail});
   }
 
+  /// App 版本检查(APK 私发分发)
+  Future<Map<String, dynamic>> checkAppVersion(int currentVersionCode) async {
+    final response = await _dio.get('/api/app/version',
+        queryParameters: {'currentVersionCode': currentVersionCode});
+    return _unwrap(response);
+  }
+
   Future<RoomState> getRoomState(String roomCode) async {
     final response = await _dio.get('/api/mobile/rooms/$roomCode/state');
     return RoomState.fromJson(_unwrap(response));

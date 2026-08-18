@@ -1,0 +1,36 @@
+name: meeting_desktop
+description: 多房并发投屏会议系统 - PC 投屏端 (Flutter Desktop / Windows)
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 媒体: LiveKit 隐藏推流(只发不收)
+  livekit_client: ^2.2.4
+  # 屏幕/窗口捕获源枚举 (getDisplayMedia / desktopCapturer)
+  flutter_webrtc: ^0.11.7
+  # 本地视频文件解码播放(文件投放模式, 支持暂停/进度控制)
+  media_kit: ^1.1.10
+  media_kit_video: ^1.2.5
+  media_kit_libs_video: ^1.0.5
+  # 业务信令: STOMP over WebSocket
+  stomp_dart_client: ^2.0.0
+  dio: ^5.4.3
+  # 邀请二维码生成
+  qr_flutter: ^4.1.0
+  # 本地视频文件选择
+  file_picker: ^8.0.3
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

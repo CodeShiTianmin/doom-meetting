@@ -25,6 +25,40 @@ class _JoinPageState extends State<JoinPage> {
   bool _scanning = false;
 
   @override
+  void initState() {
+    super.initState();
+    _checkAppVersion();
+  }
+
+  /// APK 私发分发: 启动时检查新版本, 提示下载新 APK
+  Future<void> _checkAppVersion() async {
+    try {
+      final info =
+          await ApiClient.instance.checkAppVersion(AppConfig.versionCode);
+      if (!mounted || info['updateAvailable'] != true) return;
+      final force = info['forceUpdate'] == true;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: !force,
+        builder: (_) => AlertDialog(
+          title: Text('发现新版本 ${info['latestVersionName'] ?? ''}'),
+          content: Text(
+              '${info['releaseNotes'] ?? ''}\n\n下载地址:\n${info['apkDownloadUrl'] ?? ''}'),
+          actions: [
+            if (!force)
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('稍后再说')),
+            FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('知道了')),
+          ],
+        ),
+      );
+    } catch (_) {}
+  }
+
+  @override
   void dispose() {
     _roomCodeController.dispose();
     _tokenController.dispose();
@@ -32,11 +66,12 @@ class _JoinPageState extends State<JoinPage> {
     super.dispose();
   }
 
-  /// 解析邀请深链: meeting://join?roomCode=xxx&token=yyy
+  /// 解析邀请深链: meeting://join?roomCode=xxx&token=yyy (兼容 room= 参数)
   bool _applyInviteLink(String raw) {
     final uri = Uri.tryParse(raw.trim());
     if (uri == null || uri.scheme != AppConfig.inviteScheme) return false;
-    final roomCode = uri.queryParameters['roomCode'];
+    final roomCode =
+        uri.queryParameters['roomCode'] ?? uri.queryParameters['room'];
     final token = uri.queryParameters['token'];
     if (roomCode == null || token == null) return false;
     _roomCodeController.text = roomCode;
