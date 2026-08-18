@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
-  AppBar, Avatar, Badge, Box, Divider, Drawer, IconButton, List, ListItemButton,
-  ListItemIcon, ListItemText, Toolbar, Tooltip, Typography,
+  AppBar, Badge, Box, Divider, Drawer, IconButton, List, ListItemButton,
+  ListItemIcon, ListItemText, Popover, Toolbar, Tooltip, Typography,
 } from '@mui/material'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom'
-import MovieIcon from '@mui/icons-material/Movie'
 import ScheduleIcon from '@mui/icons-material/Schedule'
-import FavoriteIcon from '@mui/icons-material/Favorite'
+import PeopleIcon from '@mui/icons-material/People'
 import LogoutIcon from '@mui/icons-material/Logout'
 import CastConnectedIcon from '@mui/icons-material/CastConnected'
-import WarningAmberIcon from '@mui/icons-material/WarningAmber'
+import NotificationsIcon from '@mui/icons-material/Notifications'
 import { connectWs, subscribeAdminDashboard } from '../api/ws'
 
 const drawerWidth = 232
@@ -19,29 +18,50 @@ const drawerWidth = 232
 const menus = [
   { path: '/dashboard', label: '仪表盘', icon: <DashboardIcon /> },
   { path: '/rooms', label: '房间管理', icon: <MeetingRoomIcon /> },
-  { path: '/contents', label: '投放内容', icon: <MovieIcon /> },
   { path: '/schedules', label: '投放计划', icon: <ScheduleIcon /> },
-  { path: '/likes', label: '点赞记录', icon: <FavoriteIcon /> },
+  { path: '/users', label: '用户管理', icon: <PeopleIcon /> },
 ]
+
+function describeEvent(event) {
+  const payload = event.payload || {}
+  switch (event.type) {
+    case 'UNDERSTAFFED_ALERT':
+      return { title: `房间 ${payload.name || event.roomCode} 缺人预警`, detail: `在线 ${payload.onlineCount ?? '-'}/${payload.maxMembers ?? '-'} · 缺人已超时` }
+    case 'MEMBER_JOINED':
+      return { title: `${payload.nickname || '用户'} 加入房间 ${event.roomCode}`, detail: `当前在线 ${payload.onlineCount ?? '-'}` }
+    case 'MEMBER_LEFT':
+      return { title: `${payload.nickname || '用户'} 离开房间 ${event.roomCode}`, detail: `当前在线 ${payload.onlineCount ?? '-'}` }
+    default:
+      return null
+  }
+}
 
 export default function MainLayout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [alertCount, setAlertCount] = useState(0)
+  const [notifications, setNotifications] = useState([])
+  const [unread, setUnread] = useState(0)
+  const [anchorEl, setAnchorEl] = useState(null)
   const displayName = localStorage.getItem('admin_name') || '管理员'
 
   useEffect(() => {
     connectWs()
     const unsubscribe = subscribeAdminDashboard((event) => {
-      if (event.type === 'UNDERSTAFFED_ALERT') {
-        setAlertCount((count) => count + 1)
-      }
-      if (event.type === 'ROOM_RUNNING' || event.type === 'ROOM_CLOSED') {
-        setAlertCount(0)
-      }
+      const message = describeEvent(event)
+      if (!message) return
+      setNotifications((prev) => [
+        { ...message, type: event.type, time: (event.timestamp || '').replace('T', ' ').slice(0, 19), key: `${Date.now()}-${Math.random()}` },
+        ...prev,
+      ].slice(0, 50))
+      setUnread((count) => count + 1)
     })
     return unsubscribe
   }, [])
+
+  const openNotifications = (e) => {
+    setAnchorEl(e.currentTarget)
+    setUnread(0)
+  }
 
   const logout = () => {
     localStorage.removeItem('admin_token')
@@ -64,14 +84,43 @@ export default function MainLayout() {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             多房并发投屏会议 · 管理系统
           </Typography>
-          <Tooltip title="缺人红灯预警数">
-            <Badge badgeContent={alertCount} color="error" sx={{ mr: 3 }}>
-              <WarningAmberIcon />
-            </Badge>
+          <Tooltip title="消息通知">
+            <IconButton color="inherit" onClick={openNotifications} sx={{ mr: 2 }}>
+              <Badge badgeContent={unread} color="error">
+                <NotificationsIcon />
+              </Badge>
+            </IconButton>
           </Tooltip>
-          <Avatar sx={{ width: 32, height: 32, bgcolor: '#00bfa5', mr: 1 }}>
-            {displayName.slice(0, 1)}
-          </Avatar>
+          <Popover
+            open={Boolean(anchorEl)}
+            anchorEl={anchorEl}
+            onClose={() => setAnchorEl(null)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          >
+            <Box sx={{ width: 340, maxHeight: 420, overflow: 'auto' }}>
+              <Typography variant="subtitle2" sx={{ px: 2, pt: 1.5, pb: 0.5 }}>消息通知</Typography>
+              <Divider />
+              <List dense>
+                {notifications.map((item) => (
+                  <ListItemButton key={item.key} sx={{ alignItems: 'flex-start' }}>
+                    <ListItemText
+                      primary={item.title}
+                      secondary={`${item.detail} · ${item.time}`}
+                      primaryTypographyProps={{
+                        variant: 'body2',
+                        color: item.type === 'UNDERSTAFFED_ALERT' ? 'error' : 'text.primary',
+                      }}
+                      secondaryTypographyProps={{ variant: 'caption' }}
+                    />
+                  </ListItemButton>
+                ))}
+                {notifications.length === 0 && (
+                  <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>暂无消息</Typography>
+                )}
+              </List>
+            </Box>
+          </Popover>
           <Typography sx={{ mr: 1 }}>{displayName}</Typography>
           <Tooltip title="退出登录">
             <IconButton color="inherit" onClick={logout}>

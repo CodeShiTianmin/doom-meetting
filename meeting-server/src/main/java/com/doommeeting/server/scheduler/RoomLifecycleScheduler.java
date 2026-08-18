@@ -72,6 +72,8 @@ public class RoomLifecycleScheduler {
                 notificationService.pushToAdmin("UNDERSTAFFED_ALERT", room.getRoomCode(), Map.of(
                         "roomId", room.getId(),
                         "name", room.getName(),
+                        "onlineCount", memberService.countOnline(room),
+                        "maxMembers", memberService.maxMembersOf(room),
                         "understaffedSince", String.valueOf(since)));
                 log.info("房间 {} 缺人红灯预警", room.getRoomCode());
             }

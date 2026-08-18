@@ -37,3 +37,9 @@ export const cancelSchedule = (id) => client.post(`/admin/cast-schedules/${id}/c
 // ---------- 仪表盘 / 点赞 ----------
 export const getDashboardSummary = () => client.get('/admin/dashboard/summary')
 export const listAllLikes = () => client.get('/admin/likes')
+
+// ---------- 用户管理 ----------
+export const listUsers = () => client.get('/admin/users')
+export const createUser = (data) => client.post('/admin/users', data)
+export const updateUser = (id, data) => client.put(`/admin/users/${id}`, data)
+export const deleteUser = (id) => client.delete(`/admin/users/${id}`)
