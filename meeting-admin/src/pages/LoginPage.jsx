@@ -39,10 +39,19 @@ export default function LoginPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(135deg, #2c3aa8 0%, #3f51e0 45%, #7986f5 100%)',
+        background: 'linear-gradient(135deg, #1e1b4b 0%, #4f46e5 50%, #8b7ff8 100%)',
       }}
     >
-      <Card sx={{ width: 400, mx: 2 }}>
+      <Card
+        sx={{
+          width: 400,
+          mx: 2,
+          borderRadius: 4,
+          backdropFilter: 'blur(8px)',
+          background: 'rgba(255, 255, 255, 0.96)',
+          boxShadow: '0 24px 64px rgba(15, 12, 60, 0.45)',
+        }}
+      >
         <CardContent sx={{ p: 4 }}>
           <Box sx={{ textAlign: 'center', mb: 3 }}>
             <CastConnectedIcon sx={{ fontSize: 48, color: 'primary.main' }} />

@@ -56,7 +56,7 @@ export default function MainLayout() {
         elevation={0}
         sx={{
           zIndex: (theme) => theme.zIndex.drawer + 1,
-          background: 'linear-gradient(90deg, #2c3aa8 0%, #3f51e0 60%, #5a6cf0 100%)',
+          background: 'linear-gradient(90deg, #1e1b4b 0%, #4f46e5 55%, #7c6ff7 100%)',
         }}
       >
         <Toolbar>
@@ -89,7 +89,8 @@ export default function MainLayout() {
             width: drawerWidth,
             boxSizing: 'border-box',
             borderRight: 'none',
-            background: '#ffffff',
+            background: 'linear-gradient(180deg, #1e1b4b 0%, #262457 100%)',
+            color: 'rgba(255, 255, 255, 0.78)',
           },
         }}
       >
@@ -105,10 +106,15 @@ export default function MainLayout() {
                 sx={{
                   borderRadius: 2,
                   mb: 0.5,
+                  color: 'rgba(255, 255, 255, 0.72)',
+                  '& .MuiListItemIcon-root': { color: 'rgba(255, 255, 255, 0.55)' },
+                  '&:hover': { background: 'rgba(255, 255, 255, 0.08)' },
                   '&.Mui-selected': {
-                    background: 'rgba(63, 81, 224, 0.1)',
-                    color: 'primary.main',
-                    '& .MuiListItemIcon-root': { color: 'primary.main' },
+                    background: 'linear-gradient(135deg, rgba(109, 94, 245, 0.95), rgba(79, 70, 229, 0.9))',
+                    color: '#ffffff',
+                    boxShadow: '0 4px 14px rgba(79, 70, 229, 0.45)',
+                    '& .MuiListItemIcon-root': { color: '#ffffff' },
+                    '&:hover': { background: 'linear-gradient(135deg, rgba(109, 94, 245, 1), rgba(79, 70, 229, 1))' },
                   },
                 }}
               >
@@ -118,8 +124,8 @@ export default function MainLayout() {
             )
           })}
         </List>
-        <Divider sx={{ mt: 'auto' }} />
-        <Typography variant="caption" sx={{ p: 2, color: 'text.secondary' }}>
+        <Divider sx={{ mt: 'auto', borderColor: 'rgba(255, 255, 255, 0.12)' }} />
+        <Typography variant="caption" sx={{ p: 2, color: 'rgba(255, 255, 255, 0.45)' }}>
           媒体零留存 · 仅记录元数据
         </Typography>
       </Drawer>
