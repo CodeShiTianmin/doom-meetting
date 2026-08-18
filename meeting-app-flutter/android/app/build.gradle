@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.doommeeting.app"
-    compileSdk = 35
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -19,7 +19,7 @@ android {
 
     defaultConfig {
         applicationId = "com.doommeeting.app"
-        minSdk = 23
+        minSdkVersion flutter.minSdkVersion
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
@@ -30,6 +30,7 @@ android {
             // 正式发布请配置签名
             signingConfig = signingConfigs.debug
             minifyEnabled = false
+            shrinkResources = false
         }
     }
 }
