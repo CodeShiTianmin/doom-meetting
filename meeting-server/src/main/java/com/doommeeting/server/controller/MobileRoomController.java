@@ -2,9 +2,6 @@ package com.doommeeting.server.controller;
 
 import com.doommeeting.server.common.ApiResponse;
 import com.doommeeting.server.dto.MobileDtos.*;
-import com.doommeeting.server.entity.ContentItem;
-import com.doommeeting.server.entity.Room;
-import com.doommeeting.server.enums.RoomStatus;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.MemberService;
 import com.doommeeting.server.service.PlaybackService;
@@ -13,9 +10,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Duration;
-import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -77,30 +71,6 @@ public class MobileRoomController {
     /** 房间实时状态(会议时间/剩余时长/播放状态/功能开关) */
     @GetMapping("/{roomCode}/state")
     public ApiResponse<Map<String, Object>> state(@PathVariable String roomCode) {
-        Room room = roomService.getRoomByCode(roomCode);
-        Map<String, Object> state = new HashMap<>();
-        state.put("roomCode", room.getRoomCode());
-        state.put("name", room.getName());
-        state.put("status", room.getStatus().name());
-        state.put("videoCallEnabled", room.getVideoCallEnabled());
-        state.put("cameraEnabled", room.getCameraEnabled());
-        state.put("screenshotAllowed", room.getScreenshotAllowed());
-        state.put("recordingForbidden", room.getRecordingForbidden());
-        state.put("durationMinutes", room.getDurationMinutes());
-        state.put("maxMembers", room.getMaxMembers());
-        state.put("meetingStartAt", room.getMeetingStartAt());
-        state.put("meetingEndAt", room.getMeetingEndAt());
-        if (room.getStatus() == RoomStatus.RUNNING && room.getMeetingEndAt() != null) {
-            state.put("remainingSeconds", Math.max(0,
-                    Duration.between(LocalDateTime.now(), room.getMeetingEndAt()).getSeconds()));
-        }
-        state.put("playbackState", room.getPlaybackState().name());
-        state.put("playbackPositionSeconds", room.getPlaybackPositionSeconds());
-        state.put("likeCount", room.getLikeCount());
-        ContentItem content = room.getCurrentContent();
-        state.put("contentId", content == null ? null : content.getId());
-        state.put("contentName", content == null ? null : content.getName());
-        state.put("contentDurationSeconds", content == null ? null : content.getDurationSeconds());
-        return ApiResponse.ok(state);
+        return ApiResponse.ok(roomService.mobileState(roomCode));
     }
 }

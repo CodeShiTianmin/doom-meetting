@@ -20,6 +20,7 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -250,6 +251,36 @@ public class RoomService {
         return eventLogService.recentEvents(room).stream()
                 .map(e -> new RoomEventResponse(e.getId(), e.getType().name(), e.getDetail(), e.getCreatedAt()))
                 .toList();
+    }
+
+    /** 手机端房间实时状态(会议时间/剩余时长/播放状态/功能开关), 事务内读取懒加载内容 */
+    @Transactional(readOnly = true)
+    public Map<String, Object> mobileState(String roomCode) {
+        Room room = getRoomByCode(roomCode);
+        Map<String, Object> state = new HashMap<>();
+        state.put("roomCode", room.getRoomCode());
+        state.put("name", room.getName());
+        state.put("status", room.getStatus().name());
+        state.put("videoCallEnabled", room.getVideoCallEnabled());
+        state.put("cameraEnabled", room.getCameraEnabled());
+        state.put("screenshotAllowed", room.getScreenshotAllowed());
+        state.put("recordingForbidden", room.getRecordingForbidden());
+        state.put("durationMinutes", room.getDurationMinutes());
+        state.put("maxMembers", room.getMaxMembers());
+        state.put("meetingStartAt", room.getMeetingStartAt());
+        state.put("meetingEndAt", room.getMeetingEndAt());
+        if (room.getStatus() == RoomStatus.RUNNING && room.getMeetingEndAt() != null) {
+            state.put("remainingSeconds", Math.max(0,
+                    Duration.between(LocalDateTime.now(), room.getMeetingEndAt()).getSeconds()));
+        }
+        state.put("playbackState", room.getPlaybackState().name());
+        state.put("playbackPositionSeconds", room.getPlaybackPositionSeconds());
+        state.put("likeCount", room.getLikeCount());
+        ContentItem content = room.getCurrentContent();
+        state.put("contentId", content == null ? null : content.getId());
+        state.put("contentName", content == null ? null : content.getName());
+        state.put("contentDurationSeconds", content == null ? null : content.getDurationSeconds());
+        return state;
     }
 
     public Room getRoomById(Long id) {
