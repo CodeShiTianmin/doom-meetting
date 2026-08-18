@@ -153,31 +153,149 @@ export default function RoomDetailPage() {
         </Alert>
       )}
 
-      <Grid container spacing={2.5}>
-        <Grid item xs={12} md={4}>
-          <Card sx={{ mb: 2.5 }}>
+      {/* 概览指标行 */}
+      <Grid container spacing={2.5} sx={{ mb: 2.5 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card sx={{ height: '100%' }}>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>会议时间</Typography>
+              <Typography variant="overline" color="text.secondary">会议倒计时</Typography>
               <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums', mb: 1 }}>
                 {room.status === 'RUNNING' ? formatSeconds(remaining) : '--:--'}
               </Typography>
-              <LinearProgress variant="determinate" value={progress} sx={{ mb: 1.5, height: 8, borderRadius: 4 }} />
-              <Typography variant="body2" color="text.secondary">
+              <LinearProgress variant="determinate" value={progress} sx={{ mb: 1, height: 8, borderRadius: 4 }} />
+              <Typography variant="caption" color="text.secondary" display="block">
                 会议时长 {room.durationMinutes} 分钟 · 到期自动关闭
               </Typography>
               {room.meetingStartAt && (
-                <Typography variant="body2" color="text.secondary">
-                  开始: {room.meetingStartAt.replace('T', ' ')}
+                <Typography variant="caption" color="text.secondary" display="block">
+                  开始 {room.meetingStartAt.replace('T', ' ')}
                 </Typography>
               )}
               {room.meetingEndAt && (
-                <Typography variant="body2" color="text.secondary">
-                  预计结束: {room.meetingEndAt.replace('T', ' ')}
+                <Typography variant="caption" color="text.secondary" display="block">
+                  预计结束 {room.meetingEndAt.replace('T', ' ')}
                 </Typography>
               )}
             </CardContent>
           </Card>
+        </Grid>
 
+        <Grid item xs={12} sm={6} md={3}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="overline" color="text.secondary">当前投放 / 播放状态</Typography>
+              <Typography variant="h6" noWrap sx={{ mb: 1 }}>
+                {room.contentName || '未投放'}
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+                <Chip
+                  size="small"
+                  label={{ IDLE: '空闲', PLAYING: '播放中', PAUSED: '已暂停' }[room.playbackState] || room.playbackState}
+                  color={room.playbackState === 'PLAYING' ? 'success' : 'default'}
+                />
+                <Chip size="small" label={`进度 ${formatSeconds(room.playbackPositionSeconds)}`} />
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                播放/暂停/进度由手机客户端控制, 此处实时同步
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} sm={6} md={3}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="overline" color="text.secondary">在线成员</Typography>
+              <Typography variant="h4" sx={{ mb: 1 }}>
+                <SmartphoneIcon sx={{ verticalAlign: 'middle', mr: 1, color: 'primary.main' }} />
+                {room.onlineMemberCount}/{room.maxMembers ?? 2}
+              </Typography>
+              <Chip
+                size="small"
+                label={room.understaffedAlert ? '缺人预警' : (room.status === 'RUNNING' ? '成员就位' : '等待加入')}
+                color={room.understaffedAlert ? 'error' : (room.status === 'RUNNING' ? 'success' : 'default')}
+              />
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} sm={6} md={3}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="overline" color="text.secondary">点赞总数</Typography>
+              <Typography variant="h4" sx={{ mb: 1 }}>
+                <FavoriteIcon sx={{ verticalAlign: 'middle', mr: 1, color: '#ec407a' }} />
+                {room.likeCount}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                手机端点赞实时同步并记录
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
+      <Grid container spacing={2.5}>
+        {/* 主区: 成员 + 事件日志 */}
+        <Grid item xs={12} md={8}>
+          <Card sx={{ mb: 2.5 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                <SmartphoneIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+                手机客户端({room.onlineMemberCount}/{room.maxMembers ?? 2} 在线)
+              </Typography>
+              <List dense disablePadding>
+                {(room.members || []).map((member) => (
+                  <ListItem key={member.id} disableGutters>
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography>{member.nickname}</Typography>
+                          <Chip
+                            size="small"
+                            label={member.online ? '在线' : '离线'}
+                            color={member.online ? 'success' : 'default'}
+                          />
+                        </Box>
+                      }
+                      secondary={`${member.deviceInfo || ''} · 加入 ${member.joinedAt?.replace('T', ' ') || ''}`}
+                    />
+                  </ListItem>
+                ))}
+                {(room.members || []).length === 0 && (
+                  <Typography color="text.secondary">等待手机客户扫码加入…</Typography>
+                )}
+              </List>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent>
+              <Typography variant="h6" sx={{ mb: 2 }}>事件日志</Typography>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>类型</TableCell>
+                    <TableCell>详情</TableCell>
+                    <TableCell>时间</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {events.map((event) => (
+                    <TableRow key={event.id}>
+                      <TableCell><Chip size="small" label={event.type} /></TableCell>
+                      <TableCell sx={{ wordBreak: 'break-all' }}>{event.detail}</TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap' }}>{event.createdAt?.replace('T', ' ')}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* 侧栏: 设置 + 二维码 + 点赞记录 */}
+        <Grid item xs={12} md={4}>
           <Card sx={{ mb: 2.5 }}>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 1 }}>功能设置(PC 端控制)</Typography>
@@ -238,7 +356,7 @@ export default function RoomDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card sx={{ mb: 2.5 }}>
             <CardContent sx={{ textAlign: 'center' }}>
               <Typography variant="h6" sx={{ mb: 2 }}>入会二维码</Typography>
               {room.qrContent && !closed ? (
@@ -261,65 +379,8 @@ export default function RoomDetailPage() {
               </Box>
             </CardContent>
           </Card>
-        </Grid>
-
-        <Grid item xs={12} md={4}>
-          <Card sx={{ mb: 2.5 }}>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                当前投放 / 播放状态
-              </Typography>
-              <Typography variant="body1" sx={{ mb: 1 }}>
-                内容: {room.contentName || '未投放'}
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
-                <Chip
-                  size="small"
-                  label={{ IDLE: '空闲', PLAYING: '播放中', PAUSED: '已暂停' }[room.playbackState] || room.playbackState}
-                  color={room.playbackState === 'PLAYING' ? 'success' : 'default'}
-                />
-                <Chip size="small" label={`进度 ${formatSeconds(room.playbackPositionSeconds)}`} />
-              </Box>
-              <Typography variant="body2" color="text.secondary">
-                播放/暂停/进度由手机客户端控制, 此处为实时同步的权威状态
-              </Typography>
-            </CardContent>
-          </Card>
 
           <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                <SmartphoneIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-                手机客户端({room.onlineMemberCount}/{room.maxMembers ?? 2} 在线)
-              </Typography>
-              <List dense disablePadding>
-                {(room.members || []).map((member) => (
-                  <ListItem key={member.id} disableGutters>
-                    <ListItemText
-                      primary={
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography>{member.nickname}</Typography>
-                          <Chip
-                            size="small"
-                            label={member.online ? '在线' : '离线'}
-                            color={member.online ? 'success' : 'default'}
-                          />
-                        </Box>
-                      }
-                      secondary={`${member.deviceInfo || ''} · 加入 ${member.joinedAt?.replace('T', ' ') || ''}`}
-                    />
-                  </ListItem>
-                ))}
-                {(room.members || []).length === 0 && (
-                  <Typography color="text.secondary">等待手机客户扫码加入…</Typography>
-                )}
-              </List>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={4}>
-          <Card sx={{ mb: 2.5 }}>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2 }}>
                 <FavoriteIcon sx={{ verticalAlign: 'middle', mr: 1, color: '#ec407a' }} />
@@ -336,30 +397,6 @@ export default function RoomDetailPage() {
                 ))}
                 {likes.length === 0 && <Typography color="text.secondary">暂无点赞</Typography>}
               </List>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>事件日志</Typography>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>类型</TableCell>
-                    <TableCell>详情</TableCell>
-                    <TableCell>时间</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {events.map((event) => (
-                    <TableRow key={event.id}>
-                      <TableCell><Chip size="small" label={event.type} /></TableCell>
-                      <TableCell sx={{ maxWidth: 180, wordBreak: 'break-all' }}>{event.detail}</TableCell>
-                      <TableCell>{event.createdAt?.replace('T', ' ')}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
             </CardContent>
           </Card>
         </Grid>
