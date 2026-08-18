@@ -23,8 +23,10 @@ dependencies:
   dio: ^5.4.3
   # 邀请二维码生成
   qr_flutter: ^4.1.0
-  # 本地视频文件选择
+  # 投放文件选择(所有类型)
   file_picker: ^8.0.3
+  # 打开服务器文件/系统默认应用
+  url_launcher: ^6.2.6
   cupertino_icons: ^1.0.8
 
 dev_dependencies:

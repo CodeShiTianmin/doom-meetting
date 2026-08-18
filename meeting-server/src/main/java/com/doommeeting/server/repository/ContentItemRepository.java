@@ -10,4 +10,6 @@ public interface ContentItemRepository extends JpaRepository<ContentItem, Long> 
     List<ContentItem> findByEnabledTrueOrderByCreatedAtDesc();
 
     List<ContentItem> findAllByOrderByCreatedAtDesc();
+
+    List<ContentItem> findByRoomId(Long roomId);
 }

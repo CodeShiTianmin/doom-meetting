@@ -1,0 +1,12 @@
+# 构建产物
+meeting-server/target/
+meeting-admin/dist/
+meeting-admin/node_modules/
+
+# 服务器上传文件存储目录
+meeting-server/data/
+data/
+
+# Flutter
+**/.dart_tool/
+**/build/

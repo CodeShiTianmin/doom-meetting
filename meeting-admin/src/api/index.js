@@ -24,6 +24,14 @@ export const listRoomEvents = (id) => client.get(`/admin/rooms/${id}/events`)
 
 // ---------- 内容 ----------
 export const createContent = (data) => client.post('/admin/contents', data)
+export const uploadContentFile = (file, roomId) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (roomId) formData.append('roomId', roomId)
+  return client.post('/admin/contents/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
 export const listContents = (includeDisabled) =>
   client.get('/admin/contents', { params: includeDisabled ? { includeDisabled: true } : {} })
 export const updateContent = (id, data) => client.put(`/admin/contents/${id}`, data)

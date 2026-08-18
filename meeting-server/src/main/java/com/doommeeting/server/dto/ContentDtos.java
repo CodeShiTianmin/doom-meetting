@@ -22,6 +22,10 @@ public class ContentDtos {
             String type,
             String localPath,
             Integer durationSeconds,
+            String fileUrl,
+            Long fileSize,
+            String mimeType,
+            Long roomId,
             Boolean enabled,
             String createdBy,
             LocalDateTime createdAt) {

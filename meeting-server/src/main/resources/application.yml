@@ -16,11 +16,18 @@ spring:
       hibernate:
         format_sql: true
     open-in-view: false
+  servlet:
+    multipart:
+      max-file-size: ${APP_MAX_FILE_SIZE:2GB}
+      max-request-size: ${APP_MAX_REQUEST_SIZE:2GB}
   jackson:
     time-zone: Asia/Shanghai
     date-format: yyyy-MM-dd HH:mm:ss
 
 app:
+  storage:
+    # 投放文件服务器存储目录(会议结束后自动删除对应文件)
+    dir: ${APP_STORAGE_DIR:./data/uploads}
   jwt:
     # 公司账号(管理端/PC端)登录 JWT 密钥
     secret: ${APP_JWT_SECRET:ZG9vbS1tZWV0aW5nLXNlcnZlci1qd3Qtc2VjcmV0LWtleS0yMDI2LXZlcnktbG9uZw==}

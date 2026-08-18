@@ -131,7 +131,7 @@ class ApiClient {
     return _unwrapList(response);
   }
 
-  // ---------- 内容库(仅元数据, 文件保存在本地 PC) ----------
+  // ---------- 内容库 ----------
 
   Future<List<ContentModel>> listContents() async {
     final response = await _dio.get('/api/admin/contents');
@@ -157,6 +157,28 @@ class ApiClient {
     });
     return ContentModel.fromJson(_unwrap(response));
   }
+
+  /// 真实文件上传到服务器存储(所有类型), 关联房间后会议结束自动删除
+  Future<ContentModel> uploadContentFile(String filePath,
+      {int? roomId}) async {
+    final formData = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath),
+      if (roomId != null) 'roomId': roomId,
+    });
+    final response = await _dio.post(
+      '/api/admin/contents/upload',
+      data: formData,
+      options: Options(
+        sendTimeout: const Duration(minutes: 30),
+        receiveTimeout: const Duration(minutes: 30),
+      ),
+    );
+    return ContentModel.fromJson(_unwrap(response));
+  }
+
+  /// 服务器文件下载地址
+  String fileDownloadUrl(int contentId) =>
+      '${AppConfig.apiBaseUrl}/api/files/$contentId';
 }
 
 class ApiException implements Exception {

@@ -17,6 +17,9 @@ class RoomState {
   final int? contentId;
   final String? contentName;
   final int? contentDurationSeconds;
+  final String? contentType;
+  final String? contentFileUrl;
+  final String? contentMimeType;
 
   RoomState({
     required this.roomCode,
@@ -36,6 +39,9 @@ class RoomState {
     this.contentId,
     this.contentName,
     this.contentDurationSeconds,
+    this.contentType,
+    this.contentFileUrl,
+    this.contentMimeType,
   });
 
   bool get running => status == 'RUNNING';
@@ -63,6 +69,9 @@ class RoomState {
         contentName: json['contentName'] as String?,
         contentDurationSeconds:
             (json['contentDurationSeconds'] as num?)?.toInt(),
+        contentType: json['contentType'] as String?,
+        contentFileUrl: json['contentFileUrl'] as String?,
+        contentMimeType: json['contentMimeType'] as String?,
       );
 
   RoomState copyWith({
@@ -76,6 +85,9 @@ class RoomState {
     int? contentId,
     String? contentName,
     int? contentDurationSeconds,
+    String? contentType,
+    String? contentFileUrl,
+    String? contentMimeType,
     String? meetingStartAt,
     String? meetingEndAt,
   }) =>
@@ -99,5 +111,8 @@ class RoomState {
         contentName: contentName ?? this.contentName,
         contentDurationSeconds:
             contentDurationSeconds ?? this.contentDurationSeconds,
+        contentType: contentType ?? this.contentType,
+        contentFileUrl: contentFileUrl ?? this.contentFileUrl,
+        contentMimeType: contentMimeType ?? this.contentMimeType,
       );
 }
