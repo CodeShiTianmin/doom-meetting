@@ -16,6 +16,7 @@ class RoomModel {
   final double playbackPositionSeconds;
   final int likeCount;
   final bool understaffedAlert;
+  final int maxMembers;
   final int onlineMemberCount;
   final String? inviteUrl;
   final String? qrContent;
@@ -39,6 +40,7 @@ class RoomModel {
     required this.playbackPositionSeconds,
     required this.likeCount,
     required this.understaffedAlert,
+    required this.maxMembers,
     required this.onlineMemberCount,
     this.inviteUrl,
     this.qrContent,
@@ -67,6 +69,7 @@ class RoomModel {
             (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
         likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
         understaffedAlert: json['understaffedAlert'] == true,
+        maxMembers: (json['maxMembers'] as num?)?.toInt() ?? 2,
         onlineMemberCount: (json['onlineMemberCount'] as num?)?.toInt() ?? 0,
         inviteUrl: json['inviteUrl'] as String?,
         qrContent: json['qrContent'] as String?,

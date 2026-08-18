@@ -279,7 +279,7 @@ class _RoomPageState extends State<RoomPage> {
         break;
       case 'ROOM_RUNNING':
         _refreshState();
-        _showToast('两位客户已就位, 会议开始');
+        _showToast('全部客户已就位, 会议开始');
         break;
       case 'CONTENT_CAST':
         _refreshState();
@@ -510,7 +510,7 @@ class _RoomPageState extends State<RoomPage> {
           if (!state.running)
             const Padding(
               padding: EdgeInsets.only(top: 4),
-              child: Text('两位客户全部就位后会议开始计时',
+              child: Text('全部客户就位后会议开始计时',
                   style: TextStyle(color: Colors.white38, fontSize: 12)),
             ),
         ],

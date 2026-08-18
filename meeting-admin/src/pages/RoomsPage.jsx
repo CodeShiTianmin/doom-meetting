@@ -20,6 +20,7 @@ export default function RoomsPage() {
   const [form, setForm] = useState({
     name: '',
     durationMinutes: 60,
+    maxMembers: 2,
     videoCallEnabled: true,
     cameraEnabled: true,
     contentId: '',
@@ -52,12 +53,13 @@ export default function RoomsPage() {
       const created = await createRoom({
         name: form.name,
         durationMinutes: Number(form.durationMinutes),
+        maxMembers: Number(form.maxMembers),
         videoCallEnabled: form.videoCallEnabled,
         cameraEnabled: form.cameraEnabled,
         contentId: form.contentId || null,
       })
       setDialogOpen(false)
-      setForm({ name: '', durationMinutes: 60, videoCallEnabled: true, cameraEnabled: true, contentId: '' })
+      setForm({ name: '', durationMinutes: 60, maxMembers: 2, videoCallEnabled: true, cameraEnabled: true, contentId: '' })
       navigate(`/rooms/${created.id}`)
     } catch (err) {
       setError(err.message)
@@ -112,7 +114,7 @@ export default function RoomsPage() {
                   <TableCell>{room.name}</TableCell>
                   <TableCell>{room.roomCode}</TableCell>
                   <TableCell><RoomStatusChip status={room.status} /></TableCell>
-                  <TableCell>{room.onlineMemberCount}/2</TableCell>
+                  <TableCell>{room.onlineMemberCount}/{room.maxMembers ?? 2}</TableCell>
                   <TableCell>{room.contentName || '-'}</TableCell>
                   <TableCell>{room.durationMinutes} 分钟</TableCell>
                   <TableCell>{room.likeCount}</TableCell>
@@ -150,6 +152,13 @@ export default function RoomsPage() {
             onChange={(e) => setForm({ ...form, durationMinutes: e.target.value })}
           />
           <TextField
+            label="房间成员数上限(手机客户端)"
+            type="number"
+            inputProps={{ min: 1, max: 50 }}
+            value={form.maxMembers}
+            onChange={(e) => setForm({ ...form, maxMembers: e.target.value })}
+          />
+          <TextField
             select
             label="初始投放内容(可选)"
             value={form.contentId}
@@ -181,7 +190,7 @@ export default function RoomsPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDialogOpen(false)}>取消</Button>
-          <Button variant="contained" onClick={submit} disabled={!form.name || !form.durationMinutes}>
+          <Button variant="contained" onClick={submit} disabled={!form.name || !form.durationMinutes || !form.maxMembers}>
             创建
           </Button>
         </DialogActions>

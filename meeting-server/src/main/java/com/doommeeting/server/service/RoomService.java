@@ -25,7 +25,7 @@ import java.util.UUID;
 
 /**
  * 房间业务: 创建/查询/设置/投放/关闭。
- * 房间模型: 单房间 2 个手机客户端成员; 公司 PC 端以后台身份推流管理, 不出现在房间内。
+ * 房间模型: 单房间成员数可设置(默认 2 个手机客户端); 公司 PC 端以后台身份推流管理, 不出现在房间内。
  */
 @Service
 @RequiredArgsConstructor
@@ -49,6 +49,8 @@ public class RoomService {
         room.setRoomCode(generateRoomCode());
         room.setName(request.name());
         room.setDurationMinutes(request.durationMinutes());
+        room.setMaxMembers(request.maxMembers() == null
+                ? properties.getRoom().getMaxClients() : request.maxMembers());
         room.setVideoCallEnabled(request.videoCallEnabled() == null || request.videoCallEnabled());
         room.setCameraEnabled(request.cameraEnabled() == null || request.cameraEnabled());
         room.setCreatedBy(createdBy);
@@ -105,6 +107,14 @@ public class RoomService {
             }
             detail.append(" 会议时长=").append(request.durationMinutes()).append("分钟");
         }
+        if (request.maxMembers() != null) {
+            long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
+            if (request.maxMembers() < onlineCount) {
+                throw new BusinessException("成员数上限不能小于当前在线人数(" + onlineCount + ")");
+            }
+            room.setMaxMembers(request.maxMembers());
+            detail.append(" 成员数上限=").append(request.maxMembers()).append("人");
+        }
         roomRepository.save(room);
         eventLogService.log(room, RoomEventType.SETTINGS_CHANGED, detail.toString());
         // 功能开关实时下发到房间(手机端立即生效)
@@ -112,6 +122,7 @@ public class RoomService {
                 "videoCallEnabled", room.getVideoCallEnabled(),
                 "cameraEnabled", room.getCameraEnabled(),
                 "durationMinutes", room.getDurationMinutes(),
+                "maxMembers", room.getMaxMembers(),
                 "meetingEndAt", String.valueOf(room.getMeetingEndAt())));
         return toResponse(room, latestInvite(room));
     }
@@ -219,7 +230,8 @@ public class RoomService {
         invite.setRoom(room);
         invite.setToken(UUID.randomUUID().toString().replace("-", ""));
         invite.setExpireAt(LocalDateTime.now().plusMinutes(properties.getInvite().getExpireMinutes()));
-        invite.setMaxUses(properties.getRoom().getMaxClients());
+        invite.setMaxUses(room.getMaxMembers() == null
+                ? properties.getRoom().getMaxClients() : room.getMaxMembers());
         inviteTokenRepository.save(invite);
         return invite;
     }
@@ -261,6 +273,7 @@ public class RoomService {
                 room.getScreenshotAllowed(),
                 room.getRecordingForbidden(),
                 room.getDurationMinutes(),
+                room.getMaxMembers(),
                 room.getMeetingStartAt(),
                 room.getMeetingEndAt(),
                 remainingSeconds,

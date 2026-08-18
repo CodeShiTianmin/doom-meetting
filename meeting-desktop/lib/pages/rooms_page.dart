@@ -208,7 +208,7 @@ class _RoomCard extends StatelessWidget {
                 children: [
                   const Icon(Icons.people, size: 14, color: Colors.white54),
                   const SizedBox(width: 4),
-                  Text('${room.onlineMemberCount}/2 就位',
+                  Text('${room.onlineMemberCount}/${room.maxMembers} 就位',
                       style: const TextStyle(fontSize: 12)),
                   const SizedBox(width: 12),
                   const Icon(Icons.favorite,
@@ -261,6 +261,7 @@ class _CreateRoomDialog extends StatefulWidget {
 class _CreateRoomDialogState extends State<_CreateRoomDialog> {
   final _nameController = TextEditingController();
   int _durationMinutes = 60;
+  int _maxMembers = 2;
   bool _videoCallEnabled = true;
   bool _cameraEnabled = true;
   bool _submitting = false;
@@ -278,6 +279,7 @@ class _CreateRoomDialogState extends State<_CreateRoomDialog> {
       final room = await ApiClient.instance.createRoom(
         name: _nameController.text.trim(),
         durationMinutes: _durationMinutes,
+        maxMembers: _maxMembers,
         videoCallEnabled: _videoCallEnabled,
         cameraEnabled: _cameraEnabled,
       );
@@ -322,6 +324,23 @@ class _CreateRoomDialogState extends State<_CreateRoomDialog> {
                   ),
                 ),
                 Text('$_durationMinutes 分'),
+              ],
+            ),
+            Row(
+              children: [
+                const Text('成员数上限'),
+                Expanded(
+                  child: Slider(
+                    value: _maxMembers.toDouble(),
+                    min: 1,
+                    max: 10,
+                    divisions: 9,
+                    label: '$_maxMembers 人',
+                    onChanged: (value) =>
+                        setState(() => _maxMembers = value.round()),
+                  ),
+                ),
+                Text('$_maxMembers 人'),
               ],
             ),
             SwitchListTile(

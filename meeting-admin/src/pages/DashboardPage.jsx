@@ -109,7 +109,7 @@ export default function DashboardPage() {
                   >
                     <ListItemText
                       primary={`${room.name}（${room.roomCode}）`}
-                      secondary={`在线 ${room.onlineMemberCount}/2 · 点赞 ${room.likeCount} · 当前内容: ${room.contentName || '未投放'}`}
+                      secondary={`在线 ${room.onlineMemberCount}/${room.maxMembers ?? 2} · 点赞 ${room.likeCount} · 当前内容: ${room.contentName || '未投放'}`}
                     />
                   </ListItem>
                 ))}

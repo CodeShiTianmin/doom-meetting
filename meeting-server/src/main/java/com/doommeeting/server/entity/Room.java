@@ -10,7 +10,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 /**
- * 会议房间。单房间只有 2 个手机客户端成员;
+ * 会议房间。单房间成员数可设置(默认 2 个手机客户端);
  * 公司 PC 端以后台身份推流与管理, 不出现在房间成员中。
  */
 @Getter
@@ -34,6 +34,10 @@ public class Room {
     @Column(nullable = false, length = 16)
     private RoomStatus status = RoomStatus.WAITING;
 
+    /** 房间成员数上限(手机客户端, PC 端创建/设置时可指定) */
+    @Column(nullable = false)
+    private Integer maxMembers = 2;
+
     /** 手机端"视频通话"功能开关(PC 端按房间设置) */
     @Column(nullable = false)
     private Boolean videoCallEnabled = true;
@@ -54,7 +58,7 @@ public class Room {
     @Column(nullable = false)
     private Integer durationMinutes;
 
-    /** 2 个手机客户端全部就位, 会议开始时间 */
+    /** 全部成员就位, 会议开始时间 */
     private LocalDateTime meetingStartAt;
 
     /** 会议自动关闭时间 = meetingStartAt + durationMinutes */
@@ -88,7 +92,7 @@ public class Room {
     @Column(nullable = false)
     private Boolean understaffedAlert = false;
 
-    /** 缺人状态开始时间(在线手机客户端 < 2 时记录) */
+    /** 缺人状态开始时间(在线手机客户端 < 成员数上限时记录) */
     private LocalDateTime understaffedSince;
 
     /** 到期前提醒标记(剩余5分钟 / 剩余1分钟) */

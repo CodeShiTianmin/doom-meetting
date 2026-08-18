@@ -74,6 +74,7 @@ class ApiClient {
   Future<RoomModel> createRoom({
     required String name,
     required int durationMinutes,
+    int? maxMembers,
     required bool videoCallEnabled,
     required bool cameraEnabled,
     int? contentId,
@@ -81,6 +82,7 @@ class ApiClient {
     final response = await _dio.post('/api/admin/rooms', data: {
       'name': name,
       'durationMinutes': durationMinutes,
+      'maxMembers': maxMembers,
       'videoCallEnabled': videoCallEnabled,
       'cameraEnabled': cameraEnabled,
       'contentId': contentId,
@@ -89,11 +91,15 @@ class ApiClient {
   }
 
   Future<RoomModel> updateSettings(int id,
-      {bool? videoCallEnabled, bool? cameraEnabled, int? durationMinutes}) async {
+      {bool? videoCallEnabled,
+      bool? cameraEnabled,
+      int? durationMinutes,
+      int? maxMembers}) async {
     final response = await _dio.put('/api/admin/rooms/$id/settings', data: {
       'videoCallEnabled': videoCallEnabled,
       'cameraEnabled': cameraEnabled,
       'durationMinutes': durationMinutes,
+      'maxMembers': maxMembers,
     });
     return RoomModel.fromJson(_unwrap(response));
   }

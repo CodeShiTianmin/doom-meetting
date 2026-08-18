@@ -79,7 +79,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
         _refreshRoom();
         break;
       case 'ROOM_RUNNING':
-        _showToast('两位客户已就位, 该房间已运行');
+        _showToast('全部客户已就位, 该房间已运行');
         _refreshRoom();
         break;
       case 'MEMBER_JOINED':
@@ -243,7 +243,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 ? '已运行 剩 ${_formatClock(room.remainingSeconds)}'
                 : room.closed
                     ? '已关闭'
-                    : '等待就位 ${room.onlineMemberCount}/2'),
+                    : '等待就位 ${room.onlineMemberCount}/${room.maxMembers}'),
           ),
           const SizedBox(width: 12),
         ],

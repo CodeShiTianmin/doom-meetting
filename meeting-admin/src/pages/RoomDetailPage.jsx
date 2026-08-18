@@ -149,7 +149,7 @@ export default function RoomDetailPage() {
 
       {room.understaffedAlert && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          红灯预警: 该房间缺人状态已超过 3 分钟(在线 {room.onlineMemberCount}/2)
+          红灯预警: 该房间缺人状态已超过 3 分钟(在线 {room.onlineMemberCount}/{room.maxMembers ?? 2})
         </Alert>
       )}
 
@@ -216,6 +216,21 @@ export default function RoomDetailPage() {
                   }
                 }}
               />
+              <TextField
+                fullWidth
+                size="small"
+                type="number"
+                sx={{ mt: 1.5 }}
+                label="成员数上限"
+                defaultValue={room.maxMembers ?? 2}
+                disabled={closed}
+                onBlur={(e) => {
+                  const value = Number(e.target.value)
+                  if (value && value !== room.maxMembers) {
+                    toggleSetting('maxMembers', value)
+                  }
+                }}
+              />
               <Box sx={{ mt: 1.5, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                 <Chip size="small" color="success" label="允许截屏" />
                 <Chip size="small" color="error" label="禁止录制" />
@@ -275,7 +290,7 @@ export default function RoomDetailPage() {
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2 }}>
                 <SmartphoneIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-                手机客户端({room.onlineMemberCount}/2 在线)
+                手机客户端({room.onlineMemberCount}/{room.maxMembers ?? 2} 在线)
               </Typography>
               <List dense disablePadding>
                 {(room.members || []).map((member) => (
