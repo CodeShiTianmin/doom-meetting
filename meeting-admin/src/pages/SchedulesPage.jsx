@@ -7,7 +7,7 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import CancelIcon from '@mui/icons-material/Cancel'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
-import { cancelSchedule, createContent, createSchedule, listContents, listRooms, listSchedules } from '../api'
+import { cancelSchedule, createSchedule, listContents, listRooms, listSchedules, uploadContentFile } from '../api'
 
 const statusMap = {
   PENDING: { label: '待执行', color: 'warning' },
@@ -23,6 +23,7 @@ export default function SchedulesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState({ roomId: '', contentId: '', castAt: '', note: '' })
   const [error, setError] = useState('')
+  const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef(null)
 
   const refresh = useCallback(async () => {
@@ -52,23 +53,16 @@ export default function SchedulesPage() {
     e.target.value = ''
     if (!file) return
     setError('')
+    setUploading(true)
     try {
-      const existing = contents.find(
-        (content) => content.type === 'LOCAL_FILE' && content.localPath === file.name,
-      )
-      let contentId = existing?.id
-      if (!contentId) {
-        const created = await createContent({
-          name: file.name,
-          type: 'LOCAL_FILE',
-          localPath: file.name,
-        })
-        contentId = created.id
-        setContents((prev) => [created, ...prev])
-      }
-      setForm((prev) => ({ ...prev, contentId: String(contentId) }))
+      // 真实文件上传到服务器, 可关联目标房间(会议结束后自动删除)
+      const created = await uploadContentFile(file, form.roomId ? Number(form.roomId) : null)
+      setContents((prev) => [created, ...prev])
+      setForm((prev) => ({ ...prev, contentId: String(created.id) }))
     } catch (err) {
       setError(err.message)
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -196,15 +190,16 @@ export default function SchedulesPage() {
               variant="outlined"
               startIcon={<UploadFileIcon />}
               sx={{ whiteSpace: 'nowrap', px: 2 }}
+              disabled={uploading}
               onClick={() => fileInputRef.current?.click()}
             >
-              选择文件
+              {uploading ? '上传中…' : '选择文件'}
             </Button>
             <input
               ref={fileInputRef}
               type="file"
               hidden
-              accept="video/*,audio/*,image/*,.pdf,.ppt,.pptx,.doc,.docx"
+              accept="video/*,audio/*,image/*,.pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.txt,.zip"
               onChange={onFileSelected}
             />
           </Box>

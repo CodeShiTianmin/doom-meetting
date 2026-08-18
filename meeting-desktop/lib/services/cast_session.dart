@@ -83,7 +83,7 @@ class CastSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 本地视频文件投放: media_kit 解码播放(资料仅存本地 PC, 不上传服务器),
+  /// 媒体文件投放: media_kit 解码播放(文件同时上传服务器保存, 会议结束后删除),
   /// 播放画面经独立播放器窗口捕获推流; 手机端播放控制指令直接作用于该播放器
   Future<void> startFileCast(String path,
       {required webrtc.DesktopCapturerSource playerWindowSource}) async {

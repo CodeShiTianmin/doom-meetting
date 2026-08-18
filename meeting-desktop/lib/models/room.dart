@@ -112,6 +112,9 @@ class ContentModel {
   final String type;
   final String? localPath;
   final int? durationSeconds;
+  final String? fileUrl;
+  final int? fileSize;
+  final String? mimeType;
   final bool enabled;
 
   ContentModel({
@@ -121,6 +124,9 @@ class ContentModel {
     required this.type,
     this.localPath,
     this.durationSeconds,
+    this.fileUrl,
+    this.fileSize,
+    this.mimeType,
     required this.enabled,
   });
 
@@ -131,6 +137,9 @@ class ContentModel {
         type: (json['type'] as String?) ?? 'LOCAL_FILE',
         localPath: json['localPath'] as String?,
         durationSeconds: (json['durationSeconds'] as num?)?.toInt(),
+        fileUrl: json['fileUrl'] as String?,
+        fileSize: (json['fileSize'] as num?)?.toInt(),
+        mimeType: json['mimeType'] as String?,
         enabled: json['enabled'] == true,
       );
 }

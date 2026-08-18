@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/room.dart';
 import '../services/api_client.dart';
@@ -137,35 +138,63 @@ class _RoomCastPageState extends State<RoomCastPage> {
     }
   }
 
+  static const _mediaExtensions = {
+    'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts',
+    'mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma',
+  };
+
   Future<void> _pickLocalFile() async {
     final session = _session;
     if (session == null) return;
+    // 所有类型文件均可投放
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.video,
-      dialogTitle: '选择本地视频文件(仅存本地, 不上传服务器)',
+      type: FileType.any,
+      dialogTitle: '选择投放文件(所有类型, 上传服务器保存, 会议结束后删除)',
     );
     final path = result?.files.single.path;
     if (path == null) return;
-
-    // 文件投放: 捕获本应用播放器窗口推流
-    final sources = await session.listCaptureSources();
-    final appWindow = sources.firstWhere(
-      (source) =>
-          source.type == webrtc.SourceType.Window &&
-          source.name.contains('投屏会议'),
-      orElse: () => sources.first,
-    );
-    await session.startFileCast(path, playerWindowSource: appWindow);
-
-    // 同步内容元数据到后端(仅名称/路径元数据, 媒体不上传)
     final name = path.split(RegExp(r'[\\/]')).last;
+    final extension = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+
+    // 1) 真实文件上传到服务器存储并投放(手机端/管理网页可直接打开, 会议结束后自动删除)
+    _showToast('正在上传: $name ...');
     try {
-      final content = await ApiClient.instance.createContent(
-          name: name, type: 'LOCAL_FILE', localPath: path);
+      final content = await ApiClient.instance
+          .uploadContentFile(path, roomId: widget.roomId);
       await ApiClient.instance.castContent(widget.roomId, content.id);
-    } catch (_) {}
+    } catch (error) {
+      _showToast('文件上传失败: $error');
+      return;
+    }
+
+    // 2) 媒体文件: 本地播放器解码并捕获推流; 其他类型: 系统默认应用打开后可用窗口投屏
+    if (_mediaExtensions.contains(extension)) {
+      final sources = await session.listCaptureSources();
+      final appWindow = sources.firstWhere(
+        (source) =>
+            source.type == webrtc.SourceType.Window &&
+            source.name.contains('投屏会议'),
+        orElse: () => sources.first,
+      );
+      await session.startFileCast(path, playerWindowSource: appWindow);
+    } else {
+      await launchUrl(Uri.file(path));
+      _showToast('已用系统应用打开, 可选择该窗口进行投屏');
+      await _pickScreenSource();
+    }
     await _refreshRoom();
     _showToast('已投放文件: $name');
+  }
+
+  /// 打开服务器上存储的当前投放文件
+  Future<void> _openServerFile() async {
+    final contentId = _room?.contentId;
+    if (contentId == null) {
+      _showToast('当前房间没有投放内容');
+      return;
+    }
+    final url = ApiClient.instance.fileDownloadUrl(contentId);
+    await launchUrl(Uri.parse(url));
   }
 
   Future<void> _stopCast() async {
@@ -271,7 +300,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                               child: Text(
                                 session?.mode == CastMode.screen
                                     ? '屏幕/窗口投屏中'
-                                    : '未投放 — 选择屏幕投屏或本地文件投放',
+                                    : '未投放 — 选择屏幕投屏或文件投放(所有类型)',
                                 style:
                                     const TextStyle(color: Colors.white38),
                               ),
@@ -291,8 +320,14 @@ class _RoomCastPageState extends State<RoomCastPage> {
                       const SizedBox(width: 12),
                       FilledButton.tonalIcon(
                         onPressed: session == null ? null : _pickLocalFile,
-                        icon: const Icon(Icons.video_file),
-                        label: const Text('本地文件投放'),
+                        icon: const Icon(Icons.upload_file),
+                        label: const Text('文件投放(所有类型)'),
+                      ),
+                      const SizedBox(width: 12),
+                      FilledButton.tonalIcon(
+                        onPressed: _openServerFile,
+                        icon: const Icon(Icons.file_open),
+                        label: const Text('打开服务器文件'),
                       ),
                       const SizedBox(width: 12),
                       OutlinedButton.icon(

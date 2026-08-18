@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -382,6 +384,43 @@ class _RoomPageState extends State<RoomPage> {
     } catch (_) {}
   }
 
+  // ---------------- 文件投放 ----------------
+
+  bool _uploading = false;
+
+  /// 手机端选择真实文件上传服务器并投放到本房间(会议结束后自动删除)
+  Future<void> _uploadAndCastFile() async {
+    if (_uploading) return;
+    final result = await FilePicker.platform.pickFiles(type: FileType.any);
+    final path = result?.files.single.path;
+    if (path == null) return;
+    setState(() => _uploading = true);
+    _showToast('正在上传文件...');
+    try {
+      final content = await ApiClient.instance.uploadAndCastFile(
+        roomCode: session.roomCode,
+        identity: session.identity,
+        filePath: path,
+      );
+      _showToast('已投放文件: ${content['name']}');
+    } catch (error) {
+      _showToast('文件上传失败: $error');
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  /// 打开服务器上存储的当前投放文件
+  Future<void> _openServerFile() async {
+    final contentId = _state?.contentId;
+    if (contentId == null) {
+      _showToast('当前没有投放内容');
+      return;
+    }
+    final url = ApiClient.instance.fileDownloadUrl(contentId);
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
   void _pushHeart() {
     final heart = HeartItem.random(++_heartId);
     _hearts.add(heart);
@@ -733,6 +772,14 @@ class _RoomPageState extends State<RoomPage> {
                 IconButton.filledTonal(
                   onPressed: _toggleSpeaker,
                   icon: Icon(_speakerOn ? Icons.volume_up : Icons.hearing),
+                ),
+                IconButton.filledTonal(
+                  onPressed: _uploading ? null : _uploadAndCastFile,
+                  icon: const Icon(Icons.upload_file),
+                ),
+                IconButton.filledTonal(
+                  onPressed: _openServerFile,
+                  icon: const Icon(Icons.file_open),
                 ),
                 IconButton.filled(
                   style: IconButton.styleFrom(

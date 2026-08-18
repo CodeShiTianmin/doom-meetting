@@ -81,6 +81,33 @@ class ApiClient {
         data: {'identity': identity, 'detail': detail});
   }
 
+  /// 手机端上传真实文件并直接投放到本房间(服务器保存, 会议结束后自动删除)
+  Future<Map<String, dynamic>> uploadAndCastFile({
+    required String roomCode,
+    required String identity,
+    String? nickname,
+    required String filePath,
+  }) async {
+    final formData = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath),
+      'identity': identity,
+      if (nickname != null) 'nickname': nickname,
+    });
+    final response = await _dio.post(
+      '/api/mobile/rooms/$roomCode/contents/upload',
+      data: formData,
+      options: Options(
+        sendTimeout: const Duration(minutes: 30),
+        receiveTimeout: const Duration(minutes: 30),
+      ),
+    );
+    return _unwrap(response);
+  }
+
+  /// 服务器文件下载/打开地址
+  String fileDownloadUrl(int contentId) =>
+      '${AppConfig.apiBaseUrl}/api/files/$contentId';
+
   /// App 版本检查(APK 私发分发)
   Future<Map<String, dynamic>> checkAppVersion(int currentVersionCode) async {
     final response = await _dio.get('/api/app/version',

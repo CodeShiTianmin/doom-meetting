@@ -12,8 +12,8 @@ import FavoriteIcon from '@mui/icons-material/Favorite'
 import SmartphoneIcon from '@mui/icons-material/Smartphone'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  castContent, closeRoom, createContent, getRoom, listRoomEvents,
-  regenerateInvite, updateRoomSettings,
+  castContent, closeRoom, getRoom, listRoomEvents,
+  regenerateInvite, updateRoomSettings, uploadContentFile,
 } from '../api'
 import { subscribeRoom } from '../api/ws'
 import RoomStatusChip from '../components/RoomStatusChip.jsx'
@@ -85,11 +85,8 @@ export default function RoomDetailPage() {
     if (!file) return
     setCasting(true)
     try {
-      const content = await createContent({
-        name: file.name,
-        type: 'LOCAL_FILE',
-        localPath: file.name,
-      })
+      // 真实文件上传到服务器, 会议结束后自动删除
+      const content = await uploadContentFile(file, id)
       await castContent(id, content.id)
       await refresh()
     } catch (err) {
@@ -138,7 +135,7 @@ export default function RoomDetailPage() {
           ref={fileInputRef}
           type="file"
           hidden
-          accept="video/*,audio/*,image/*,.pdf,.ppt,.pptx,.doc,.docx"
+          accept="video/*,audio/*,image/*,.pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.txt,.zip"
           onChange={onFileSelected}
         />
         <Button

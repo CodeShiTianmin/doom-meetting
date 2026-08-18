@@ -41,6 +41,7 @@ public class RoomService {
     private final InviteTokenRepository inviteTokenRepository;
     private final ContentItemRepository contentItemRepository;
     private final RoomEventLogRepository eventLogRepository;
+    private final ContentService contentService;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
     private final AppProperties properties;
@@ -180,10 +181,13 @@ public class RoomService {
         roomRepository.save(room);
         eventLogService.log(room, RoomEventType.CONTENT_CAST,
                 operator + " 投放内容: " + content.getName());
-        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CONTENT_CAST", Map.of(
-                "contentId", content.getId(),
-                "contentName", content.getName(),
-                "operator", operator));
+        Map<String, Object> castPayload = new HashMap<>();
+        castPayload.put("contentId", content.getId());
+        castPayload.put("contentName", content.getName());
+        castPayload.put("contentType", content.getType());
+        castPayload.put("contentFileUrl", ContentService.fileUrlOf(content));
+        castPayload.put("operator", operator);
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CONTENT_CAST", castPayload);
         return toResponse(room, latestInvite(room));
     }
 
@@ -217,6 +221,9 @@ public class RoomService {
             token.setRevoked(true);
             inviteTokenRepository.save(token);
         }
+        // 会议结束: 删除该房间上传到服务器的所有投放文件
+        contentService.deleteRoomFiles(room.getId());
+
         eventLogService.log(room, RoomEventType.ROOM_CLOSED,
                 reason == CloseReason.MANUAL ? "PC 端手动结束会议" : "会议时长到期自动关闭");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_CLOSED",
@@ -280,6 +287,9 @@ public class RoomService {
         state.put("contentId", content == null ? null : content.getId());
         state.put("contentName", content == null ? null : content.getName());
         state.put("contentDurationSeconds", content == null ? null : content.getDurationSeconds());
+        state.put("contentType", content == null ? null : content.getType());
+        state.put("contentFileUrl", content == null ? null : ContentService.fileUrlOf(content));
+        state.put("contentMimeType", content == null ? null : content.getMimeType());
         return state;
     }
 

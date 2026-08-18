@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -25,6 +26,14 @@ public class AdminContentController {
     public ApiResponse<ContentResponse> create(@Valid @RequestBody ContentRequest request,
                                                Authentication authentication) {
         return ApiResponse.ok(contentService.create(request, authentication.getName()));
+    }
+
+    /** 真实文件上传(管理网页/PC 端), 可关联房间以便会议结束后自动删除 */
+    @PostMapping("/upload")
+    public ApiResponse<ContentResponse> upload(@RequestParam("file") MultipartFile file,
+                                               @RequestParam(required = false) Long roomId,
+                                               Authentication authentication) {
+        return ApiResponse.ok(contentService.upload(file, roomId, authentication.getName()));
     }
 
     @GetMapping

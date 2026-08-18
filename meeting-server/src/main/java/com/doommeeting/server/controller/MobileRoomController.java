@@ -1,7 +1,10 @@
 package com.doommeeting.server.controller;
 
 import com.doommeeting.server.common.ApiResponse;
+import com.doommeeting.server.dto.ContentDtos.ContentResponse;
 import com.doommeeting.server.dto.MobileDtos.*;
+import com.doommeeting.server.entity.Room;
+import com.doommeeting.server.service.ContentService;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.MemberService;
 import com.doommeeting.server.service.PlaybackService;
@@ -9,6 +12,7 @@ import com.doommeeting.server.service.RoomService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
 
@@ -24,6 +28,7 @@ public class MobileRoomController {
     private final PlaybackService playbackService;
     private final LikeService likeService;
     private final RoomService roomService;
+    private final ContentService contentService;
 
     /** 扫码入会: 校验一次性凭证 -> 签发 LiveKit 入会 JWT */
     @PostMapping("/join")
@@ -66,6 +71,19 @@ public class MobileRoomController {
                                              @Valid @RequestBody RecordingReportRequest request) {
         memberService.reportRecording(roomCode, request);
         return ApiResponse.ok();
+    }
+
+    /** 手机端上传真实文件并直接投放到本房间(会议结束后自动删除) */
+    @PostMapping("/{roomCode}/contents/upload")
+    public ApiResponse<ContentResponse> uploadAndCast(@PathVariable String roomCode,
+                                                      @RequestParam("file") MultipartFile file,
+                                                      @RequestParam String identity,
+                                                      @RequestParam(required = false) String nickname) {
+        Room room = roomService.getRoomByCode(roomCode);
+        String operator = nickname == null || nickname.isBlank() ? identity : nickname;
+        ContentResponse content = contentService.upload(file, room.getId(), operator);
+        roomService.castContent(room.getId(), content.id(), operator);
+        return ApiResponse.ok(content);
     }
 
     /** 房间实时状态(会议时间/剩余时长/播放状态/功能开关) */
