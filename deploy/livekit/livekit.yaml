@@ -1,0 +1,13 @@
+# LiveKit 自部署配置: 关闭录制/转推, 零留存
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50200
+  use_external_ip: true
+keys:
+  # 与 meeting-server 的 LIVEKIT_API_KEY / LIVEKIT_API_SECRET 保持一致
+  devkey: devsecret-devsecret-devsecret-32
+# 不配置 egress / ingress / recording, 服务器无任何媒体写盘逻辑
+logging:
+  level: info

@@ -1,0 +1,52 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: meeting-server
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:doom_meeting}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+    open-in-view: false
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+app:
+  jwt:
+    # 公司账号(管理端/PC端)登录 JWT 密钥
+    secret: ${APP_JWT_SECRET:ZG9vbS1tZWV0aW5nLXNlcnZlci1qd3Qtc2VjcmV0LWtleS0yMDI2LXZlcnktbG9uZw==}
+    expire-minutes: ${APP_JWT_EXPIRE_MINUTES:720}
+  invite:
+    # 入会二维码/邀请令牌默认有效期(分钟)
+    expire-minutes: ${APP_INVITE_EXPIRE_MINUTES:120}
+    # 自定义 scheme 入会链接前缀
+    scheme: ${APP_INVITE_SCHEME:meeting://join}
+  room:
+    # 单房间手机客户端上限(PC 投屏端为后台隐藏角色, 不计入)
+    max-clients: 2
+    # 创建房间后缺人状态超过该分钟数, 后台亮红灯预警
+    understaffed-alert-minutes: 3
+  livekit:
+    # 自部署 LiveKit SFU 配置(关闭录制功能, 零留存)
+    api-key: ${LIVEKIT_API_KEY:devkey}
+    api-secret: ${LIVEKIT_API_SECRET:devsecret-devsecret-devsecret-32}
+    ws-url: ${LIVEKIT_WS_URL:wss://localhost:7880}
+    token-ttl-minutes: 180
+
+default-admin:
+  username: ${DEFAULT_ADMIN_USERNAME:admin}
+  password: ${DEFAULT_ADMIN_PASSWORD:admin123}
+  display-name: 公司管理员
+
+logging:
+  level:
+    com.doommeeting: info

@@ -1,0 +1,74 @@
+# 多房并发投屏会议软件 - 部署编排
+# Nginx + Spring Boot + LiveKit(自部署 SFU, 关闭录制) + coturn + MySQL
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: doom-meeting-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: doom_meeting
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3306:3306"
+
+  meeting-server:
+    build:
+      context: ../meeting-server
+    container_name: doom-meeting-server
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: doom_meeting
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-devsecret-devsecret-devsecret-32}
+      LIVEKIT_WS_URL: ${LIVEKIT_WS_URL:-wss://your-domain:7880}
+      APP_JWT_SECRET: ${APP_JWT_SECRET:-ZG9vbS1tZWV0aW5nLXNlcnZlci1qd3Qtc2VjcmV0LWtleS0yMDI2LXZlcnktbG9uZw==}
+    ports:
+      - "8080:8080"
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: doom-meeting-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-50200:50000-50200/udp"
+
+  coturn:
+    image: coturn/coturn:latest
+    container_name: doom-meeting-coturn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+
+  nginx:
+    image: nginx:stable
+    container_name: doom-meeting-nginx
+    restart: unless-stopped
+    depends_on:
+      - meeting-server
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../meeting-admin/dist:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+      - "443:443"
+
+volumes:
+  mysql-data:

@@ -1,0 +1,75 @@
+package com.doommeeting.server.dto;
+
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+public class RoomDtos {
+
+    public record CreateRoomRequest(
+            @NotBlank(message = "房间名称不能为空") String name,
+            @NotNull(message = "会议时长不能为空")
+            @Min(value = 1, message = "会议时长至少1分钟")
+            @Max(value = 720, message = "会议时长最多720分钟") Integer durationMinutes,
+            Boolean videoCallEnabled,
+            Boolean cameraEnabled,
+            Long contentId) {
+    }
+
+    public record RoomSettingsRequest(
+            Boolean videoCallEnabled,
+            Boolean cameraEnabled,
+            Integer durationMinutes) {
+    }
+
+    public record RoomResponse(
+            Long id,
+            String roomCode,
+            String name,
+            String status,
+            Boolean videoCallEnabled,
+            Boolean cameraEnabled,
+            Boolean screenshotAllowed,
+            Boolean recordingForbidden,
+            Integer durationMinutes,
+            LocalDateTime meetingStartAt,
+            LocalDateTime meetingEndAt,
+            Long remainingSeconds,
+            Long contentId,
+            String contentName,
+            String playbackState,
+            Double playbackPositionSeconds,
+            Long likeCount,
+            Boolean understaffedAlert,
+            LocalDateTime understaffedSince,
+            Integer onlineMemberCount,
+            List<MemberResponse> members,
+            String inviteUrl,
+            String qrContent,
+            LocalDateTime inviteExpireAt,
+            String closeReason,
+            LocalDateTime closedAt,
+            String createdBy,
+            LocalDateTime createdAt) {
+    }
+
+    public record MemberResponse(
+            Long id,
+            String identity,
+            String nickname,
+            String deviceInfo,
+            Boolean online,
+            LocalDateTime joinedAt,
+            LocalDateTime leftAt) {
+    }
+
+    public record CastRequest(@NotNull(message = "内容不能为空") Long contentId) {
+    }
+
+    public record RoomEventResponse(Long id, String type, String detail, LocalDateTime createdAt) {
+    }
+}
