@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `meeting-server/` | 后台业务 + 信令 | Java 17 + Spring Boot 3 + MySQL 8 + Spring Security(JWT) + WebSocket(STOMP) |
 | `meeting-admin/` | 公司管理系统(PC 端) | Vite + React 18 + Material UI |
-| `meeting-mobile/` | 手机客户端 H5 | Vite + React 18 + Material UI + livekit-client |
+| `meeting-app-flutter/` | 手机客户端 App | Flutter 3 + livekit_client + STOMP |
 | `deploy/` | 一键部署 | Docker Compose(Nginx + Spring Boot + LiveKit + coturn + MySQL) |
 
 ## 核心功能
@@ -31,8 +31,10 @@ cd meeting-server && mvn spring-boot:run
 # 管理端 (http://localhost:5173, 默认账号 admin/admin123)
 cd meeting-admin && npm install && npm run dev
 
-# 手机端 (http://localhost:5174)
-cd meeting-mobile && npm install && npm run dev
+# 手机端 (Flutter, 支持 Android/iOS)
+cd meeting-app-flutter && flutter pub get && flutter run \
+  --dart-define=API_BASE_URL=http://<后端地址>:8080 \
+  --dart-define=WS_URL=ws://<后端地址>:8080/ws
 
 # 或 Docker Compose 一键部署
 cd deploy && docker compose up -d
