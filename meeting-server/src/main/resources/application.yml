@@ -35,6 +35,8 @@ app:
     max-clients: 2
     # 创建房间后缺人状态超过该分钟数, 后台亮红灯预警
     understaffed-alert-minutes: 3
+    # 手机端心跳超时秒数, 超时判定离线(进入缺人计时)
+    heartbeat-timeout-seconds: ${APP_ROOM_HEARTBEAT_TIMEOUT_SECONDS:60}
   livekit:
     # 自部署 LiveKit SFU 配置(关闭录制功能, 零留存)
     api-key: ${LIVEKIT_API_KEY:devkey}
