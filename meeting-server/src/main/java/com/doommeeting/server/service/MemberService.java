@@ -80,25 +80,7 @@ public class MemberService {
                 "nickname", member.getNickname(),
                 "onlineCount", onlineCount + 1));
 
-        // 全部成员就位 -> 房间运行, 开始会议计时
-        if (onlineCount + 1 >= maxMembers(room)
-                && room.getStatus() == RoomStatus.WAITING) {
-            room.setStatus(RoomStatus.RUNNING);
-            room.setMeetingStartAt(LocalDateTime.now());
-            room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
-            room.setUnderstaffedAlert(false);
-            room.setUnderstaffedSince(null);
-            roomRepository.save(room);
-            eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                    maxMembers(room) + " 个手机客户端已就位, 会议开始计时");
-            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
-                    "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
-                    "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
-                    "durationMinutes", room.getDurationMinutes()));
-        } else if (onlineCount + 1 >= maxMembers(room)) {
-            // 运行中重新满员, 解除缺人预警
-            clearUnderstaffed(room);
-        }
+        startOrRecoverIfFull(room, onlineCount + 1);
 
         ContentItem content = room.getCurrentContent();
         return new JoinRoomResponse(
@@ -156,7 +138,24 @@ public class MemberService {
         Room room = roomService.getRoomByCode(roomCode);
         memberRepository.findByRoomAndIdentity(room, identity).ifPresent(member -> {
             member.setLastHeartbeatAt(LocalDateTime.now());
-            memberRepository.save(member);
+            // 心跳超时被判定离线的成员恢复心跳后自动重新上线
+            if (!member.getOnline()
+                    && room.getStatus() != RoomStatus.CLOSED
+                    && memberRepository.countByRoomAndOnlineTrue(room) < maxMembers(room)) {
+                member.setOnline(true);
+                member.setLeftAt(null);
+                memberRepository.save(member);
+                long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
+                eventLogService.log(room, RoomEventType.MEMBER_JOINED,
+                        member.getNickname() + " 心跳恢复, 重新上线");
+                notificationService.pushToRoomAndAdmin(room.getRoomCode(), "MEMBER_JOINED", Map.of(
+                        "identity", member.getIdentity(),
+                        "nickname", member.getNickname(),
+                        "onlineCount", onlineCount));
+                startOrRecoverIfFull(room, onlineCount);
+            } else {
+                memberRepository.save(member);
+            }
         });
     }
 
@@ -203,6 +202,29 @@ public class MemberService {
                 "identity", member.getIdentity(),
                 "nickname", member.getNickname(),
                 "detail", request.detail() == null ? "" : request.detail()));
+    }
+
+    /** 全部成员就位 -> 房间运行开始会议计时; 运行中重新满员 -> 解除缺人预警 */
+    private void startOrRecoverIfFull(Room room, long onlineCount) {
+        if (onlineCount < maxMembers(room)) {
+            return;
+        }
+        if (room.getStatus() == RoomStatus.WAITING) {
+            room.setStatus(RoomStatus.RUNNING);
+            room.setMeetingStartAt(LocalDateTime.now());
+            room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
+            room.setUnderstaffedAlert(false);
+            room.setUnderstaffedSince(null);
+            roomRepository.save(room);
+            eventLogService.log(room, RoomEventType.ROOM_RUNNING,
+                    maxMembers(room) + " 个手机客户端已就位, 会议开始计时");
+            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
+                    "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
+                    "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
+                    "durationMinutes", room.getDurationMinutes()));
+        } else {
+            clearUnderstaffed(room);
+        }
     }
 
     private int maxMembers(Room room) {

@@ -92,7 +92,6 @@ class _RoomPageState extends State<RoomPage> {
       _brightness = current;
     } catch (_) {}
     try {
-      VolumeController().listener((volume) {});
       final current = await VolumeController().getVolume();
       _volume = current;
     } catch (_) {}
@@ -403,6 +402,9 @@ class _RoomPageState extends State<RoomPage> {
     _clockTimer?.cancel();
     _ws.disconnect();
     _recordingGuard.stop();
+    try {
+      VolumeController().removeListener();
+    } catch (_) {}
     _lkListener?.dispose();
     _lkRoom?.dispose();
     WakelockPlus.disable();

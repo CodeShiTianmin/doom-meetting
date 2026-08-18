@@ -114,6 +114,20 @@ public class RoomService {
             }
             room.setMaxMembers(request.maxMembers());
             detail.append(" 成员数上限=").append(request.maxMembers()).append("人");
+            InviteToken activeInvite = latestInvite(room);
+            if (activeInvite != null) {
+                activeInvite.setMaxUses(Math.max(activeInvite.getUsedCount(), request.maxMembers()));
+                inviteTokenRepository.save(activeInvite);
+            }
+            if (onlineCount >= request.maxMembers()) {
+                if (room.getStatus() == RoomStatus.WAITING) {
+                    startMeeting(room);
+                }
+                room.setUnderstaffedAlert(false);
+                room.setUnderstaffedSince(null);
+            } else if (room.getUnderstaffedSince() == null) {
+                room.setUnderstaffedSince(LocalDateTime.now());
+            }
         }
         roomRepository.save(room);
         eventLogService.log(room, RoomEventType.SETTINGS_CHANGED, detail.toString());
@@ -125,6 +139,19 @@ public class RoomService {
                 "maxMembers", room.getMaxMembers(),
                 "meetingEndAt", String.valueOf(room.getMeetingEndAt())));
         return toResponse(room, latestInvite(room));
+    }
+
+    /** 成员数上限调整后已满员的等待房间立即进入运行状态 */
+    private void startMeeting(Room room) {
+        room.setStatus(RoomStatus.RUNNING);
+        room.setMeetingStartAt(LocalDateTime.now());
+        room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
+        eventLogService.log(room, RoomEventType.ROOM_RUNNING,
+                "成员数上限调整后已满员, 会议开始计时");
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
+                "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
+                "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
+                "durationMinutes", room.getDurationMinutes()));
     }
 
     /** PC 端立即投放内容到指定房间(不同房间不同内容并行, 不串音不串频) */
