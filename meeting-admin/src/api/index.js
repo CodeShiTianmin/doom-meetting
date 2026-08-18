@@ -36,6 +36,8 @@ export const cancelSchedule = (id) => client.post(`/admin/cast-schedules/${id}/c
 
 // ---------- 仪表盘 / 点赞 ----------
 export const getDashboardSummary = () => client.get('/admin/dashboard/summary')
+export const getDashboardTrends = (days = 7) =>
+  client.get('/admin/dashboard/trends', { params: { days } })
 export const listAllLikes = () => client.get('/admin/likes')
 
 // ---------- 用户管理 ----------
