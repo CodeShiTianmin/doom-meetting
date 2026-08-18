@@ -2,6 +2,8 @@ package com.doommeeting.server.controller;
 
 import com.doommeeting.server.common.ApiResponse;
 import com.doommeeting.server.dto.DashboardDtos.DashboardSummary;
+import com.doommeeting.server.dto.DashboardDtos.TrendPoint;
+import org.springframework.web.bind.annotation.RequestParam;
 import com.doommeeting.server.dto.LikeDtos.LikeRecordResponse;
 import com.doommeeting.server.service.DashboardService;
 import com.doommeeting.server.service.LikeService;
@@ -26,6 +28,11 @@ public class AdminDashboardController {
     @GetMapping("/dashboard/summary")
     public ApiResponse<DashboardSummary> summary() {
         return ApiResponse.ok(dashboardService.summary());
+    }
+
+    @GetMapping("/dashboard/trends")
+    public ApiResponse<List<TrendPoint>> trends(@RequestParam(defaultValue = "7") int days) {
+        return ApiResponse.ok(dashboardService.trends(Math.min(Math.max(days, 1), 90)));
     }
 
     @GetMapping("/likes")

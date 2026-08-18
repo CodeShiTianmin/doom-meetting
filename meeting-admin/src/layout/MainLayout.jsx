@@ -8,6 +8,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard'
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom'
 import ScheduleIcon from '@mui/icons-material/Schedule'
 import PeopleIcon from '@mui/icons-material/People'
+import FavoriteIcon from '@mui/icons-material/Favorite'
 import LogoutIcon from '@mui/icons-material/Logout'
 import CastConnectedIcon from '@mui/icons-material/CastConnected'
 import NotificationsIcon from '@mui/icons-material/Notifications'
@@ -19,6 +20,7 @@ const menus = [
   { path: '/dashboard', label: '仪表盘', icon: <DashboardIcon /> },
   { path: '/rooms', label: '房间管理', icon: <MeetingRoomIcon /> },
   { path: '/schedules', label: '投放计划', icon: <ScheduleIcon /> },
+  { path: '/likes', label: '点赞记录', icon: <FavoriteIcon /> },
   { path: '/users', label: '用户管理', icon: <PeopleIcon /> },
 ]
 

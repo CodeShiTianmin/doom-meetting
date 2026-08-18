@@ -16,4 +16,6 @@ public interface RoomLikeRepository extends JpaRepository<RoomLike, Long> {
     long countByRoom(Room room);
 
     long countByLikedAtAfter(LocalDateTime time);
+
+    List<RoomLike> findByLikedAtAfter(LocalDateTime time);
 }

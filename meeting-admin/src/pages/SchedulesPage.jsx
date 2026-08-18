@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions,
   DialogContent, DialogTitle, MenuItem, Table, TableBody, TableCell, TableHead,
@@ -6,7 +6,8 @@ import {
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import CancelIcon from '@mui/icons-material/Cancel'
-import { cancelSchedule, createSchedule, listContents, listRooms, listSchedules } from '../api'
+import UploadFileIcon from '@mui/icons-material/UploadFile'
+import { cancelSchedule, createContent, createSchedule, listContents, listRooms, listSchedules } from '../api'
 
 const statusMap = {
   PENDING: { label: '待执行', color: 'warning' },
@@ -22,6 +23,7 @@ export default function SchedulesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState({ roomId: '', contentId: '', castAt: '', note: '' })
   const [error, setError] = useState('')
+  const fileInputRef = useRef(null)
 
   const refresh = useCallback(async () => {
     setSchedules(await listSchedules())
@@ -42,6 +44,31 @@ export default function SchedulesPage() {
     } catch {
       setRooms([])
       setContents([])
+    }
+  }
+
+  const onFileSelected = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setError('')
+    try {
+      const existing = contents.find(
+        (content) => content.type === 'LOCAL_FILE' && content.localPath === file.name,
+      )
+      let contentId = existing?.id
+      if (!contentId) {
+        const created = await createContent({
+          name: file.name,
+          type: 'LOCAL_FILE',
+          localPath: file.name,
+        })
+        contentId = created.id
+        setContents((prev) => [created, ...prev])
+      }
+      setForm((prev) => ({ ...prev, contentId: String(contentId) }))
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -153,16 +180,34 @@ export default function SchedulesPage() {
               </MenuItem>
             ))}
           </TextField>
-          <TextField
-            select
-            label="投放内容"
-            value={form.contentId}
-            onChange={(e) => setForm({ ...form, contentId: e.target.value })}
-          >
-            {contents.map((content) => (
-              <MenuItem key={content.id} value={content.id}>{content.name}</MenuItem>
-            ))}
-          </TextField>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <TextField
+              select
+              fullWidth
+              label="投放内容(常用文件)"
+              value={form.contentId}
+              onChange={(e) => setForm({ ...form, contentId: e.target.value })}
+            >
+              {contents.map((content) => (
+                <MenuItem key={content.id} value={String(content.id)}>{content.name}</MenuItem>
+              ))}
+            </TextField>
+            <Button
+              variant="outlined"
+              startIcon={<UploadFileIcon />}
+              sx={{ whiteSpace: 'nowrap', px: 2 }}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              选择文件
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              hidden
+              accept="video/*,audio/*,image/*,.pdf,.ppt,.pptx,.doc,.docx"
+              onChange={onFileSelected}
+            />
+          </Box>
           <TextField
             label="投放时间"
             type="datetime-local"

@@ -23,4 +23,6 @@ public interface RoomRepository extends JpaRepository<Room, Long> {
     long countByStatus(RoomStatus status);
 
     long countByUnderstaffedAlertTrueAndStatusNot(RoomStatus status);
+
+    List<Room> findByCreatedAtAfter(LocalDateTime time);
 }

@@ -13,4 +13,10 @@ public class DashboardDtos {
             long totalContents,
             long pendingSchedules) {
     }
+
+    public record TrendPoint(
+            String date,
+            long likes,
+            long rooms) {
+    }
 }
