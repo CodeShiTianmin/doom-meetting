@@ -80,7 +80,14 @@ export default function ContentsPage() {
 
   const toggleEnabled = async (content) => {
     try {
-      await updateContent(content.id, { enabled: !content.enabled })
+      await updateContent(content.id, {
+        name: content.name,
+        description: content.description || null,
+        type: content.type,
+        localPath: content.localPath || null,
+        durationSeconds: content.durationSeconds ?? null,
+        enabled: !content.enabled,
+      })
       await refresh()
     } catch (err) {
       setError(err.message)
