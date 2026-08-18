@@ -99,6 +99,7 @@ public class MobileRoomController {
         ContentItem content = room.getCurrentContent();
         state.put("contentId", content == null ? null : content.getId());
         state.put("contentName", content == null ? null : content.getName());
+        state.put("contentDurationSeconds", content == null ? null : content.getDurationSeconds());
         return ApiResponse.ok(state);
     }
 }

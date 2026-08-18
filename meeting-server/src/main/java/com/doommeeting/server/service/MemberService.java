@@ -160,6 +160,36 @@ public class MemberService {
         });
     }
 
+    /** 心跳超时的在线成员判定离线(进入缺人计时, 超阈值后台亮红灯) */
+    @Transactional
+    public void markStaleMembersOffline(LocalDateTime now) {
+        LocalDateTime threshold = now.minusSeconds(properties.getRoom().getHeartbeatTimeoutSeconds());
+        for (RoomMember member : memberRepository.findByOnlineTrueAndLastHeartbeatAtBefore(threshold)) {
+            Room room = member.getRoom();
+            if (room.getStatus() == RoomStatus.CLOSED) {
+                continue;
+            }
+            member.setOnline(false);
+            member.setLeftAt(now);
+            memberRepository.save(member);
+
+            eventLogService.log(room, RoomEventType.MEMBER_LEFT,
+                    member.getNickname() + " 心跳超时, 判定离线");
+            long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
+            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "MEMBER_LEFT", Map.of(
+                    "identity", member.getIdentity(),
+                    "nickname", member.getNickname(),
+                    "onlineCount", onlineCount,
+                    "reason", "HEARTBEAT_TIMEOUT"));
+
+            if (onlineCount < properties.getRoom().getMaxClients()
+                    && room.getUnderstaffedSince() == null) {
+                room.setUnderstaffedSince(now);
+                roomRepository.save(room);
+            }
+        }
+    }
+
     /** 手机端检测到录屏 -> 遮挡画面并上报 */
     @Transactional
     public void reportRecording(String roomCode, RecordingReportRequest request) {

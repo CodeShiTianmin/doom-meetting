@@ -35,6 +35,7 @@ public class AppProperties {
     public static class Room {
         private int maxClients = 2;
         private int understaffedAlertMinutes = 3;
+        private int heartbeatTimeoutSeconds = 60;
     }
 
     @Getter

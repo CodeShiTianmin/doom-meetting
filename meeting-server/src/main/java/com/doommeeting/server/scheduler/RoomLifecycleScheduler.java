@@ -8,6 +8,7 @@ import com.doommeeting.server.enums.RoomStatus;
 import com.doommeeting.server.repository.RoomRepository;
 import com.doommeeting.server.service.CastScheduleService;
 import com.doommeeting.server.service.EventLogService;
+import com.doommeeting.server.service.MemberService;
 import com.doommeeting.server.service.NotificationService;
 import com.doommeeting.server.service.RoomService;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ import java.util.Map;
 
 /**
  * 房间生命周期调度:
+ * 0. 心跳超时离线判定
  * 1. 缺人红灯预警: 创建房间(或成员离会)后缺人状态超过 3 分钟, 后台亮红灯
  * 2. 会议倒计时提醒: 剩余 5 分钟 / 1 分钟推送提醒
  * 3. 会议到期自动关闭
@@ -35,6 +37,7 @@ public class RoomLifecycleScheduler {
 
     private final RoomRepository roomRepository;
     private final RoomService roomService;
+    private final MemberService memberService;
     private final CastScheduleService castScheduleService;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
@@ -44,6 +47,7 @@ public class RoomLifecycleScheduler {
     @Transactional
     public void tick() {
         LocalDateTime now = LocalDateTime.now();
+        memberService.markStaleMembersOffline(now);
         checkUnderstaffedAlerts(now);
         checkCountdownReminders(now);
         autoCloseExpiredRooms(now);
