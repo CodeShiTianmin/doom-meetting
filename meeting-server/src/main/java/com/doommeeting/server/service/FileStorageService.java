@@ -1,6 +1,7 @@
 package com.doommeeting.server.service;
 
 import com.doommeeting.server.common.BusinessException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -17,6 +18,7 @@ import java.util.UUID;
 /**
  * 投放文件存储: 上传文件保存到服务器磁盘, 会议结束后由业务层删除
  */
+@Slf4j
 @Service
 public class FileStorageService {
 
@@ -36,10 +38,16 @@ public class FileStorageService {
         String original = file.getOriginalFilename() == null ? "file" : file.getOriginalFilename();
         String safeName = Paths.get(original).getFileName().toString().replaceAll("[\\\\/:*?\"<>|]", "_");
         String relativePath = UUID.randomUUID().toString().replace("-", "") + "_" + safeName;
+        Path target = rootDir.resolve(relativePath);
         try {
-            Files.copy(file.getInputStream(), rootDir.resolve(relativePath),
-                    StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
+            // 清理可能残留的半个文件
+            try {
+                Files.deleteIfExists(target);
+            } catch (IOException cleanupError) {
+                log.warn("清理残留文件失败: {}", target, cleanupError);
+            }
             throw new BusinessException("文件保存失败: " + e.getMessage());
         }
         return relativePath;
@@ -61,7 +69,7 @@ public class FileStorageService {
         }
     }
 
-    /** 删除存储文件(会议结束清理), 失败不抛异常 */
+    /** 删除存储文件(会议结束清理), 失败记录日志不抛异常 */
     public void delete(String relativePath) {
         if (relativePath == null || relativePath.isBlank()) {
             return;
@@ -71,7 +79,8 @@ public class FileStorageService {
             if (path.startsWith(rootDir)) {
                 Files.deleteIfExists(path);
             }
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            log.warn("删除存储文件失败(磁盘残留): {}", relativePath, e);
         }
     }
 }

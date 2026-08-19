@@ -16,6 +16,8 @@ class ApiClient {
     baseUrl: AppConfig.apiBaseUrl,
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 10),
+    // 业务错误使用 HTTP 4xx + {code,message} 返回, 由 _unwrap 统一解析
+    validateStatus: (status) => status != null && status < 500,
   ))
     ..interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
       if (_token != null) {
@@ -45,6 +47,9 @@ class ApiClient {
   }
 
   bool get loggedIn => _token != null;
+
+  /// 管理端 JWT(WebSocket CONNECT 鉴权用)
+  String? get token => _token;
 
   Future<void> login(String user, String password) async {
     final response = await _dio.post('/api/auth/login',
@@ -120,6 +125,26 @@ class ApiClient {
     return RoomModel.fromJson(_unwrap(response));
   }
 
+  /// 屏幕/窗口共享开始登记(服务端状态, 跨端冲突检查可感知)
+  Future<RoomModel> startScreenShare(int roomId, {bool replace = false}) async {
+    final response = await _dio.post(
+        '/api/admin/rooms/$roomId/screen-share/start',
+        queryParameters: {'replace': replace});
+    return RoomModel.fromJson(_unwrap(response));
+  }
+
+  /// 屏幕/窗口共享停止登记
+  Future<RoomModel> stopScreenShare(int roomId) async {
+    final response =
+        await _dio.post('/api/admin/rooms/$roomId/screen-share/stop');
+    return RoomModel.fromJson(_unwrap(response));
+  }
+
+  /// 删除内容(上传成功但投放失败时清理孤儿文件)
+  Future<void> deleteContent(int contentId) async {
+    await _dio.delete('/api/admin/contents/$contentId');
+  }
+
   /// PC 端播放控制: PLAY/PAUSE/SEEK/BRIGHTNESS/VOLUME, 实时下发到房间内全部手机端
   Future<Map<String, dynamic>> controlPlayback(int roomId, String action,
       {double? positionSeconds, double? value}) async {
@@ -178,9 +203,9 @@ class ApiClient {
     return ContentModel.fromJson(_unwrap(response));
   }
 
-  /// 服务器文件下载地址
-  String fileDownloadUrl(int contentId) =>
-      '${AppConfig.apiBaseUrl}/api/files/$contentId';
+  /// 服务器文件下载地址(fileUrl 为服务端下发的带签名 token 的相对地址)
+  String fileDownloadUrl(String fileUrl) =>
+      fileUrl.startsWith('http') ? fileUrl : '${AppConfig.apiBaseUrl}$fileUrl';
 }
 
 class ApiException implements Exception {

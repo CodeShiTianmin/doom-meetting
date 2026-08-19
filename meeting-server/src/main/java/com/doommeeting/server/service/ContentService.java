@@ -20,6 +20,7 @@ public class ContentService {
 
     private final ContentItemRepository contentItemRepository;
     private final FileStorageService fileStorageService;
+    private final FileAccessTokenService fileAccessTokenService;
 
     /** 上传真实文件并登记为投放内容, 可关联房间(会议结束后自动删除) */
     @Transactional
@@ -102,7 +103,12 @@ public class ContentService {
                 content.getCreatedAt());
     }
 
-    public static String fileUrlOf(ContentItem content) {
-        return content.getStoragePath() == null ? null : "/api/files/" + content.getId();
+    /** 生成带短时效签名 token 的文件访问 URL */
+    public String fileUrlOf(ContentItem content) {
+        if (content.getStoragePath() == null) {
+            return null;
+        }
+        return "/api/files/" + content.getId()
+                + "?token=" + fileAccessTokenService.issueToken(content.getId());
     }
 }

@@ -70,6 +70,7 @@ class CastSession extends ChangeNotifier {
   /// 屏幕/窗口投屏: 捕获整屏或指定窗口推流, 系统伴音走回环采集
   Future<void> startScreenCast(webrtc.DesktopCapturerSource source) async {
     await stopCast();
+    final participant = _requireParticipant();
     final track = await lk.LocalVideoTrack.createScreenShareTrack(
       lk.ScreenShareCaptureOptions(
         sourceId: source.id,
@@ -77,7 +78,7 @@ class CastSession extends ChangeNotifier {
         maxFrameRate: 30,
       ),
     );
-    await _lkRoom?.localParticipant?.publishVideoTrack(track);
+    await participant.publishVideoTrack(track);
     mode = CastMode.screen;
     publishing = true;
     notifyListeners();
@@ -93,6 +94,7 @@ class CastSession extends ChangeNotifier {
     _videoController = VideoController(_player!);
     await _player!.open(Media(path), play: false);
 
+    final participant = _requireParticipant();
     final track = await lk.LocalVideoTrack.createScreenShareTrack(
       lk.ScreenShareCaptureOptions(
         sourceId: playerWindowSource.id,
@@ -100,10 +102,19 @@ class CastSession extends ChangeNotifier {
         maxFrameRate: 30,
       ),
     );
-    await _lkRoom?.localParticipant?.publishVideoTrack(track);
+    await participant.publishVideoTrack(track);
     mode = CastMode.file;
     publishing = true;
     notifyListeners();
+  }
+
+  /// 未连接时直接报错, 避免静默跳过推流却显示投屏中的"假成功"
+  lk.LocalParticipant _requireParticipant() {
+    final participant = connected ? _lkRoom?.localParticipant : null;
+    if (participant == null) {
+      throw StateError('媒体服务未连接, 无法推流');
+    }
+    return participant;
   }
 
   /// 手机端播放控制指令(经后端信令转发, 权威状态由后端广播)

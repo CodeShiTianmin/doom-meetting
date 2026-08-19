@@ -48,4 +48,10 @@ cd deploy && docker compose up -d
 
 ## 安全设计
 
-全链路 HTTPS/WSS；媒体流 WebRTC DTLS-SRTP 加密；SFU 关闭录制/转推；上传的投放文件仅在会议期间保存在服务器，会议结束（房间关闭）后自动删除；一次性入会凭证（短时效 + 绑定房间 + 限用次数）；房间人数硬限制（成员数上限可按房间设置，默认 2）。
+全链路 HTTPS/WSS；媒体流 WebRTC DTLS-SRTP 加密；SFU 关闭录制/转推；上传的投放文件仅在会议期间保存在服务器，会议结束（房间关闭）后自动删除；一次性入会凭证（短时效 + 绑定房间 + 限用次数）；房间人数硬限制（成员数上限可按房间设置，默认 2）；文件下载需短时效签名 token 或管理员 JWT；WebSocket 订阅需管理员 JWT（admin topic）或房间成员身份（房间 topic）。
+
+生产环境务必通过环境变量覆盖默认密钥（`APP_JWT_SECRET`、`LIVEKIT_API_KEY/LIVEKIT_API_SECRET`、`DEFAULT_ADMIN_PASSWORD`），并设置 `APP_REJECT_DEFAULT_SECRETS=true` 强制启动校验；同时用 `APP_CORS_ALLOWED_ORIGINS` 限定管理网页域名。
+
+## 部署约束
+
+后端并发控制依赖 JVM 内锁（`synchronized`），调度器无分布式锁，**仅支持单实例部署**。如需多实例横向扩展，需先引入数据库乐观锁/分布式锁（如 ShedLock）。

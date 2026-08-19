@@ -170,7 +170,7 @@ class _JoinPageState extends State<JoinPage> {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF5B8DEF).withOpacity(0.35),
+                            color: const Color(0xFF5B8DEF).withValues(alpha: 0.35),
                             blurRadius: 28,
                           ),
                         ],

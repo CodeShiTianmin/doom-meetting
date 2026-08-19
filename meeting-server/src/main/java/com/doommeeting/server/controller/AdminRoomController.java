@@ -58,6 +58,21 @@ public class AdminRoomController {
                 authentication.getName(), Boolean.TRUE.equals(request.replace())));
     }
 
+    /** PC 端屏幕/窗口共享开始登记(跨端冲突检查可感知) */
+    @PostMapping("/{id}/screen-share/start")
+    public ApiResponse<RoomResponse> startScreenShare(@PathVariable Long id,
+                                                      @RequestParam(defaultValue = "false") boolean replace,
+                                                      Authentication authentication) {
+        return ApiResponse.ok(roomService.startScreenShare(id, authentication.getName(), replace));
+    }
+
+    /** PC 端屏幕/窗口共享停止登记 */
+    @PostMapping("/{id}/screen-share/stop")
+    public ApiResponse<RoomResponse> stopScreenShare(@PathVariable Long id,
+                                                     Authentication authentication) {
+        return ApiResponse.ok(roomService.stopScreenShare(id, authentication.getName()));
+    }
+
     /** 停止当前投放: 清除房间当前内容并重置播放状态 */
     @PostMapping("/{id}/cast/stop")
     public ApiResponse<RoomResponse> stopCast(@PathVariable Long id,

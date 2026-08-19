@@ -14,6 +14,8 @@ class ApiClient {
     baseUrl: AppConfig.apiBaseUrl,
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 10),
+    // 业务错误使用 HTTP 4xx + {code,message} 返回, 由 _unwrap 统一解析
+    validateStatus: (status) => status != null && status < 500,
   ));
 
   Map<String, dynamic> _unwrap(Response<dynamic> response) {
@@ -107,9 +109,9 @@ class ApiClient {
     return _unwrap(response);
   }
 
-  /// 服务器文件下载/打开地址
-  String fileDownloadUrl(int contentId) =>
-      '${AppConfig.apiBaseUrl}/api/files/$contentId';
+  /// 服务器文件下载/打开地址(fileUrl 为服务端下发的带签名 token 的相对地址)
+  String fileDownloadUrl(String fileUrl) =>
+      fileUrl.startsWith('http') ? fileUrl : '${AppConfig.apiBaseUrl}$fileUrl';
 
   /// App 版本检查(APK 私发分发)
   Future<Map<String, dynamic>> checkAppVersion(int currentVersionCode) async {

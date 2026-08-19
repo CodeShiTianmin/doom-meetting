@@ -110,13 +110,17 @@ class _RoomCastPageState extends State<RoomCastPage> {
   // ---------- 投放操作 ----------
 
   bool get _hasActiveCast =>
-      _room?.contentId != null || _session?.publishing == true;
+      _room?.contentId != null ||
+      _room?.screenSharing == true ||
+      _session?.publishing == true;
 
   /// 投放前冲突检查: 已有投放时提示先停止, 用户确认后停止旧投放再继续
   Future<bool> _confirmReplaceCast() async {
     if (!_hasActiveCast) return true;
     final currentName = _room?.contentName ??
-        (_session?.mode == CastMode.screen ? '屏幕/窗口投屏' : '当前投放');
+        (_room?.screenSharing == true || _session?.mode == CastMode.screen
+            ? '屏幕/窗口投屏'
+            : '当前投放');
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -168,7 +172,17 @@ class _RoomCastPageState extends State<RoomCastPage> {
       ),
     );
     if (selected != null) {
-      await session.startScreenCast(selected);
+      try {
+        await session.startScreenCast(selected);
+        // 服务端登记屏幕共享状态, 其他端冲突检查可感知
+        await ApiClient.instance
+            .startScreenShare(widget.roomId, replace: true);
+      } catch (error) {
+        await session.stopCast();
+        _showToast('投屏启动失败: $error');
+        return;
+      }
+      await _refreshRoom();
       _showToast('已开始投屏: ${selected.name}');
     }
   }
@@ -198,15 +212,24 @@ class _RoomCastPageState extends State<RoomCastPage> {
     try {
       content = await ApiClient.instance
           .uploadContentFile(path, roomId: widget.roomId);
-      await ApiClient.instance
-          .castContent(widget.roomId, content.id, replace: true);
     } on ApiException catch (error) {
-      _showToast(error.castConflict
-          ? '投放冲突: ${error.message}'
-          : '文件上传失败: ${error.message}');
+      _showToast('文件上传失败: ${error.message}');
       return;
     } catch (error) {
       _showToast('文件上传失败: $error');
+      return;
+    }
+    try {
+      await ApiClient.instance
+          .castContent(widget.roomId, content.id, replace: true);
+    } catch (error) {
+      // 投放失败时删除刚上传的内容, 避免孤儿文件
+      try {
+        await ApiClient.instance.deleteContent(content.id);
+      } catch (_) {}
+      _showToast(error is ApiException && error.castConflict
+          ? '投放冲突: ${error.message}'
+          : '投放失败: $error');
       return;
     }
 
@@ -239,27 +262,29 @@ class _RoomCastPageState extends State<RoomCastPage> {
     _showToast('已投放文件: $name');
   }
 
-  /// 打开服务器上存储的当前投放文件
+  /// 打开服务器上存储的当前投放文件(使用服务端下发的带签名 token 的地址)
   Future<void> _openServerFile() async {
-    final contentId = _room?.contentId;
-    if (contentId == null) {
+    final fileUrl = _room?.contentFileUrl;
+    if (fileUrl == null) {
       _showToast('当前房间没有投放内容');
       return;
     }
-    final url = ApiClient.instance.fileDownloadUrl(contentId);
+    final url = ApiClient.instance.fileDownloadUrl(fileUrl);
     await launchUrl(Uri.parse(url));
   }
 
   /// 停止投放: 同时停止本地推流与服务器投放状态
+  /// (无条件调用服务端停止, 不依赖本地轮询快照, 后端容忍无投放时的停止)
   Future<void> _stopCast({bool silent = false}) async {
     await _session?.stopCast();
-    if (_room?.contentId != null) {
-      try {
-        await ApiClient.instance.stopCastContent(widget.roomId);
-      } on ApiException catch (error) {
-        if (!silent) _showToast('停止服务器投放失败: ${error.message}');
-      }
+    try {
+      await ApiClient.instance.stopCastContent(widget.roomId);
+    } on ApiException catch (error) {
+      if (!silent) _showToast('停止服务器投放失败: ${error.message}');
     }
+    try {
+      await ApiClient.instance.stopScreenShare(widget.roomId);
+    } on ApiException catch (_) {}
     await _refreshRoom();
     if (!silent) _showToast('已停止投放');
   }
@@ -340,7 +365,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: scheme.primary.withOpacity(0.18),
+                color: scheme.primary.withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(room.roomCode,
@@ -500,7 +525,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 ),
                 const SizedBox(height: 12),
                 Card(
-                  color: Colors.red.withOpacity(0.08),
+                  color: Colors.red.withValues(alpha: 0.08),
                   child: ListTile(
                     leading:
                         const Icon(Icons.meeting_room, color: Colors.redAccent),
@@ -526,7 +551,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: session?.publishing == true
-              ? scheme.primary.withOpacity(0.6)
+              ? scheme.primary.withValues(alpha: 0.6)
               : Colors.white12,
         ),
       ),
@@ -657,7 +682,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
                         : (value) => setState(() => _remoteBrightness = value),
                     onChangeEnd: !room.running
                         ? null
-                        : (value) => _sendPlayback('BRIGHTNESS', value: value),
+                        // 后端统一 0~100
+                        : (value) =>
+                            _sendPlayback('BRIGHTNESS', value: value * 100),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -670,7 +697,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
                         : (value) => setState(() => _remoteVolume = value),
                     onChangeEnd: !room.running
                         ? null
-                        : (value) => _sendPlayback('VOLUME', value: value),
+                        : (value) =>
+                            _sendPlayback('VOLUME', value: value * 100),
                   ),
                 ),
               ],
@@ -684,7 +712,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
   Widget _buildCurrentCastCard(RoomModel room, ColorScheme scheme) {
     final casting = room.contentId != null;
     return Card(
-      color: casting ? scheme.primary.withOpacity(0.10) : null,
+      color: casting ? scheme.primary.withValues(alpha: 0.10) : null,
       child: ListTile(
         leading: Icon(casting ? Icons.cast_connected : Icons.cast,
             color: casting ? scheme.primary : Colors.white38),

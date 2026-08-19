@@ -56,7 +56,7 @@ class _WatermarkState extends State<Watermark> {
                         _text,
                         style: TextStyle(
                           fontSize: 13,
-                          color: Colors.white.withOpacity(0.07),
+                          color: Colors.white.withValues(alpha: 0.07),
                         ),
                       ),
                     ),

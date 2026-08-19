@@ -8,12 +8,17 @@ import '../config/app_config.dart';
 class RoomWsService {
   StompClient? _client;
 
-  void connect(String roomCode, void Function(Map<String, dynamic>) onEvent) {
+  void connect(String roomCode, String identity,
+      void Function(Map<String, dynamic>) onEvent) {
     disconnect();
     _client = StompClient(
       config: StompConfig(
         url: AppConfig.wsUrl,
         reconnectDelay: const Duration(seconds: 5),
+        stompConnectHeaders: {
+          'roomCode': roomCode,
+          'identity': identity,
+        },
         onConnect: (frame) {
           _client?.subscribe(
             destination: '/topic/rooms/$roomCode',

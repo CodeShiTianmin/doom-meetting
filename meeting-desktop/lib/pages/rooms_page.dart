@@ -87,7 +87,7 @@ class _RoomsPageState extends State<RoomsPage> {
             onPressed: () async {
               final updated =
                   await ApiClient.instance.regenerateInvite(room.id);
-              if (context.mounted) {
+              if (mounted) {
                 Navigator.of(context).pop();
                 _showQr(updated);
               }
@@ -180,7 +180,7 @@ class _RoomCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         side: room.understaffedAlert
             ? const BorderSide(color: Colors.red, width: 2)
-            : BorderSide(color: statusColor.withOpacity(0.25)),
+            : BorderSide(color: statusColor.withValues(alpha: 0.25)),
       ),
       child: InkWell(
         onTap: onOpen,
@@ -206,7 +206,7 @@ class _RoomCard extends StatelessWidget {
                   ),
                   Chip(
                     visualDensity: VisualDensity.compact,
-                    backgroundColor: statusColor.withOpacity(0.2),
+                    backgroundColor: statusColor.withValues(alpha: 0.2),
                     side: BorderSide(color: statusColor),
                     label: Text(
                       room.running

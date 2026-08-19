@@ -1,5 +1,7 @@
 package com.doommeeting.server.dto;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -47,8 +49,9 @@ public class MobileDtos {
     public record PlaybackControlRequest(
             @NotBlank(message = "身份标识不能为空") String identity,
             @NotBlank(message = "指令不能为空") String action,
-            Double positionSeconds,
-            Double value,
+            @DecimalMin(value = "0", message = "播放进度不能为负") Double positionSeconds,
+            @DecimalMin(value = "0", message = "调节值范围 0~100")
+            @DecimalMax(value = "100", message = "调节值范围 0~100") Double value,
             @NotNull(message = "指令序号不能为空") Long seq) {
     }
 
