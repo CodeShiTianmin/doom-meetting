@@ -4,7 +4,15 @@ rtc:
   tcp_port: 7881
   port_range_start: 50000
   port_range_end: 50200
+  # 通过 STUN 自动探测服务器公网 IP 并写入 ICE candidate
   use_external_ip: true
+  # 云主机(NAT 公网 IP)若 STUN 探测结果不正确, 取消注释并填写服务器公网 IP:
+  # node_ip: YOUR_PUBLIC_IP
+# 内置 TURN 中继(UDP 3478): 客户端侧防火墙拦截 UDP 高端口时经 TURN 保底连通,
+# 凭证由 LiveKit 随入会 Token 自动下发, 客户端无需额外配置
+turn:
+  enabled: true
+  udp_port: 3478
 keys:
   # 与 meeting-server 的 LIVEKIT_API_KEY / LIVEKIT_API_SECRET 保持一致
   devkey: devsecret-devsecret-devsecret-32

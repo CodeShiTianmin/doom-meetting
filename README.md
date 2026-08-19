@@ -10,7 +10,7 @@
 | `meeting-admin/` | 公司管理系统(PC 端) | Vite + React 18 + Material UI |
 | `meeting-app-flutter/` | 手机客户端 App | Flutter 3 + livekit_client + STOMP |
 | `meeting-desktop/` | 公司 PC 投屏端(Windows) | Flutter Desktop + livekit_client + flutter_webrtc + media_kit |
-| `deploy/` | 一键部署 | Docker Compose(Nginx + Spring Boot + LiveKit + coturn + MySQL) |
+| `deploy/` | 一键部署 | Docker Compose(Nginx + Spring Boot + LiveKit(内置 TURN) + MySQL) |
 
 ## 核心功能
 
@@ -45,6 +45,14 @@ cd meeting-desktop && flutter pub get && flutter run -d windows \
 # 或 Docker Compose 一键部署
 cd deploy && docker compose up -d
 ```
+
+### 部署网络要求(WebRTC 连通性)
+
+媒体连接失败(`MediaConnectException: Timed out waiting for PeerConnection to connect`)通常是以下原因, 按序检查:
+
+1. **服务器防火墙/云安全组必须放行**: `7880/tcp`(LiveKit 信令)、`7881/tcp`(ICE-TCP 回退)、`3478/udp`(TURN 中继)、`50000-50200/udp`(WebRTC 媒体)。云主机(阿里云/腾讯云等)安全组默认不放行 UDP, 需手动添加规则。
+2. **`LIVEKIT_WS_URL` 必须是客户端可达地址**: 部署时设置环境变量, 例如 `LIVEKIT_WS_URL=ws://<服务器公网IP>:7880`(未配置 TLS 时用 `ws://` 而非 `wss://`), 该地址会下发给手机端与 PC 投屏端。
+3. **云主机 NAT 公网 IP**: LiveKit 默认经 STUN 自动探测公网 IP(`use_external_ip: true`); 若探测不正确, 在 `deploy/livekit/livekit.yaml` 中取消注释 `node_ip` 并填写服务器公网 IP 后重启 livekit 容器。
 
 ## 安全设计
 
