@@ -1,5 +1,5 @@
 # 多房并发投屏会议软件 - 部署编排
-# Nginx + Spring Boot + LiveKit(自部署 SFU, 关闭录制) + coturn + MySQL
+# Nginx + Spring Boot + LiveKit(自部署 SFU, 关闭录制, 内置 TURN) + MySQL
 version: "3.9"
 
 services:
@@ -42,20 +42,13 @@ services:
     container_name: doom-meeting-livekit
     restart: unless-stopped
     command: --config /etc/livekit.yaml
-    volumes:
-      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
-    ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "50000-50200:50000-50200/udp"
-
-  coturn:
-    image: coturn/coturn:latest
-    container_name: doom-meeting-coturn
-    restart: unless-stopped
+    # host 网络: WebRTC 媒体需向客户端通告真实可达的 IP:端口,
+    # bridge 端口映射会导致 ICE candidate 与实际监听地址不一致, 连接超时。
+    # 使用端口: 7880/tcp(信令) 7881/tcp(ICE-TCP 回退) 3478/udp(TURN) 50000-50200/udp(媒体)
+    # 以上端口需在服务器防火墙/云安全组放行
     network_mode: host
     volumes:
-      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
 
   nginx:
     image: nginx:stable
