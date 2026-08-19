@@ -1,7 +1,6 @@
 package com.doommeeting.server.service;
 
 import com.doommeeting.server.common.BusinessException;
-import com.doommeeting.server.dto.ContentDtos.ContentRequest;
 import com.doommeeting.server.dto.ContentDtos.ContentResponse;
 import com.doommeeting.server.entity.ContentItem;
 import com.doommeeting.server.repository.ContentItemRepository;
@@ -13,7 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 /**
- * 投放内容管理: 支持真实文件上传存储(UPLOADED_FILE)与元数据登记(LOCAL_FILE/SCREEN/WINDOW)
+ * 投放内容管理: 仅支持真实文件上传存储(UPLOADED_FILE), 会议结束后自动删除
  */
 @Service
 @RequiredArgsConstructor
@@ -54,23 +53,6 @@ public class ContentService {
     }
 
     @Transactional
-    public ContentResponse create(ContentRequest request, String createdBy) {
-        ContentItem content = new ContentItem();
-        apply(content, request);
-        content.setCreatedBy(createdBy);
-        contentItemRepository.save(content);
-        return toResponse(content);
-    }
-
-    @Transactional
-    public ContentResponse update(Long id, ContentRequest request) {
-        ContentItem content = getById(id);
-        apply(content, request);
-        contentItemRepository.save(content);
-        return toResponse(content);
-    }
-
-    @Transactional
     public void delete(Long id) {
         ContentItem content = getById(id);
         fileStorageService.delete(content.getStoragePath());
@@ -92,17 +74,16 @@ public class ContentService {
                 .orElseThrow(() -> new BusinessException(404, "投放内容不存在"));
     }
 
-    private void apply(ContentItem content, ContentRequest request) {
-        content.setName(request.name());
-        content.setDescription(request.description());
-        if (request.type() != null) {
-            content.setType(request.type());
+    /** 获取可投放内容: 必须启用且服务器文件仍存在 */
+    public ContentItem getCastable(Long id) {
+        ContentItem content = getById(id);
+        if (!Boolean.TRUE.equals(content.getEnabled())) {
+            throw new BusinessException("该内容已禁用, 无法投放");
         }
-        content.setLocalPath(request.localPath());
-        content.setDurationSeconds(request.durationSeconds());
-        if (request.enabled() != null) {
-            content.setEnabled(request.enabled());
+        if (content.getStoragePath() == null || content.getStoragePath().isBlank()) {
+            throw new BusinessException("该内容文件已删除, 无法投放");
         }
+        return content;
     }
 
     private ContentResponse toResponse(ContentItem content) {
@@ -111,7 +92,6 @@ public class ContentService {
                 content.getName(),
                 content.getDescription(),
                 content.getType(),
-                content.getLocalPath(),
                 content.getDurationSeconds(),
                 fileUrlOf(content),
                 content.getFileSize(),

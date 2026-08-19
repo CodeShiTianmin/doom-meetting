@@ -117,24 +117,38 @@ class _RoomsPageState extends State<RoomsPage> {
         icon: const Icon(Icons.add),
         label: const Text('创建房间'),
       ),
-      body: GridView.builder(
-        padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 360,
-          mainAxisExtent: 210,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-        ),
-        itemCount: _rooms.length,
-        itemBuilder: (context, index) => _RoomCard(
-          room: _rooms[index],
-          onOpen: () => Navigator.of(context)
-              .push(MaterialPageRoute(
-                  builder: (_) => RoomCastPage(roomId: _rooms[index].id)))
-              .then((_) => _refresh()),
-          onShowQr: () => _showQr(_rooms[index]),
-        ),
-      ),
+      body: _rooms.isEmpty
+          ? const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.meeting_room_outlined,
+                      size: 64, color: Colors.white24),
+                  SizedBox(height: 12),
+                  Text('暂无房间 — 点击右下角创建房间开始会议',
+                      style: TextStyle(color: Colors.white38)),
+                ],
+              ),
+            )
+          : GridView.builder(
+              padding: const EdgeInsets.all(16),
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 360,
+                mainAxisExtent: 216,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: _rooms.length,
+              itemBuilder: (context, index) => _RoomCard(
+                room: _rooms[index],
+                onOpen: () => Navigator.of(context)
+                    .push(MaterialPageRoute(
+                        builder: (_) =>
+                            RoomCastPage(roomId: _rooms[index].id)))
+                    .then((_) => _refresh()),
+                onShowQr: () => _showQr(_rooms[index]),
+              ),
+            ),
     );
   }
 }
@@ -147,6 +161,12 @@ class _RoomCard extends StatelessWidget {
   const _RoomCard(
       {required this.room, required this.onOpen, required this.onShowQr});
 
+  static String _formatRemaining(int seconds) {
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '剩 $m:${s.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final statusColor = room.running
@@ -157,14 +177,14 @@ class _RoomCard extends StatelessWidget {
     return Card(
       // 缺人超过阈值: 红灯预警
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         side: room.understaffedAlert
             ? const BorderSide(color: Colors.red, width: 2)
-            : BorderSide.none,
+            : BorderSide(color: statusColor.withOpacity(0.25)),
       ),
       child: InkWell(
         onTap: onOpen,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -200,9 +220,26 @@ class _RoomCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
-              Text('房号 ${room.roomCode}',
-                  style:
-                      const TextStyle(color: Colors.white54, fontSize: 12)),
+              Row(
+                children: [
+                  const Icon(Icons.tag, size: 13, color: Colors.white38),
+                  const SizedBox(width: 3),
+                  Text(room.roomCode,
+                      style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                          letterSpacing: 1.2)),
+                  if (room.running && room.remainingSeconds != null) ...[
+                    const SizedBox(width: 10),
+                    const Icon(Icons.timer_outlined,
+                        size: 13, color: Colors.white38),
+                    const SizedBox(width: 3),
+                    Text(_formatRemaining(room.remainingSeconds!),
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 12)),
+                  ],
+                ],
+              ),
               const SizedBox(height: 6),
               Row(
                 children: [
@@ -219,12 +256,28 @@ class _RoomCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
-              Text(
-                room.contentName != null
-                    ? '投放中: ${room.contentName}'
-                    : '未选择投放内容',
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: Colors.white70),
+              Row(
+                children: [
+                  Icon(
+                      room.contentName != null
+                          ? Icons.cast_connected
+                          : Icons.cast,
+                      size: 13,
+                      color: room.contentName != null
+                          ? const Color(0xFF5B8DEF)
+                          : Colors.white38),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      room.contentName != null
+                          ? '投放中: ${room.contentName}'
+                          : '暂无投放内容',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12, color: Colors.white70),
+                    ),
+                  ),
+                ],
               ),
               const Spacer(),
               Row(

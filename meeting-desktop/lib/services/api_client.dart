@@ -27,7 +27,8 @@ class ApiClient {
   Map<String, dynamic> _unwrap(Response<dynamic> response) {
     final body = response.data as Map<String, dynamic>;
     if (body['code'] != 0) {
-      throw ApiException((body['message'] as String?) ?? '请求失败');
+      throw ApiException((body['message'] as String?) ?? '请求失败',
+          code: (body['code'] as num?)?.toInt() ?? -1);
     }
     final data = body['data'];
     if (data is Map<String, dynamic>) return data;
@@ -37,7 +38,8 @@ class ApiClient {
   List<dynamic> _unwrapList(Response<dynamic> response) {
     final body = response.data as Map<String, dynamic>;
     if (body['code'] != 0) {
-      throw ApiException((body['message'] as String?) ?? '请求失败');
+      throw ApiException((body['message'] as String?) ?? '请求失败',
+          code: (body['code'] as num?)?.toInt() ?? -1);
     }
     return (body['data'] as List<dynamic>?) ?? const [];
   }
@@ -104,11 +106,29 @@ class ApiClient {
     return RoomModel.fromJson(_unwrap(response));
   }
 
-  /// 选择内容投给房间(不同时间投不同内容给不同房间)
-  Future<RoomModel> castContent(int roomId, int contentId) async {
-    final response = await _dio
-        .post('/api/admin/rooms/$roomId/cast', data: {'contentId': contentId});
+  /// 选择内容投给房间(不同时间投不同内容给不同房间); 已有投放时需 replace=true 确认替换
+  Future<RoomModel> castContent(int roomId, int contentId,
+      {bool replace = false}) async {
+    final response = await _dio.post('/api/admin/rooms/$roomId/cast',
+        data: {'contentId': contentId, 'replace': replace});
     return RoomModel.fromJson(_unwrap(response));
+  }
+
+  /// 停止当前投放(清除房间当前内容并重置播放状态)
+  Future<RoomModel> stopCastContent(int roomId) async {
+    final response = await _dio.post('/api/admin/rooms/$roomId/cast/stop');
+    return RoomModel.fromJson(_unwrap(response));
+  }
+
+  /// PC 端播放控制: PLAY/PAUSE/SEEK/BRIGHTNESS/VOLUME, 实时下发到房间内全部手机端
+  Future<Map<String, dynamic>> controlPlayback(int roomId, String action,
+      {double? positionSeconds, double? value}) async {
+    final response = await _dio.post('/api/admin/rooms/$roomId/playback', data: {
+      'action': action,
+      'positionSeconds': positionSeconds,
+      'value': value,
+    });
+    return _unwrap(response);
   }
 
   Future<void> closeRoom(int id) async {
@@ -140,24 +160,6 @@ class ApiClient {
         .toList();
   }
 
-  Future<ContentModel> createContent({
-    required String name,
-    String? description,
-    required String type,
-    String? localPath,
-    int? durationSeconds,
-  }) async {
-    final response = await _dio.post('/api/admin/contents', data: {
-      'name': name,
-      'description': description,
-      'type': type,
-      'localPath': localPath,
-      'durationSeconds': durationSeconds,
-      'enabled': true,
-    });
-    return ContentModel.fromJson(_unwrap(response));
-  }
-
   /// 真实文件上传到服务器存储(所有类型), 关联房间后会议结束自动删除
   Future<ContentModel> uploadContentFile(String filePath,
       {int? roomId}) async {
@@ -183,8 +185,12 @@ class ApiClient {
 
 class ApiException implements Exception {
   final String message;
+  final int code;
 
-  ApiException(this.message);
+  ApiException(this.message, {this.code = -1});
+
+  /// 房间已有投放, 需先停止当前投放后再投放
+  bool get castConflict => code == 409;
 
   @override
   String toString() => message;

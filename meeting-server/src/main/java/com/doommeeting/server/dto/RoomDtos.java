@@ -47,6 +47,10 @@ public class RoomDtos {
             Long remainingSeconds,
             Long contentId,
             String contentName,
+            String contentType,
+            String contentFileUrl,
+            String contentMimeType,
+            Integer contentDurationSeconds,
             String playbackState,
             Double playbackPositionSeconds,
             Long likeCount,
@@ -73,7 +77,15 @@ public class RoomDtos {
             LocalDateTime leftAt) {
     }
 
-    public record CastRequest(@NotNull(message = "内容不能为空") Long contentId) {
+    public record CastRequest(
+            @NotNull(message = "内容不能为空") Long contentId,
+            Boolean replace) {
+    }
+
+    public record AdminPlaybackRequest(
+            @NotBlank(message = "操作类型不能为空") String action,
+            Double positionSeconds,
+            Double value) {
     }
 
     public record RoomEventResponse(Long id, String type, String detail, LocalDateTime createdAt) {

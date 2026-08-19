@@ -177,7 +177,7 @@ export default function MainLayout() {
         </List>
         <Divider sx={{ mt: 'auto', borderColor: 'rgba(255, 255, 255, 0.12)' }} />
         <Typography variant="caption" sx={{ p: 2, color: 'rgba(255, 255, 255, 0.45)' }}>
-          媒体零留存 · 仅记录元数据
+          上传文件投放 · 会议结束自动清理
         </Typography>
       </Drawer>
       <Box component="main" sx={{ flexGrow: 1, p: 3 }}>

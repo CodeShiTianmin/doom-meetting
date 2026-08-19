@@ -12,6 +12,10 @@ class RoomModel {
   final int? remainingSeconds;
   final int? contentId;
   final String? contentName;
+  final String? contentType;
+  final String? contentFileUrl;
+  final String? contentMimeType;
+  final int? contentDurationSeconds;
   final String playbackState;
   final double playbackPositionSeconds;
   final int likeCount;
@@ -36,6 +40,10 @@ class RoomModel {
     this.remainingSeconds,
     this.contentId,
     this.contentName,
+    this.contentType,
+    this.contentFileUrl,
+    this.contentMimeType,
+    this.contentDurationSeconds,
     required this.playbackState,
     required this.playbackPositionSeconds,
     required this.likeCount,
@@ -64,6 +72,10 @@ class RoomModel {
         remainingSeconds: (json['remainingSeconds'] as num?)?.toInt(),
         contentId: (json['contentId'] as num?)?.toInt(),
         contentName: json['contentName'] as String?,
+        contentType: json['contentType'] as String?,
+        contentFileUrl: json['contentFileUrl'] as String?,
+        contentMimeType: json['contentMimeType'] as String?,
+        contentDurationSeconds: (json['contentDurationSeconds'] as num?)?.toInt(),
         playbackState: (json['playbackState'] as String?) ?? 'IDLE',
         playbackPositionSeconds:
             (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
@@ -104,13 +116,12 @@ class MemberModel {
       );
 }
 
-/// 投放内容(对应后端 ContentResponse)
+/// 投放内容(对应后端 ContentResponse, 仅上传文件模式)
 class ContentModel {
   final int id;
   final String name;
   final String? description;
   final String type;
-  final String? localPath;
   final int? durationSeconds;
   final String? fileUrl;
   final int? fileSize;
@@ -122,7 +133,6 @@ class ContentModel {
     required this.name,
     this.description,
     required this.type,
-    this.localPath,
     this.durationSeconds,
     this.fileUrl,
     this.fileSize,
@@ -134,8 +144,7 @@ class ContentModel {
         id: (json['id'] as num).toInt(),
         name: json['name'] as String,
         description: json['description'] as String?,
-        type: (json['type'] as String?) ?? 'LOCAL_FILE',
-        localPath: json['localPath'] as String?,
+        type: (json['type'] as String?) ?? 'UPLOADED_FILE',
         durationSeconds: (json['durationSeconds'] as num?)?.toInt(),
         fileUrl: json['fileUrl'] as String?,
         fileSize: (json['fileSize'] as num?)?.toInt(),

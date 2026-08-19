@@ -36,7 +36,7 @@ public class CastScheduleService {
         }
         CastSchedule schedule = new CastSchedule();
         schedule.setRoom(room);
-        schedule.setContent(contentService.getById(request.contentId()));
+        schedule.setContent(contentService.getCastable(request.contentId()));
         schedule.setCastAt(request.castAt());
         schedule.setNote(request.note());
         schedule.setCreatedBy(createdBy);
@@ -72,7 +72,8 @@ public class CastScheduleService {
                 roomService.castContent(
                         schedule.getRoom().getId(),
                         schedule.getContent().getId(),
-                        "定时投放计划#" + schedule.getId());
+                        "定时投放计划#" + schedule.getId(),
+                        true);
                 schedule.setStatus(CastScheduleStatus.EXECUTED);
                 schedule.setExecutedAt(LocalDateTime.now());
             } catch (Exception e) {

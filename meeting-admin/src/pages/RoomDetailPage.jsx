@@ -10,10 +10,13 @@ import CloseIcon from '@mui/icons-material/Close'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import FavoriteIcon from '@mui/icons-material/Favorite'
 import SmartphoneIcon from '@mui/icons-material/Smartphone'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import PauseIcon from '@mui/icons-material/Pause'
+import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  castContent, closeRoom, getRoom, listRoomEvents,
-  regenerateInvite, updateRoomSettings, uploadContentFile,
+  castContent, closeRoom, controlRoomPlayback, getRoom, listRoomEvents,
+  regenerateInvite, stopCast, updateRoomSettings, uploadContentFile,
 } from '../api'
 import { subscribeRoom } from '../api/ws'
 import RoomStatusChip from '../components/RoomStatusChip.jsx'
@@ -83,16 +86,41 @@ export default function RoomDetailPage() {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
+    // 投放前冲突检查: 已有投放时提示先停止当前投放
+    if (room?.contentId != null) {
+      const ok = window.confirm(
+        `该房间正在投放「${room.contentName || '当前内容'}」。\n需要先停止当前投放, 才能投放新内容。\n\n确认停止当前投放并投放新文件?`,
+      )
+      if (!ok) return
+    }
     setCasting(true)
     try {
       // 真实文件上传到服务器, 会议结束后自动删除
       const content = await uploadContentFile(file, id)
-      await castContent(id, content.id)
+      await castContent(id, content.id, true)
+      await refresh()
+    } catch (err) {
+      setError(err.code === 409 ? `投放冲突: ${err.message}` : err.message)
+    } finally {
+      setCasting(false)
+    }
+  }
+
+  const doStopCast = async () => {
+    try {
+      await stopCast(id)
       await refresh()
     } catch (err) {
       setError(err.message)
-    } finally {
-      setCasting(false)
+    }
+  }
+
+  const doPlayback = async (action, positionSeconds, value) => {
+    try {
+      await controlRoomPlayback(id, action, positionSeconds, value)
+      await refresh()
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -199,8 +227,29 @@ export default function RoomDetailPage() {
                 />
                 <Chip size="small" label={`进度 ${formatSeconds(room.playbackPositionSeconds)}`} />
               </Box>
+              <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={room.playbackState === 'PLAYING' ? <PauseIcon /> : <PlayArrowIcon />}
+                  disabled={closed || room.status !== 'RUNNING' || room.contentId == null}
+                  onClick={() => doPlayback(room.playbackState === 'PLAYING' ? 'PAUSE' : 'PLAY')}
+                >
+                  {room.playbackState === 'PLAYING' ? '暂停' : '播放'}
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="warning"
+                  startIcon={<StopScreenShareIcon />}
+                  disabled={closed || room.contentId == null}
+                  onClick={doStopCast}
+                >
+                  停止投放
+                </Button>
+              </Box>
               <Typography variant="caption" color="text.secondary">
-                播放/暂停/进度由手机客户端控制, 此处实时同步
+                可由 PC/管理端与手机端共同控制, 状态实时同步
               </Typography>
             </CardContent>
           </Card>
