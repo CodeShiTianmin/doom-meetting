@@ -7,9 +7,9 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 /**
- * 投放内容。支持两种模式:
- * - UPLOADED_FILE: 真实文件上传到服务器存储, 各端可下载打开, 会议结束后自动删除
- * - LOCAL_FILE / SCREEN / WINDOW: 仅登记元数据, 媒体由 PC 端本地推流
+ * 投放内容(仅上传文件模式):
+ * UPLOADED_FILE: 真实文件上传到服务器存储, 各端可下载打开, 会议结束后自动删除。
+ * PC 屏幕共享直接经 LiveKit 推流, 不产生内容记录。
  */
 @Getter
 @Setter
@@ -27,15 +27,11 @@ public class ContentItem {
     @Column(length = 512)
     private String description;
 
-    /** UPLOADED_FILE: 服务器存储文件 / LOCAL_FILE: 本地视频文件 / SCREEN: 整屏投屏 / WINDOW: 窗口投屏 */
+    /** UPLOADED_FILE: 服务器存储文件 */
     @Column(nullable = false, length = 16)
-    private String type = "LOCAL_FILE";
+    private String type = "UPLOADED_FILE";
 
-    /** 本地 PC 上的文件路径或窗口标识(仅元数据) */
-    @Column(length = 512)
-    private String localPath;
-
-    /** 内容时长(秒, 本地视频文件) */
+    /** 内容时长(秒, 媒体文件) */
     private Integer durationSeconds;
 
     /** 服务器存储相对路径(UPLOADED_FILE) */

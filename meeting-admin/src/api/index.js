@@ -11,8 +11,11 @@ export const listRooms = (status) =>
 export const getRoom = (id) => client.get(`/admin/rooms/${id}`)
 export const updateRoomSettings = (id, data) =>
   client.put(`/admin/rooms/${id}/settings`, data)
-export const castContent = (id, contentId) =>
-  client.post(`/admin/rooms/${id}/cast`, { contentId })
+export const castContent = (id, contentId, replace = false) =>
+  client.post(`/admin/rooms/${id}/cast`, { contentId, replace })
+export const stopCast = (id) => client.post(`/admin/rooms/${id}/cast/stop`)
+export const controlRoomPlayback = (id, action, positionSeconds, value) =>
+  client.post(`/admin/rooms/${id}/playback`, { action, positionSeconds, value })
 export const closeRoom = (id) => client.post(`/admin/rooms/${id}/close`)
 export const regenerateInvite = (id) =>
   client.post(`/admin/rooms/${id}/invite/regenerate`)
@@ -22,8 +25,7 @@ export const listRoomMembers = (id) => client.get(`/admin/rooms/${id}/members`)
 export const listRoomLikes = (id) => client.get(`/admin/rooms/${id}/likes`)
 export const listRoomEvents = (id) => client.get(`/admin/rooms/${id}/events`)
 
-// ---------- 内容 ----------
-export const createContent = (data) => client.post('/admin/contents', data)
+// ---------- 内容(仅上传文件) ----------
 export const uploadContentFile = (file, roomId) => {
   const formData = new FormData()
   formData.append('file', file)
@@ -34,7 +36,6 @@ export const uploadContentFile = (file, roomId) => {
 }
 export const listContents = (includeDisabled) =>
   client.get('/admin/contents', { params: includeDisabled ? { includeDisabled: true } : {} })
-export const updateContent = (id, data) => client.put(`/admin/contents/${id}`, data)
 export const deleteContent = (id) => client.delete(`/admin/contents/${id}`)
 
 // ---------- 投放计划 ----------

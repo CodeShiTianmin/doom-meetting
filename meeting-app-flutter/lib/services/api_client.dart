@@ -81,17 +81,20 @@ class ApiClient {
         data: {'identity': identity, 'detail': detail});
   }
 
-  /// 手机端上传真实文件并直接投放到本房间(服务器保存, 会议结束后自动删除)
+  /// 手机端上传真实文件并直接投放到本房间(服务器保存, 会议结束后自动删除);
+  /// 已有投放时需 replace=true 确认替换
   Future<Map<String, dynamic>> uploadAndCastFile({
     required String roomCode,
     required String identity,
     String? nickname,
     required String filePath,
+    bool replace = false,
   }) async {
     final formData = FormData.fromMap({
       'file': await MultipartFile.fromFile(filePath),
       'identity': identity,
       if (nickname != null) 'nickname': nickname,
+      'replace': replace,
     });
     final response = await _dio.post(
       '/api/mobile/rooms/$roomCode/contents/upload',

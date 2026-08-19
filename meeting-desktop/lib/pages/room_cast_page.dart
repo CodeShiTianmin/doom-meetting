@@ -13,8 +13,9 @@ import '../services/cast_session.dart';
 import '../services/ws_service.dart';
 
 /// 单房间投放控制:
-/// - 屏幕/窗口投屏 或 本地视频文件投放(独立播放器实例)
-/// - 响应手机端 播放/暂停/拖进度条 指令
+/// - PC 屏幕/窗口共享(LiveKit 推流) 或 上传文件投放(存服务器, 会议结束后删除)
+/// - 投放前检查已有投放, 提示先停止当前投放
+/// - PC 可控制房间内全部手机端: 播放/暂停/拖动进度/明暗/音量
 /// - 房间设置开关(视频通话/摄像头)、会议时长、成员就位、点赞实时展示、关闭房间
 class RoomCastPage extends StatefulWidget {
   final int roomId;
@@ -31,6 +32,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
   CastSession? _session;
   Timer? _refreshTimer;
   int _likeFlash = 0;
+  double? _seekPreview;
+  double _remoteBrightness = 0.5;
+  double _remoteVolume = 0.5;
 
   @override
   void initState() {
@@ -71,7 +75,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
       case 'PLAYBACK_CONTROL':
-        // 手机端播放控制指令 -> 本房间独立播放器执行
+        // 播放控制指令(手机端或 PC 端发起) -> 本房间独立播放器执行
         _session?.applyPlaybackCommand(data);
         _refreshRoom();
         break;
@@ -87,6 +91,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
       case 'MEMBER_LEFT':
       case 'SETTINGS_CHANGED':
       case 'CONTENT_CAST':
+      case 'CAST_STOPPED':
       case 'COUNTDOWN_REMINDER':
         _refreshRoom();
         break;
@@ -104,9 +109,39 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
   // ---------- 投放操作 ----------
 
-  Future<void> _pickScreenSource() async {
+  bool get _hasActiveCast =>
+      _room?.contentId != null || _session?.publishing == true;
+
+  /// 投放前冲突检查: 已有投放时提示先停止, 用户确认后停止旧投放再继续
+  Future<bool> _confirmReplaceCast() async {
+    if (!_hasActiveCast) return true;
+    final currentName = _room?.contentName ??
+        (_session?.mode == CastMode.screen ? '屏幕/窗口投屏' : '当前投放');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+        title: const Text('房间已有投放'),
+        content: Text('该房间正在投放「$currentName」。\n需要先停止当前投放, 才能投放新内容。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('停止当前投放并继续')),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
+    await _stopCast(silent: true);
+    return true;
+  }
+
+  Future<void> _pickScreenSource({bool checkConflict = true}) async {
     final session = _session;
     if (session == null) return;
+    if (checkConflict && !await _confirmReplaceCast()) return;
     final sources = await session.listCaptureSources();
     if (!mounted) return;
     final selected = await showDialog<webrtc.DesktopCapturerSource>(
@@ -146,6 +181,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
   Future<void> _pickLocalFile() async {
     final session = _session;
     if (session == null) return;
+    if (!await _confirmReplaceCast()) return;
     // 所有类型文件均可投放
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
@@ -158,29 +194,46 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
     // 1) 真实文件上传到服务器存储并投放(手机端/管理网页可直接打开, 会议结束后自动删除)
     _showToast('正在上传: $name ...');
+    late final ContentModel content;
     try {
-      final content = await ApiClient.instance
+      content = await ApiClient.instance
           .uploadContentFile(path, roomId: widget.roomId);
-      await ApiClient.instance.castContent(widget.roomId, content.id);
+      await ApiClient.instance
+          .castContent(widget.roomId, content.id, replace: true);
+    } on ApiException catch (error) {
+      _showToast(error.castConflict
+          ? '投放冲突: ${error.message}'
+          : '文件上传失败: ${error.message}');
+      return;
     } catch (error) {
       _showToast('文件上传失败: $error');
       return;
     }
 
     // 2) 媒体文件: 本地播放器解码并捕获推流; 其他类型: 系统默认应用打开后可用窗口投屏
-    if (_mediaExtensions.contains(extension)) {
-      final sources = await session.listCaptureSources();
-      final appWindow = sources.firstWhere(
-        (source) =>
-            source.type == webrtc.SourceType.Window &&
-            source.name.contains('投屏会议'),
-        orElse: () => sources.first,
-      );
-      await session.startFileCast(path, playerWindowSource: appWindow);
-    } else {
-      await launchUrl(Uri.file(path));
-      _showToast('已用系统应用打开, 可选择该窗口进行投屏');
-      await _pickScreenSource();
+    try {
+      if (_mediaExtensions.contains(extension)) {
+        final sources = await session.listCaptureSources();
+        final appWindow = sources.firstWhere(
+          (source) =>
+              source.type == webrtc.SourceType.Window &&
+              source.name.contains('投屏会议'),
+          orElse: () => sources.first,
+        );
+        await session.startFileCast(path, playerWindowSource: appWindow);
+      } else {
+        await launchUrl(Uri.file(path));
+        _showToast('已用系统应用打开, 可选择该窗口进行投屏');
+        await _pickScreenSource(checkConflict: false);
+      }
+    } catch (error) {
+      // 本地推流失败时回滚服务器投放状态, 避免假的"已投放"
+      try {
+        await ApiClient.instance.stopCastContent(widget.roomId);
+      } catch (_) {}
+      _showToast('本地推流启动失败: $error');
+      await _refreshRoom();
+      return;
     }
     await _refreshRoom();
     _showToast('已投放文件: $name');
@@ -197,9 +250,33 @@ class _RoomCastPageState extends State<RoomCastPage> {
     await launchUrl(Uri.parse(url));
   }
 
-  Future<void> _stopCast() async {
+  /// 停止投放: 同时停止本地推流与服务器投放状态
+  Future<void> _stopCast({bool silent = false}) async {
     await _session?.stopCast();
-    _showToast('已停止投放');
+    if (_room?.contentId != null) {
+      try {
+        await ApiClient.instance.stopCastContent(widget.roomId);
+      } on ApiException catch (error) {
+        if (!silent) _showToast('停止服务器投放失败: ${error.message}');
+      }
+    }
+    await _refreshRoom();
+    if (!silent) _showToast('已停止投放');
+  }
+
+  // ---------- PC 端播放控制(下发到房间内全部手机端) ----------
+
+  Future<void> _sendPlayback(String action,
+      {double? positionSeconds, double? value}) async {
+    try {
+      await ApiClient.instance.controlPlayback(widget.roomId, action,
+          positionSeconds: positionSeconds, value: value);
+      await _refreshRoom();
+    } on ApiException catch (error) {
+      _showToast('控制失败: ${error.message}');
+    } catch (error) {
+      _showToast('控制失败: $error');
+    }
   }
 
   Future<void> _closeRoom() async {
@@ -255,9 +332,28 @@ class _RoomCastPageState extends State<RoomCastPage> {
     if (room == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: Text('${room.name} · ${room.roomCode}'),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: scheme.primary.withOpacity(0.18),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(room.roomCode,
+                  style: TextStyle(
+                      fontSize: 14,
+                      letterSpacing: 1.5,
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(width: 10),
+            Text(room.name, style: const TextStyle(fontSize: 17)),
+          ],
+        ),
         actions: [
           if (room.understaffedAlert)
             const Padding(
@@ -268,6 +364,18 @@ class _RoomCastPageState extends State<RoomCastPage> {
               ),
             ),
           Chip(
+            avatar: Icon(
+                room.running
+                    ? Icons.play_circle
+                    : room.closed
+                        ? Icons.stop_circle
+                        : Icons.hourglass_top,
+                size: 16,
+                color: room.running
+                    ? Colors.greenAccent
+                    : room.closed
+                        ? Colors.redAccent
+                        : Colors.orangeAccent),
             label: Text(room.running
                 ? '已运行 剩 ${_formatClock(room.remainingSeconds)}'
                 : room.closed
@@ -280,92 +388,36 @@ class _RoomCastPageState extends State<RoomCastPage> {
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 左侧: 播放器预览 + 投放操作
+          // 左侧: 播放器预览 + 投放操作 + 播放控制
           Expanded(
             flex: 3,
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: session?.videoController != null
-                          ? Video(controller: session!.videoController!)
-                          : Center(
-                              child: Text(
-                                session?.mode == CastMode.screen
-                                    ? '屏幕/窗口投屏中'
-                                    : '未投放 — 选择屏幕投屏或文件投放(所有类型)',
-                                style:
-                                    const TextStyle(color: Colors.white38),
-                              ),
-                            ),
-                    ),
-                  ),
+                  Expanded(child: _buildPreview(session, scheme)),
                   const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      FilledButton.tonalIcon(
-                        onPressed:
-                            session == null ? null : _pickScreenSource,
-                        icon: const Icon(Icons.screen_share),
-                        label: const Text('屏幕/窗口投屏'),
-                      ),
-                      const SizedBox(width: 12),
-                      FilledButton.tonalIcon(
-                        onPressed: session == null ? null : _pickLocalFile,
-                        icon: const Icon(Icons.upload_file),
-                        label: const Text('文件投放(所有类型)'),
-                      ),
-                      const SizedBox(width: 12),
-                      FilledButton.tonalIcon(
-                        onPressed: _openServerFile,
-                        icon: const Icon(Icons.file_open),
-                        label: const Text('打开服务器文件'),
-                      ),
-                      const SizedBox(width: 12),
-                      OutlinedButton.icon(
-                        onPressed: session?.publishing == true ? _stopCast : null,
-                        icon: const Icon(Icons.stop_screen_share),
-                        label: const Text('停止投放'),
-                      ),
-                      const SizedBox(width: 12),
-                      FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                            backgroundColor: Colors.red.shade700),
-                        onPressed: room.closed ? null : _closeRoom,
-                        icon: const Icon(Icons.meeting_room),
-                        label: const Text('结束会议'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '播放状态: ${room.playbackState} @ ${_formatClock(room.playbackPositionSeconds.toInt())}'
-                    '${session?.filePath != null ? '  |  文件: ${session!.filePath}' : ''}',
-                    style: const TextStyle(fontSize: 12, color: Colors.white54),
-                  ),
+                  _buildCastButtons(room, session),
+                  const SizedBox(height: 12),
+                  _buildPlaybackControls(room, scheme),
                 ],
               ),
             ),
           ),
-          // 右侧: 设置 / 成员 / 点赞
+          // 右侧: 当前投放 / 设置 / 成员 / 点赞
           SizedBox(
-            width: 300,
+            width: 310,
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                _buildCurrentCastCard(room, scheme),
+                const SizedBox(height: 12),
                 Card(
                   child: Column(
                     children: [
                       SwitchListTile(
                         dense: true,
+                        secondary: const Icon(Icons.videocam_outlined),
                         title: const Text('开放视频通话'),
                         value: room.videoCallEnabled,
                         onChanged: (value) async {
@@ -376,6 +428,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                       ),
                       SwitchListTile(
                         dense: true,
+                        secondary: const Icon(Icons.camera_alt_outlined),
                         title: const Text('开放摄像头'),
                         value: room.cameraEnabled,
                         onChanged: (value) async {
@@ -394,8 +447,24 @@ class _RoomCastPageState extends State<RoomCastPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('成员就位 (仅手机客户端)',
-                            style: TextStyle(fontWeight: FontWeight.w700)),
+                        Row(
+                          children: [
+                            const Icon(Icons.group_outlined, size: 18),
+                            const SizedBox(width: 6),
+                            const Text('成员就位',
+                                style:
+                                    TextStyle(fontWeight: FontWeight.w700)),
+                            const Spacer(),
+                            Text(
+                                '${room.onlineMemberCount}/${room.maxMembers}',
+                                style: TextStyle(
+                                    color: room.onlineMemberCount >=
+                                            room.maxMembers
+                                        ? Colors.greenAccent
+                                        : Colors.orangeAccent,
+                                    fontWeight: FontWeight.w700)),
+                          ],
+                        ),
                         const SizedBox(height: 8),
                         for (final member in room.members)
                           ListTile(
@@ -429,10 +498,203 @@ class _RoomCastPageState extends State<RoomCastPage> {
                         style: TextStyle(fontSize: 11)),
                   ),
                 ),
+                const SizedBox(height: 12),
+                Card(
+                  color: Colors.red.withOpacity(0.08),
+                  child: ListTile(
+                    leading:
+                        const Icon(Icons.meeting_room, color: Colors.redAccent),
+                    title: const Text('结束会议'),
+                    subtitle: const Text('全部成员移出, 上传文件删除',
+                        style: TextStyle(fontSize: 11)),
+                    enabled: !room.closed,
+                    onTap: room.closed ? null : _closeRoom,
+                  ),
+                ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPreview(CastSession? session, ColorScheme scheme) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: session?.publishing == true
+              ? scheme.primary.withOpacity(0.6)
+              : Colors.white12,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: session?.videoController != null
+          ? Video(controller: session!.videoController!)
+          : Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                      session?.mode == CastMode.screen
+                          ? Icons.screen_share
+                          : Icons.cast,
+                      size: 48,
+                      color: Colors.white24),
+                  const SizedBox(height: 12),
+                  Text(
+                    session?.mode == CastMode.screen
+                        ? '屏幕/窗口投屏中'
+                        : '未投放 — 选择屏幕共享或上传文件投放',
+                    style: const TextStyle(color: Colors.white38),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildCastButtons(RoomModel room, CastSession? session) {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      alignment: WrapAlignment.center,
+      children: [
+        FilledButton.tonalIcon(
+          onPressed: session == null ? null : _pickScreenSource,
+          icon: const Icon(Icons.screen_share),
+          label: const Text('屏幕/窗口共享'),
+        ),
+        FilledButton.tonalIcon(
+          onPressed: session == null ? null : _pickLocalFile,
+          icon: const Icon(Icons.upload_file),
+          label: const Text('上传文件投放'),
+        ),
+        FilledButton.tonalIcon(
+          onPressed: _openServerFile,
+          icon: const Icon(Icons.file_open),
+          label: const Text('打开服务器文件'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _hasActiveCast ? _stopCast : null,
+          icon: const Icon(Icons.stop_screen_share),
+          label: const Text('停止投放'),
+        ),
+      ],
+    );
+  }
+
+  /// PC 端播放控制区: 播放/暂停/进度 + 手机端明暗/音量远程调节
+  Widget _buildPlaybackControls(RoomModel room, ColorScheme scheme) {
+    final playing = room.playbackState == 'PLAYING';
+    final duration = (room.contentDurationSeconds ?? 0).toDouble();
+    final maxSeconds = duration > 0 ? duration : 3600.0;
+    final position =
+        (_seekPreview ?? room.playbackPositionSeconds).clamp(0.0, maxSeconds);
+    final controlsEnabled = room.running && room.contentId != null;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.settings_remote, size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                const Text('播放控制(下发到全部手机端)',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+                const Spacer(),
+                Text(
+                  '状态: ${room.playbackState}',
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                IconButton.filledTonal(
+                  onPressed: !controlsEnabled
+                      ? null
+                      : () => _sendPlayback(playing ? 'PAUSE' : 'PLAY'),
+                  icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                ),
+                const SizedBox(width: 8),
+                Text(_formatClock(position.toInt()),
+                    style: const TextStyle(fontSize: 12)),
+                Expanded(
+                  child: Slider(
+                    value: position,
+                    max: maxSeconds,
+                    onChanged: !controlsEnabled
+                        ? null
+                        : (value) => setState(() => _seekPreview = value),
+                    onChangeEnd: !controlsEnabled
+                        ? null
+                        : (value) {
+                            setState(() => _seekPreview = null);
+                            _sendPlayback('SEEK', positionSeconds: value);
+                          },
+                  ),
+                ),
+                Text(
+                    duration > 0
+                        ? _formatClock(duration.toInt())
+                        : _formatClock(room.playbackPositionSeconds.toInt()),
+                    style: const TextStyle(fontSize: 12)),
+              ],
+            ),
+            Row(
+              children: [
+                const Icon(Icons.brightness_6, size: 16),
+                Expanded(
+                  child: Slider(
+                    value: _remoteBrightness,
+                    onChanged: !room.running
+                        ? null
+                        : (value) => setState(() => _remoteBrightness = value),
+                    onChangeEnd: !room.running
+                        ? null
+                        : (value) => _sendPlayback('BRIGHTNESS', value: value),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                const Icon(Icons.volume_up, size: 16),
+                Expanded(
+                  child: Slider(
+                    value: _remoteVolume,
+                    onChanged: !room.running
+                        ? null
+                        : (value) => setState(() => _remoteVolume = value),
+                    onChangeEnd: !room.running
+                        ? null
+                        : (value) => _sendPlayback('VOLUME', value: value),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCurrentCastCard(RoomModel room, ColorScheme scheme) {
+    final casting = room.contentId != null;
+    return Card(
+      color: casting ? scheme.primary.withOpacity(0.10) : null,
+      child: ListTile(
+        leading: Icon(casting ? Icons.cast_connected : Icons.cast,
+            color: casting ? scheme.primary : Colors.white38),
+        title: Text(casting ? (room.contentName ?? '投放中') : '暂无投放内容'),
+        subtitle: Text(
+          casting
+              ? '播放 ${room.playbackState} @ ${_formatClock(room.playbackPositionSeconds.toInt())}'
+              : '选择屏幕共享或上传文件开始投放',
+          style: const TextStyle(fontSize: 11),
+        ),
       ),
     );
   }

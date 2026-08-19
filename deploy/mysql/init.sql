@@ -1,4 +1,4 @@
--- 多房并发投屏会议软件 - MySQL 8 初始化脚本(仅元数据, 不存任何媒体内容)
+-- 多房并发投屏会议软件 - MySQL 8 初始化脚本(上传文件存服务器磁盘, 会议结束后自动删除)
 CREATE DATABASE IF NOT EXISTS doom_meeting DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE doom_meeting;
 
@@ -13,17 +13,21 @@ CREATE TABLE IF NOT EXISTS user_account (
     UNIQUE KEY uk_user_account_username (username)
 ) ENGINE = InnoDB;
 
--- 投放内容元数据(媒体文件保留在本地 PC)
+-- 投放内容(仅上传文件模式: 文件存服务器磁盘, 会议结束后自动删除)
 CREATE TABLE IF NOT EXISTS content_item (
     id               BIGINT AUTO_INCREMENT PRIMARY KEY,
     name             VARCHAR(128) NOT NULL,
     description      VARCHAR(512),
-    type             VARCHAR(16)  NOT NULL DEFAULT 'LOCAL_FILE',
-    local_path       VARCHAR(512),
+    type             VARCHAR(16)  NOT NULL DEFAULT 'UPLOADED_FILE',
     duration_seconds INT,
+    storage_path     VARCHAR(512),
+    file_size        BIGINT,
+    mime_type        VARCHAR(128),
+    room_id          BIGINT,
     enabled          TINYINT(1)   NOT NULL DEFAULT 1,
     created_by       VARCHAR(64)  NOT NULL,
-    created_at       DATETIME     NOT NULL
+    created_at       DATETIME     NOT NULL,
+    KEY idx_content_item_room (room_id)
 ) ENGINE = InnoDB;
 
 -- 会议房间(单房间 2 个手机客户端; PC 端为后台隐藏角色)

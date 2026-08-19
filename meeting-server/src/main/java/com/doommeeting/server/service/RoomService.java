@@ -39,7 +39,6 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final RoomMemberRepository memberRepository;
     private final InviteTokenRepository inviteTokenRepository;
-    private final ContentItemRepository contentItemRepository;
     private final RoomEventLogRepository eventLogRepository;
     private final ContentService contentService;
     private final EventLogService eventLogService;
@@ -60,7 +59,7 @@ public class RoomService {
         // 创建即进入缺人等待状态, 超过阈值(默认3分钟)后台亮红灯预警
         room.setUnderstaffedSince(LocalDateTime.now());
         if (request.contentId() != null) {
-            room.setCurrentContent(getContent(request.contentId()));
+            room.setCurrentContent(contentService.getCastable(request.contentId()));
         }
         roomRepository.save(room);
 
@@ -166,14 +165,22 @@ public class RoomService {
                 "durationMinutes", room.getDurationMinutes()));
     }
 
-    /** PC 端立即投放内容到指定房间(不同房间不同内容并行, 不串音不串频) */
+    /**
+     * 立即投放内容到指定房间(不同房间不同内容并行, 不串音不串频)。
+     * 若房间已有投放且未确认替换(replace=false), 返回 409 提示先停止当前投放。
+     */
     @Transactional
-    public RoomResponse castContent(Long roomId, Long contentId, String operator) {
+    public synchronized RoomResponse castContent(Long roomId, Long contentId, String operator, boolean replace) {
         Room room = getRoomById(roomId);
         if (room.getStatus() == RoomStatus.CLOSED) {
             throw new BusinessException("房间已关闭, 无法投放内容");
         }
-        ContentItem content = getContent(contentId);
+        ContentItem current = room.getCurrentContent();
+        if (current != null && !current.getId().equals(contentId) && !replace) {
+            throw new BusinessException(409,
+                    "房间已投放「" + current.getName() + "」, 请先停止当前投放后再投放新内容");
+        }
+        ContentItem content = contentService.getCastable(contentId);
         room.setCurrentContent(content);
         room.setPlaybackState(PlaybackState.IDLE);
         room.setPlaybackPositionSeconds(0.0);
@@ -186,8 +193,48 @@ public class RoomService {
         castPayload.put("contentName", content.getName());
         castPayload.put("contentType", content.getType());
         castPayload.put("contentFileUrl", ContentService.fileUrlOf(content));
+        castPayload.put("contentMimeType", content.getMimeType());
+        castPayload.put("contentDurationSeconds", content.getDurationSeconds());
+        castPayload.put("playbackState", room.getPlaybackState().name());
+        castPayload.put("playbackPositionSeconds", room.getPlaybackPositionSeconds());
         castPayload.put("operator", operator);
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CONTENT_CAST", castPayload);
+        return toResponse(room, latestInvite(room));
+    }
+
+    /** 投放前冲突检查: 房间已有投放且未确认替换时返回 409 */
+    @Transactional(readOnly = true)
+    public void checkCastConflict(Long roomId, boolean replace) {
+        Room room = getRoomById(roomId);
+        if (room.getStatus() == RoomStatus.CLOSED) {
+            throw new BusinessException("房间已关闭, 无法投放内容");
+        }
+        ContentItem current = room.getCurrentContent();
+        if (current != null && !replace) {
+            throw new BusinessException(409,
+                    "房间已投放「" + current.getName() + "」, 请先停止当前投放后再投放新内容");
+        }
+    }
+
+    /** 停止当前投放: 清除房间当前内容并重置播放状态 */
+    @Transactional
+    public RoomResponse stopCast(Long roomId, String operator) {
+        Room room = getRoomById(roomId);
+        if (room.getStatus() == RoomStatus.CLOSED) {
+            throw new BusinessException("房间已关闭");
+        }
+        ContentItem current = room.getCurrentContent();
+        room.setCurrentContent(null);
+        room.setPlaybackState(PlaybackState.IDLE);
+        room.setPlaybackPositionSeconds(0.0);
+        room.setPlaybackUpdatedAt(LocalDateTime.now());
+        roomRepository.save(room);
+        eventLogService.log(room, RoomEventType.CAST_STOPPED,
+                operator + " 停止投放" + (current == null ? "" : ": " + current.getName()));
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("operator", operator);
+        payload.put("previousContentName", current == null ? null : current.getName());
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CAST_STOPPED", payload);
         return toResponse(room, latestInvite(room));
     }
 
@@ -357,6 +404,10 @@ public class RoomService {
                 remainingSeconds,
                 content == null ? null : content.getId(),
                 content == null ? null : content.getName(),
+                content == null ? null : content.getType(),
+                content == null ? null : ContentService.fileUrlOf(content),
+                content == null ? null : content.getMimeType(),
+                content == null ? null : content.getDurationSeconds(),
                 room.getPlaybackState().name(),
                 room.getPlaybackPositionSeconds(),
                 room.getLikeCount(),
@@ -382,11 +433,6 @@ public class RoomService {
                 member.getOnline(),
                 member.getJoinedAt(),
                 member.getLeftAt());
-    }
-
-    private ContentItem getContent(Long contentId) {
-        return contentItemRepository.findById(contentId)
-                .orElseThrow(() -> new BusinessException(404, "投放内容不存在"));
     }
 
     private String generateRoomCode() {

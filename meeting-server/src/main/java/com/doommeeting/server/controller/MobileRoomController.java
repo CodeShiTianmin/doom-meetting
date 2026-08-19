@@ -73,16 +73,18 @@ public class MobileRoomController {
         return ApiResponse.ok();
     }
 
-    /** 手机端上传真实文件并直接投放到本房间(会议结束后自动删除) */
+    /** 手机端上传真实文件并直接投放到本房间(会议结束后自动删除); 已有投放时需 replace=true 确认替换 */
     @PostMapping("/{roomCode}/contents/upload")
     public ApiResponse<ContentResponse> uploadAndCast(@PathVariable String roomCode,
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam String identity,
-                                                      @RequestParam(required = false) String nickname) {
+                                                      @RequestParam(required = false) String nickname,
+                                                      @RequestParam(defaultValue = "false") boolean replace) {
         Room room = roomService.getRoomByCode(roomCode);
+        roomService.checkCastConflict(room.getId(), replace);
         String operator = nickname == null || nickname.isBlank() ? identity : nickname;
         ContentResponse content = contentService.upload(file, room.getId(), operator);
-        roomService.castContent(room.getId(), content.id(), operator);
+        roomService.castContent(room.getId(), content.id(), operator, true);
         return ApiResponse.ok(content);
     }
 

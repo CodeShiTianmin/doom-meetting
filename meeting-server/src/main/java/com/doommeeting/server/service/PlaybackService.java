@@ -2,6 +2,7 @@ package com.doommeeting.server.service;
 
 import com.doommeeting.server.common.BusinessException;
 import com.doommeeting.server.dto.MobileDtos.PlaybackControlRequest;
+import com.doommeeting.server.dto.RoomDtos.AdminPlaybackRequest;
 import com.doommeeting.server.entity.Room;
 import com.doommeeting.server.entity.RoomMember;
 import com.doommeeting.server.enums.PlaybackAction;
@@ -20,9 +21,10 @@ import java.util.Map;
 
 /**
  * 播放控制: 房间运行中, 手机端可执行 开始播放/暂停/拖动进度条;
- * 明暗、音量为手机本地调节(不影响另一客户端), 仅上报记录。
+ * 手机端明暗、音量为本地调节(不影响另一客户端), 仅上报记录。
+ * PC 管理端可通过 adminControl 控制房间内全部手机端(含明暗/音量远程下发)。
  * 控制指令带序号, 后端串行转发, 按最后指令执行并广播权威状态,
- * 解决两客户端同时操作冲突。
+ * 解决多端同时操作冲突。
  */
 @Service
 @RequiredArgsConstructor
@@ -105,6 +107,88 @@ public class PlaybackService {
             notificationService.pushToAdmin("PLAYBACK_CONTROL", room.getRoomCode(), payload);
         }
         return authoritativeState(room, null);
+    }
+
+    /**
+     * PC 管理端播放控制: 不要求房间成员身份, 以管理员身份下发。
+     * PLAY/PAUSE/SEEK 更新权威状态并广播全房;
+     * BRIGHTNESS/VOLUME 下发到房间内全部手机端本地执行。
+     */
+    @Transactional
+    public synchronized Map<String, Object> adminControl(Long roomId, AdminPlaybackRequest request,
+                                                         String operator) {
+        Room room = roomService.getRoomById(roomId);
+        if (room.getStatus() != RoomStatus.RUNNING) {
+            throw new BusinessException("房间未运行, 无法进行播放控制");
+        }
+        PlaybackAction action;
+        try {
+            action = PlaybackAction.valueOf(request.action().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("不支持的播放指令: " + request.action());
+        }
+
+        boolean sharedControl = action == PlaybackAction.PLAY
+                || action == PlaybackAction.PAUSE
+                || action == PlaybackAction.SEEK;
+
+        if (sharedControl) {
+            if (room.getCurrentContent() == null) {
+                throw new BusinessException("房间当前没有投放内容");
+            }
+            // PC 端指令直接押到最新序号, 保证不被手机端旧指令覆盖
+            room.setLastCommandSeq(room.getLastCommandSeq() + 1);
+            switch (action) {
+                case PLAY -> room.setPlaybackState(PlaybackState.PLAYING);
+                case PAUSE -> room.setPlaybackState(PlaybackState.PAUSED);
+                case SEEK -> {
+                    if (request.positionSeconds() == null) {
+                        throw new BusinessException("SEEK 指令必须携带进度");
+                    }
+                }
+                default -> { }
+            }
+            if (request.positionSeconds() != null) {
+                double position = Math.max(0, request.positionSeconds());
+                if (room.getCurrentContent() != null
+                        && room.getCurrentContent().getDurationSeconds() != null) {
+                    position = Math.min(position, room.getCurrentContent().getDurationSeconds());
+                }
+                room.setPlaybackPositionSeconds(position);
+            }
+            room.setPlaybackUpdatedAt(LocalDateTime.now());
+            roomRepository.save(room);
+        } else if (request.value() == null) {
+            throw new BusinessException("调节指令必须携带数值");
+        }
+
+        eventLogService.log(room, RoomEventType.PLAYBACK_CONTROL,
+                "PC(" + operator + ") " + describeAdmin(action, request));
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("action", action.name());
+        payload.put("identity", "pc-" + operator);
+        payload.put("nickname", "PC 控制台");
+        payload.put("source", "PC");
+        payload.put("seq", room.getLastCommandSeq());
+        payload.put("playbackState", room.getPlaybackState().name());
+        payload.put("positionSeconds", room.getPlaybackPositionSeconds());
+        if (request.value() != null) {
+            payload.put("value", request.value());
+        }
+        // PC 下发的指令(含明暗/音量)全部广播到房间内手机端执行
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "PLAYBACK_CONTROL", payload);
+        return authoritativeState(room, null);
+    }
+
+    private String describeAdmin(PlaybackAction action, AdminPlaybackRequest request) {
+        return switch (action) {
+            case PLAY -> "开始播放";
+            case PAUSE -> "暂停播放";
+            case SEEK -> "拖动进度条至 " + request.positionSeconds() + " 秒";
+            case BRIGHTNESS -> "调节手机端明暗至 " + request.value();
+            case VOLUME -> "调节手机端音量至 " + request.value();
+        };
     }
 
     private Map<String, Object> authoritativeState(Room room, String message) {

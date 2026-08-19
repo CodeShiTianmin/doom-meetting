@@ -291,6 +291,14 @@ class _RoomPageState extends State<RoomPage> {
                 (data['positionSeconds'] as num?)?.toDouble(),
           );
         });
+        // PC 端下发的明暗/音量指令在手机本地执行
+        if (data['source'] == 'PC') {
+          _applyRemoteAdjustment(data);
+        }
+        break;
+      case 'CAST_STOPPED':
+        _refreshState();
+        _showToast('公司已停止投放');
         break;
       case 'SETTINGS_CHANGED':
         _refreshState();
@@ -361,6 +369,26 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
+  /// PC 端远程调节明暗/音量: 在本机直接执行
+  Future<void> _applyRemoteAdjustment(Map<String, dynamic> data) async {
+    final action = data['action'] as String?;
+    var value = (data['value'] as num?)?.toDouble();
+    if (value == null) return;
+    if (value > 1) value = value / 100;
+    value = value.clamp(0.0, 1.0);
+    if (action == 'BRIGHTNESS') {
+      setState(() => _brightness = value!);
+      try {
+        await ScreenBrightness().setScreenBrightness(value);
+      } catch (_) {}
+    } else if (action == 'VOLUME') {
+      setState(() => _volume = value!);
+      try {
+        VolumeController().setVolume(value);
+      } catch (_) {}
+    }
+  }
+
   Future<void> _setBrightness(double value) async {
     setState(() => _brightness = value);
     try {
@@ -388,9 +416,32 @@ class _RoomPageState extends State<RoomPage> {
 
   bool _uploading = false;
 
-  /// 手机端选择真实文件上传服务器并投放到本房间(会议结束后自动删除)
+  /// 手机端选择真实文件上传服务器并投放到本房间(会议结束后自动删除);
+  /// 投放前检查已有投放, 提示先停止当前投放
   Future<void> _uploadAndCastFile() async {
     if (_uploading) return;
+    var replace = false;
+    if (_state?.contentId != null) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+          title: const Text('房间已有投放'),
+          content: Text(
+              '当前正在投放「${_state?.contentName ?? '内容'}」。\n需要先停止当前投放, 才能投放新内容。'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消')),
+            FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('停止并投放新文件')),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      replace = true;
+    }
     final result = await FilePicker.platform.pickFiles(type: FileType.any);
     final path = result?.files.single.path;
     if (path == null) return;
@@ -401,8 +452,13 @@ class _RoomPageState extends State<RoomPage> {
         roomCode: session.roomCode,
         identity: session.identity,
         filePath: path,
+        replace: replace,
       );
       _showToast('已投放文件: ${content['name']}');
+    } on ApiException catch (error) {
+      _showToast(error.code == 409
+          ? '投放冲突: ${error.message}'
+          : '文件上传失败: ${error.message}');
     } catch (error) {
       _showToast('文件上传失败: $error');
     } finally {

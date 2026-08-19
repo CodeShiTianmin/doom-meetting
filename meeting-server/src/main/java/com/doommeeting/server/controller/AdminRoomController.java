@@ -5,6 +5,7 @@ import com.doommeeting.server.dto.LikeDtos.LikeRecordResponse;
 import com.doommeeting.server.dto.RoomDtos.*;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.LiveKitTokenService;
+import com.doommeeting.server.service.PlaybackService;
 import com.doommeeting.server.service.RoomService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ public class AdminRoomController {
     private final RoomService roomService;
     private final LikeService likeService;
     private final LiveKitTokenService liveKitTokenService;
+    private final PlaybackService playbackService;
 
     @PostMapping
     public ApiResponse<RoomResponse> createRoom(@Valid @RequestBody CreateRoomRequest request,
@@ -52,7 +54,23 @@ public class AdminRoomController {
     public ApiResponse<RoomResponse> castContent(@PathVariable Long id,
                                                  @Valid @RequestBody CastRequest request,
                                                  Authentication authentication) {
-        return ApiResponse.ok(roomService.castContent(id, request.contentId(), authentication.getName()));
+        return ApiResponse.ok(roomService.castContent(id, request.contentId(),
+                authentication.getName(), Boolean.TRUE.equals(request.replace())));
+    }
+
+    /** 停止当前投放: 清除房间当前内容并重置播放状态 */
+    @PostMapping("/{id}/cast/stop")
+    public ApiResponse<RoomResponse> stopCast(@PathVariable Long id,
+                                              Authentication authentication) {
+        return ApiResponse.ok(roomService.stopCast(id, authentication.getName()));
+    }
+
+    /** PC 端播放控制: 播放/暂停/拖动进度/明暗/音量, 实时下发到房间内全部手机端 */
+    @PostMapping("/{id}/playback")
+    public ApiResponse<Map<String, Object>> playback(@PathVariable Long id,
+                                                     @Valid @RequestBody AdminPlaybackRequest request,
+                                                     Authentication authentication) {
+        return ApiResponse.ok(playbackService.adminControl(id, request, authentication.getName()));
     }
 
     @PostMapping("/{id}/close")
