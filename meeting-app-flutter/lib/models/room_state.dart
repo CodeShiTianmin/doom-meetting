@@ -1,5 +1,7 @@
 /// 房间实时状态(对应后端 GET /api/mobile/rooms/{code}/state)
 class RoomState {
+  static const Object _unset = Object();
+
   final String roomCode;
   final String name;
   final String status;
@@ -13,6 +15,8 @@ class RoomState {
   final int? remainingSeconds;
   final String playbackState;
   final double playbackPositionSeconds;
+  final int? playbackSeq;
+  final bool screenSharing;
   final int likeCount;
   final int? contentId;
   final String? contentName;
@@ -35,6 +39,8 @@ class RoomState {
     this.remainingSeconds,
     required this.playbackState,
     required this.playbackPositionSeconds,
+    this.playbackSeq,
+    this.screenSharing = false,
     required this.likeCount,
     this.contentId,
     this.contentName,
@@ -64,6 +70,8 @@ class RoomState {
         playbackState: (json['playbackState'] as String?) ?? 'IDLE',
         playbackPositionSeconds:
             (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
+        playbackSeq: (json['playbackSeq'] as num?)?.toInt(),
+        screenSharing: json['screenSharing'] == true,
         likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
         contentId: (json['contentId'] as num?)?.toInt(),
         contentName: json['contentName'] as String?,
@@ -74,20 +82,23 @@ class RoomState {
         contentMimeType: json['contentMimeType'] as String?,
       );
 
+  /// 可空字段(content* 等)使用哨兵默认值, 支持显式传 null 清空
   RoomState copyWith({
     String? status,
     bool? videoCallEnabled,
     bool? cameraEnabled,
-    int? remainingSeconds,
+    Object? remainingSeconds = _unset,
     String? playbackState,
     double? playbackPositionSeconds,
+    int? playbackSeq,
+    bool? screenSharing,
     int? likeCount,
-    int? contentId,
-    String? contentName,
-    int? contentDurationSeconds,
-    String? contentType,
-    String? contentFileUrl,
-    String? contentMimeType,
+    Object? contentId = _unset,
+    Object? contentName = _unset,
+    Object? contentDurationSeconds = _unset,
+    Object? contentType = _unset,
+    Object? contentFileUrl = _unset,
+    Object? contentMimeType = _unset,
     String? meetingStartAt,
     String? meetingEndAt,
   }) =>
@@ -102,17 +113,28 @@ class RoomState {
         durationMinutes: durationMinutes,
         meetingStartAt: meetingStartAt ?? this.meetingStartAt,
         meetingEndAt: meetingEndAt ?? this.meetingEndAt,
-        remainingSeconds: remainingSeconds ?? this.remainingSeconds,
+        remainingSeconds: remainingSeconds == _unset
+            ? this.remainingSeconds
+            : remainingSeconds as int?,
         playbackState: playbackState ?? this.playbackState,
         playbackPositionSeconds:
             playbackPositionSeconds ?? this.playbackPositionSeconds,
+        playbackSeq: playbackSeq ?? this.playbackSeq,
+        screenSharing: screenSharing ?? this.screenSharing,
         likeCount: likeCount ?? this.likeCount,
-        contentId: contentId ?? this.contentId,
-        contentName: contentName ?? this.contentName,
-        contentDurationSeconds:
-            contentDurationSeconds ?? this.contentDurationSeconds,
-        contentType: contentType ?? this.contentType,
-        contentFileUrl: contentFileUrl ?? this.contentFileUrl,
-        contentMimeType: contentMimeType ?? this.contentMimeType,
+        contentId: contentId == _unset ? this.contentId : contentId as int?,
+        contentName:
+            contentName == _unset ? this.contentName : contentName as String?,
+        contentDurationSeconds: contentDurationSeconds == _unset
+            ? this.contentDurationSeconds
+            : contentDurationSeconds as int?,
+        contentType:
+            contentType == _unset ? this.contentType : contentType as String?,
+        contentFileUrl: contentFileUrl == _unset
+            ? this.contentFileUrl
+            : contentFileUrl as String?,
+        contentMimeType: contentMimeType == _unset
+            ? this.contentMimeType
+            : contentMimeType as String?,
       );
 }

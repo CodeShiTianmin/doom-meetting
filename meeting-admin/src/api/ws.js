@@ -17,6 +17,10 @@ export function connectWs(onConnect) {
   stompClient = new Client({
     webSocketFactory: () => new SockJS('/ws'),
     reconnectDelay: 3000,
+    beforeConnect: () => {
+      const token = localStorage.getItem('admin_token')
+      stompClient.connectHeaders = token ? { Authorization: `Bearer ${token}` } : {}
+    },
     onConnect: () => {
       pendingSubs.splice(0).forEach(({ destination, handler, key }) => {
         doSubscribe(destination, handler, key)

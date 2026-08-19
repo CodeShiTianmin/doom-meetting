@@ -1,5 +1,7 @@
 package com.doommeeting.server.dto;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -53,6 +55,8 @@ public class RoomDtos {
             Integer contentDurationSeconds,
             String playbackState,
             Double playbackPositionSeconds,
+            Boolean screenSharing,
+            String screenShareBy,
             Long likeCount,
             Boolean understaffedAlert,
             LocalDateTime understaffedSince,
@@ -84,8 +88,9 @@ public class RoomDtos {
 
     public record AdminPlaybackRequest(
             @NotBlank(message = "操作类型不能为空") String action,
-            Double positionSeconds,
-            Double value) {
+            @DecimalMin(value = "0", message = "播放进度不能为负") Double positionSeconds,
+            @DecimalMin(value = "0", message = "调节值范围 0~100")
+            @DecimalMax(value = "100", message = "调节值范围 0~100") Double value) {
     }
 
     public record RoomEventResponse(Long id, String type, String detail, LocalDateTime createdAt) {

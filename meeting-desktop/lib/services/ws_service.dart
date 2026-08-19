@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:stomp_dart_client/stomp_dart_client.dart';
 
 import '../config/app_config.dart';
+import 'api_client.dart';
 
 /// PC 端实时通道:
 /// - /topic/admin/dashboard 全局事件(房间运行/红灯预警/点赞/成员进出)
@@ -20,6 +21,10 @@ class DesktopWsService {
       config: StompConfig(
         url: AppConfig.wsUrl,
         reconnectDelay: const Duration(seconds: 5),
+        stompConnectHeaders: {
+          if (ApiClient.instance.token != null)
+            'Authorization': 'Bearer ${ApiClient.instance.token}',
+        },
         onConnect: (frame) {
           _connected = true;
           _client?.subscribe(

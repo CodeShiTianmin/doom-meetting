@@ -39,7 +39,11 @@ class CastManager {
 
   Future<void> closeAll() async {
     for (final roomId in _sessions.keys.toList()) {
-      await closeSession(roomId);
+      try {
+        await closeSession(roomId);
+      } catch (_) {
+        // 单个房间清理失败不中断其余房间清理
+      }
     }
   }
 }

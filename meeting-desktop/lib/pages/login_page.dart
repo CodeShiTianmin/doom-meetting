@@ -59,7 +59,7 @@ class _LoginPageState extends State<LoginPage> {
               elevation: 12,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
-                side: BorderSide(color: Colors.white.withOpacity(0.06)),
+                side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(28),
@@ -78,7 +78,7 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF5B8DEF).withOpacity(0.4),
+                            color: const Color(0xFF5B8DEF).withValues(alpha: 0.4),
                             blurRadius: 24,
                           ),
                         ],

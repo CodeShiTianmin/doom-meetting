@@ -24,8 +24,11 @@ client.interceptors.response.use(
       localStorage.removeItem('admin_token')
       window.location.href = '/login'
     }
-    const message = error.response?.data?.message || error.message || '网络错误'
-    return Promise.reject(new Error(message))
+    const body = error.response?.data
+    const message = body?.message || error.message || '网络错误'
+    const err = new Error(message)
+    if (typeof body?.code === 'number') err.code = body.code
+    return Promise.reject(err)
   },
 )
 

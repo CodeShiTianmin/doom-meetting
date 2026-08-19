@@ -84,6 +84,14 @@ public class Room {
 
     private LocalDateTime playbackUpdatedAt;
 
+    /** PC 端屏幕/窗口共享中(跨端冲突检查用) */
+    @Column(nullable = false)
+    private Boolean screenSharing = false;
+
+    /** 屏幕共享发起人 */
+    @Column(length = 64)
+    private String screenShareBy;
+
     /** 点赞总数 */
     @Column(nullable = false)
     private Long likeCount = 0L;

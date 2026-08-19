@@ -19,6 +19,8 @@ class RoomModel {
   final String playbackState;
   final double playbackPositionSeconds;
   final int likeCount;
+  final bool screenSharing;
+  final String? screenShareBy;
   final bool understaffedAlert;
   final int maxMembers;
   final int onlineMemberCount;
@@ -47,6 +49,8 @@ class RoomModel {
     required this.playbackState,
     required this.playbackPositionSeconds,
     required this.likeCount,
+    this.screenSharing = false,
+    this.screenShareBy,
     required this.understaffedAlert,
     required this.maxMembers,
     required this.onlineMemberCount,
@@ -80,6 +84,8 @@ class RoomModel {
         playbackPositionSeconds:
             (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
         likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
+        screenSharing: json['screenSharing'] == true,
+        screenShareBy: json['screenShareBy'] as String?,
         understaffedAlert: json['understaffedAlert'] == true,
         maxMembers: (json['maxMembers'] as num?)?.toInt() ?? 2,
         onlineMemberCount: (json['onlineMemberCount'] as num?)?.toInt() ?? 0,

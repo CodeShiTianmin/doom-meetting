@@ -2,6 +2,7 @@ package com.doommeeting.server.common;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
@@ -15,11 +16,16 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
-    public ApiResponse<Void> handleBusiness(BusinessException e) {
-        return ApiResponse.error(e.getCode(), e.getMessage());
+    public ResponseEntity<ApiResponse<Void>> handleBusiness(BusinessException e) {
+        HttpStatus status = HttpStatus.resolve(e.getCode());
+        if (status == null || !status.isError()) {
+            status = HttpStatus.BAD_REQUEST;
+        }
+        return ResponseEntity.status(status).body(ApiResponse.error(e.getCode(), e.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
     public ApiResponse<Void> handleValidation(MethodArgumentNotValidException e) {
         FieldError fieldError = e.getBindingResult().getFieldError();
         String message = fieldError == null ? "参数校验失败"

@@ -180,7 +180,13 @@ public class RoomService {
             throw new BusinessException(409,
                     "房间已投放「" + current.getName() + "」, 请先停止当前投放后再投放新内容");
         }
+        if (Boolean.TRUE.equals(room.getScreenSharing()) && !replace) {
+            throw new BusinessException(409,
+                    "房间正在屏幕共享, 请先停止屏幕共享后再投放新内容");
+        }
         ContentItem content = contentService.getCastable(contentId);
+        room.setScreenSharing(false);
+        room.setScreenShareBy(null);
         room.setCurrentContent(content);
         room.setPlaybackState(PlaybackState.IDLE);
         room.setPlaybackPositionSeconds(0.0);
@@ -192,7 +198,7 @@ public class RoomService {
         castPayload.put("contentId", content.getId());
         castPayload.put("contentName", content.getName());
         castPayload.put("contentType", content.getType());
-        castPayload.put("contentFileUrl", ContentService.fileUrlOf(content));
+        castPayload.put("contentFileUrl", contentService.fileUrlOf(content));
         castPayload.put("contentMimeType", content.getMimeType());
         castPayload.put("contentDurationSeconds", content.getDurationSeconds());
         castPayload.put("playbackState", room.getPlaybackState().name());
@@ -214,6 +220,50 @@ public class RoomService {
             throw new BusinessException(409,
                     "房间已投放「" + current.getName() + "」, 请先停止当前投放后再投放新内容");
         }
+        if (Boolean.TRUE.equals(room.getScreenSharing()) && !replace) {
+            throw new BusinessException(409,
+                    "房间正在屏幕共享, 请先停止屏幕共享后再投放新内容");
+        }
+    }
+
+    /** PC 端登记屏幕/窗口共享开始(跨端冲突检查可感知) */
+    @Transactional
+    public synchronized RoomResponse startScreenShare(Long roomId, String operator, boolean replace) {
+        Room room = getRoomById(roomId);
+        if (room.getStatus() == RoomStatus.CLOSED) {
+            throw new BusinessException("房间已关闭, 无法屏幕共享");
+        }
+        ContentItem current = room.getCurrentContent();
+        if (current != null && !replace) {
+            throw new BusinessException(409,
+                    "房间已投放「" + current.getName() + "」, 请先停止当前投放后再屏幕共享");
+        }
+        room.setCurrentContent(null);
+        room.setScreenSharing(true);
+        room.setScreenShareBy(operator);
+        room.setPlaybackState(PlaybackState.IDLE);
+        room.setPlaybackPositionSeconds(0.0);
+        room.setPlaybackUpdatedAt(LocalDateTime.now());
+        roomRepository.save(room);
+        eventLogService.log(room, RoomEventType.CONTENT_CAST, operator + " 开始屏幕共享");
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "SCREEN_SHARE_STARTED",
+                Map.of("operator", operator));
+        return toResponse(room, latestInvite(room));
+    }
+
+    /** PC 端登记屏幕/窗口共享停止 */
+    @Transactional
+    public synchronized RoomResponse stopScreenShare(Long roomId, String operator) {
+        Room room = getRoomById(roomId);
+        if (Boolean.TRUE.equals(room.getScreenSharing())) {
+            room.setScreenSharing(false);
+            room.setScreenShareBy(null);
+            roomRepository.save(room);
+            eventLogService.log(room, RoomEventType.CAST_STOPPED, operator + " 停止屏幕共享");
+            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "SCREEN_SHARE_STOPPED",
+                    Map.of("operator", operator));
+        }
+        return toResponse(room, latestInvite(room));
     }
 
     /** 停止当前投放: 清除房间当前内容并重置播放状态 */
@@ -225,6 +275,8 @@ public class RoomService {
         }
         ContentItem current = room.getCurrentContent();
         room.setCurrentContent(null);
+        room.setScreenSharing(false);
+        room.setScreenShareBy(null);
         room.setPlaybackState(PlaybackState.IDLE);
         room.setPlaybackPositionSeconds(0.0);
         room.setPlaybackUpdatedAt(LocalDateTime.now());
@@ -257,6 +309,8 @@ public class RoomService {
         room.setUnderstaffedAlert(false);
         room.setUnderstaffedSince(null);
         room.setPlaybackState(PlaybackState.IDLE);
+        room.setScreenSharing(false);
+        room.setScreenShareBy(null);
         roomRepository.save(room);
 
         for (RoomMember member : memberRepository.findByRoomAndOnlineTrue(room)) {
@@ -329,14 +383,16 @@ public class RoomService {
         }
         state.put("playbackState", room.getPlaybackState().name());
         state.put("playbackPositionSeconds", room.getPlaybackPositionSeconds());
+        state.put("playbackSeq", room.getLastCommandSeq());
         state.put("likeCount", room.getLikeCount());
         ContentItem content = room.getCurrentContent();
         state.put("contentId", content == null ? null : content.getId());
         state.put("contentName", content == null ? null : content.getName());
         state.put("contentDurationSeconds", content == null ? null : content.getDurationSeconds());
         state.put("contentType", content == null ? null : content.getType());
-        state.put("contentFileUrl", content == null ? null : ContentService.fileUrlOf(content));
+        state.put("contentFileUrl", content == null ? null : contentService.fileUrlOf(content));
         state.put("contentMimeType", content == null ? null : content.getMimeType());
+        state.put("screenSharing", room.getScreenSharing());
         return state;
     }
 
@@ -405,11 +461,13 @@ public class RoomService {
                 content == null ? null : content.getId(),
                 content == null ? null : content.getName(),
                 content == null ? null : content.getType(),
-                content == null ? null : ContentService.fileUrlOf(content),
+                content == null ? null : contentService.fileUrlOf(content),
                 content == null ? null : content.getMimeType(),
                 content == null ? null : content.getDurationSeconds(),
                 room.getPlaybackState().name(),
                 room.getPlaybackPositionSeconds(),
+                room.getScreenSharing(),
+                room.getScreenShareBy(),
                 room.getLikeCount(),
                 room.getUnderstaffedAlert(),
                 room.getUnderstaffedSince(),

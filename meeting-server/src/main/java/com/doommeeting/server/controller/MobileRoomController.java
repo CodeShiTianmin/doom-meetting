@@ -4,6 +4,7 @@ import com.doommeeting.server.common.ApiResponse;
 import com.doommeeting.server.dto.ContentDtos.ContentResponse;
 import com.doommeeting.server.dto.MobileDtos.*;
 import com.doommeeting.server.entity.Room;
+import com.doommeeting.server.entity.RoomMember;
 import com.doommeeting.server.service.ContentService;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.MemberService;
@@ -81,10 +82,18 @@ public class MobileRoomController {
                                                       @RequestParam(required = false) String nickname,
                                                       @RequestParam(defaultValue = "false") boolean replace) {
         Room room = roomService.getRoomByCode(roomCode);
+        // 与播放控制一致: 必须是房间在线成员, 操作人昵称以库中记录为准
+        RoomMember member = memberService.requireOnlineMember(room, identity);
+        String operator = member.getNickname();
         roomService.checkCastConflict(room.getId(), replace);
-        String operator = nickname == null || nickname.isBlank() ? identity : nickname;
         ContentResponse content = contentService.upload(file, room.getId(), operator);
-        roomService.castContent(room.getId(), content.id(), operator, true);
+        try {
+            roomService.castContent(room.getId(), content.id(), operator, replace);
+        } catch (RuntimeException e) {
+            // 投放失败时清理刚上传的文件与记录, 避免孤儿文件
+            contentService.delete(content.id());
+            throw e;
+        }
         return ApiResponse.ok(content);
     }
 

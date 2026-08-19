@@ -56,7 +56,8 @@ class _RoomPageState extends State<RoomPage> {
   int? _remainingSeconds;
   bool _recordingBlocked = false;
   String? _closedReason;
-  int _commandSeq = DateTime.now().millisecondsSinceEpoch;
+  // 以服务器权威序号为基准(进房/广播/指令返回时同步), 不再用本机时间戳
+  int _commandSeq = 0;
   int _heartId = 0;
   final List<HeartItem> _hearts = [];
 
@@ -73,7 +74,7 @@ class _RoomPageState extends State<RoomPage> {
     _initLocalControls();
     _refreshState();
     _connectLiveKit();
-    _ws.connect(session.roomCode, _onRoomEvent);
+    _ws.connect(session.roomCode, session.identity, _onRoomEvent);
     _heartbeatTimer = Timer.periodic(AppConfig.heartbeatInterval, (_) {
       ApiClient.instance
           .heartbeat(session.roomCode, session.identity)
@@ -104,6 +105,7 @@ class _RoomPageState extends State<RoomPage> {
     try {
       final state = await ApiClient.instance.getRoomState(session.roomCode);
       if (!mounted) return;
+      _syncCommandSeq(state.playbackSeq);
       setState(() {
         _state = state;
         _remainingSeconds = state.remainingSeconds ?? _remainingSeconds;
@@ -135,18 +137,33 @@ class _RoomPageState extends State<RoomPage> {
   void _tickClock() {
     final state = _state;
     if (state == null || !state.running) return;
+    int? elapsed = _elapsedSeconds;
     final startAt = state.meetingStartAt;
-    setState(() {
-      if (startAt != null) {
-        final start = DateTime.tryParse(startAt);
-        if (start != null) {
-          _elapsedSeconds = DateTime.now().difference(start).inSeconds;
-        }
+    if (startAt != null) {
+      final start = DateTime.tryParse(startAt);
+      if (start != null) {
+        elapsed = DateTime.now().difference(start).inSeconds;
       }
-      if (_remainingSeconds != null && _remainingSeconds! > 0) {
-        _remainingSeconds = _remainingSeconds! - 1;
-      }
-    });
+    }
+    int? remaining = _remainingSeconds;
+    if (remaining != null && remaining > 0) {
+      remaining = remaining - 1;
+    }
+    // 仅在数值变化时重建, 避免每秒全页 setState
+    if (elapsed != _elapsedSeconds || remaining != _remainingSeconds) {
+      setState(() {
+        _elapsedSeconds = elapsed;
+        _remainingSeconds = remaining;
+      });
+    }
+  }
+
+  /// 与服务器权威序号同步, 避免本机序号落后导致指令被永久丢弃
+  void _syncCommandSeq(num? serverSeq) {
+    if (serverSeq == null) return;
+    if (serverSeq.toInt() > _commandSeq) {
+      _commandSeq = serverSeq.toInt();
+    }
   }
 
   // ---------------- LiveKit ----------------
@@ -262,7 +279,7 @@ class _RoomPageState extends State<RoomPage> {
   Future<void> _toggleSpeaker() async {
     final next = !_speakerOn;
     try {
-      await lk.Hardware.instance.setSpeakerphoneOn(next);
+      await lk.AudioManager.instance.setSpeakerOutputPreferred(next);
     } catch (_) {}
     setState(() => _speakerOn = next);
   }
@@ -283,6 +300,7 @@ class _RoomPageState extends State<RoomPage> {
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
       case 'PLAYBACK_CONTROL':
+        _syncCommandSeq(data['seq'] as num?);
         setState(() {
           _state = _state?.copyWith(
             playbackState: data['playbackState'] as String? ??
@@ -354,6 +372,7 @@ class _RoomPageState extends State<RoomPage> {
         value: value,
         seq: ++_commandSeq,
       );
+      _syncCommandSeq(result['seq'] as num?);
       final playbackState = result['playbackState'] as String?;
       if (playbackState != null && mounted) {
         setState(() {
@@ -466,14 +485,14 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
-  /// 打开服务器上存储的当前投放文件
+  /// 打开服务器上存储的当前投放文件(使用服务端下发的带签名 token 的地址)
   Future<void> _openServerFile() async {
-    final contentId = _state?.contentId;
-    if (contentId == null) {
+    final fileUrl = _state?.contentFileUrl;
+    if (fileUrl == null) {
       _showToast('当前没有投放内容');
       return;
     }
-    final url = ApiClient.instance.fileDownloadUrl(contentId);
+    final url = ApiClient.instance.fileDownloadUrl(fileUrl);
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 

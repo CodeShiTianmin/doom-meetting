@@ -15,7 +15,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -43,15 +42,26 @@ public class RoomLifecycleScheduler {
     private final NotificationService notificationService;
     private final AppProperties properties;
 
+    /**
+     * 注意: tick 本身不开事务, 各步骤独立提交并隔离异常,
+     * 避免单步失败将整个调度周期标记 rollback-only 一起回滚。
+     */
     @Scheduled(fixedDelay = 5000)
-    @Transactional
     public void tick() {
         LocalDateTime now = LocalDateTime.now();
-        memberService.markStaleMembersOffline(now);
-        checkUnderstaffedAlerts(now);
-        checkCountdownReminders(now);
-        autoCloseExpiredRooms(now);
-        castScheduleService.executeDueSchedules();
+        runStep("心跳离线判定", () -> memberService.markStaleMembersOffline(now));
+        runStep("缺人预警", () -> checkUnderstaffedAlerts(now));
+        runStep("倒计时提醒", () -> checkCountdownReminders(now));
+        runStep("到期关房", () -> autoCloseExpiredRooms(now));
+        runStep("定时投放", castScheduleService::executeDueSchedules);
+    }
+
+    private void runStep(String name, Runnable step) {
+        try {
+            step.run();
+        } catch (Exception e) {
+            log.warn("调度步骤[{}]执行失败: {}", name, e.getMessage(), e);
+        }
     }
 
     /** 创建房间后超过 3 分钟缺人状态, 后台亮红灯预警 */

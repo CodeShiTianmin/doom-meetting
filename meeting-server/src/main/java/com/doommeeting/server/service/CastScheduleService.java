@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -27,6 +28,7 @@ public class CastScheduleService {
     private final CastScheduleRepository scheduleRepository;
     private final RoomService roomService;
     private final ContentService contentService;
+    private final TransactionTemplate transactionTemplate;
 
     @Transactional
     public CastScheduleResponse create(CastScheduleRequest request, String createdBy) {
@@ -62,8 +64,11 @@ public class CastScheduleService {
                 .map(this::toResponse).toList();
     }
 
-    /** 由调度器周期调用: 执行到期的投放计划 */
-    @Transactional
+    /**
+     * 由调度器周期调用: 执行到期的投放计划。
+     * 本方法不开事务, 每个计划的投放在 castContent 自身事务中执行,
+     * 失败状态在独立事务中落库, 避免单个计划失败把整个调度事务标记 rollback-only。
+     */
     public void executeDueSchedules() {
         List<CastSchedule> due = scheduleRepository
                 .findByStatusAndCastAtLessThanEqual(CastScheduleStatus.PENDING, LocalDateTime.now());
@@ -74,16 +79,32 @@ public class CastScheduleService {
                         schedule.getContent().getId(),
                         "定时投放计划#" + schedule.getId(),
                         true);
-                schedule.setStatus(CastScheduleStatus.EXECUTED);
-                schedule.setExecutedAt(LocalDateTime.now());
+                markExecuted(schedule.getId());
             } catch (Exception e) {
                 log.warn("投放计划 {} 执行失败: {}", schedule.getId(), e.getMessage());
-                schedule.setStatus(CastScheduleStatus.FAILED);
-                schedule.setNote((schedule.getNote() == null ? "" : schedule.getNote() + " | ")
-                        + "执行失败: " + e.getMessage());
+                markFailed(schedule.getId(), e.getMessage());
             }
-            scheduleRepository.save(schedule);
         }
+    }
+
+    /** 独立事务落库(TransactionTemplate 避免同类自调用不走代理的问题) */
+    private void markExecuted(Long scheduleId) {
+        transactionTemplate.executeWithoutResult(status ->
+                scheduleRepository.findById(scheduleId).ifPresent(schedule -> {
+                    schedule.setStatus(CastScheduleStatus.EXECUTED);
+                    schedule.setExecutedAt(LocalDateTime.now());
+                    scheduleRepository.save(schedule);
+                }));
+    }
+
+    private void markFailed(Long scheduleId, String reason) {
+        transactionTemplate.executeWithoutResult(status ->
+                scheduleRepository.findById(scheduleId).ifPresent(schedule -> {
+                    schedule.setStatus(CastScheduleStatus.FAILED);
+                    schedule.setNote((schedule.getNote() == null ? "" : schedule.getNote() + " | ")
+                            + "执行失败: " + reason);
+                    scheduleRepository.save(schedule);
+                }));
     }
 
     private CastScheduleResponse toResponse(CastSchedule schedule) {
