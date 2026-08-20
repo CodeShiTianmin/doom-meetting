@@ -71,17 +71,40 @@ class CastSession extends ChangeNotifier {
   Future<void> startScreenCast(webrtc.DesktopCapturerSource source) async {
     await stopCast();
     final participant = _requireParticipant();
-    final track = await lk.LocalVideoTrack.createScreenShareTrack(
-      lk.ScreenShareCaptureOptions(
-        sourceId: source.id,
-        captureScreenAudio: true,
-        maxFrameRate: 30,
-      ),
-    );
-    await participant.publishVideoTrack(track);
+    await _publishCaptureTrack(participant, source.id);
     mode = CastMode.screen;
     publishing = true;
     notifyListeners();
+  }
+
+  /// 创建并发布屏幕捕获轨: 部分环境不支持系统伴音回环采集,
+  /// 失败时回退为仅画面投屏; 发布失败时停止轨道避免泄漏捕获会话
+  Future<void> _publishCaptureTrack(
+      lk.LocalParticipant participant, String sourceId) async {
+    lk.LocalVideoTrack track;
+    try {
+      track = await lk.LocalVideoTrack.createScreenShareTrack(
+        lk.ScreenShareCaptureOptions(
+          sourceId: sourceId,
+          captureScreenAudio: true,
+          maxFrameRate: 30,
+        ),
+      );
+    } catch (_) {
+      track = await lk.LocalVideoTrack.createScreenShareTrack(
+        lk.ScreenShareCaptureOptions(
+          sourceId: sourceId,
+          captureScreenAudio: false,
+          maxFrameRate: 30,
+        ),
+      );
+    }
+    try {
+      await participant.publishVideoTrack(track);
+    } catch (error) {
+      await track.stop();
+      rethrow;
+    }
   }
 
   /// 媒体文件投放: media_kit 解码播放(文件同时上传服务器保存, 会议结束后删除),
@@ -95,14 +118,7 @@ class CastSession extends ChangeNotifier {
     await _player!.open(Media(path), play: false);
 
     final participant = _requireParticipant();
-    final track = await lk.LocalVideoTrack.createScreenShareTrack(
-      lk.ScreenShareCaptureOptions(
-        sourceId: playerWindowSource.id,
-        captureScreenAudio: true,
-        maxFrameRate: 30,
-      ),
-    );
-    await participant.publishVideoTrack(track);
+    await _publishCaptureTrack(participant, playerWindowSource.id);
     mode = CastMode.file;
     publishing = true;
     notifyListeners();

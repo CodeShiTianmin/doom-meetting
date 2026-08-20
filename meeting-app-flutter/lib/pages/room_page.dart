@@ -15,6 +15,7 @@ import '../models/room_state.dart';
 import '../services/api_client.dart';
 import '../services/recording_guard.dart';
 import '../services/ws_service.dart';
+import '../widgets/content_viewer.dart';
 import '../widgets/floating_hearts.dart';
 import '../widgets/watermark.dart';
 import 'join_page.dart';
@@ -279,7 +280,7 @@ class _RoomPageState extends State<RoomPage> {
   Future<void> _toggleSpeaker() async {
     final next = !_speakerOn;
     try {
-      await lk.AudioManager.instance.setSpeakerOutputPreferred(next);
+      await lk.Hardware.instance.setSpeakerphoneOn(next);
     } catch (_) {}
     setState(() => _speakerOn = next);
   }
@@ -440,14 +441,17 @@ class _RoomPageState extends State<RoomPage> {
   Future<void> _uploadAndCastFile() async {
     if (_uploading) return;
     var replace = false;
-    if (_state?.contentId != null) {
+    if (_state?.contentId != null || _state?.screenSharing == true) {
+      final currentDesc = _state?.screenSharing == true
+          ? '屏幕共享'
+          : '「${_state?.contentName ?? '内容'}」';
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (_) => AlertDialog(
           icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
           title: const Text('房间已有投放'),
           content: Text(
-              '当前正在投放「${_state?.contentName ?? '内容'}」。\n需要先停止当前投放, 才能投放新内容。'),
+              '当前正在投放$currentDesc。\n需要先停止当前投放, 才能投放新内容。'),
           actions: [
             TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
@@ -577,38 +581,60 @@ class _RoomPageState extends State<RoomPage> {
     return Scaffold(
       body: Stack(
         children: [
-          // 主画面: PC 投放流
+          // 主画面: PC 投放流 > 投放文件直接展示 > 等待画面
           Positioned.fill(
             child: _castVideoTrack != null
                 ? lk.VideoTrackRenderer(_castVideoTrack!)
-                : _buildWaitingPlaceholder(state),
+                : state.contentFileUrl != null
+                    ? ContentViewer(
+                        key: ValueKey('content-${state.contentId}'),
+                        url: ApiClient.instance
+                            .fileDownloadUrl(state.contentFileUrl!),
+                        name: state.contentName ?? '投放文件',
+                        mimeType: state.contentMimeType,
+                        playing: state.playing,
+                        positionSeconds: state.playbackPositionSeconds,
+                      )
+                    : _buildWaitingPlaceholder(state),
           ),
           // 对方客户小窗
           if (state.camAllowed && _peerVideoTrack != null)
             Positioned(
-              top: 90,
+              top: 130,
               right: 12,
               width: 108,
               height: 148,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: lk.VideoTrackRenderer(_peerVideoTrack!),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: lk.VideoTrackRenderer(_peerVideoTrack!),
+                ),
               ),
             ),
           // 本机摄像头预览
           if (_camOn && _selfVideoTrack != null)
             Positioned(
-              top: 90,
+              top: 130,
               right: state.camAllowed && _peerVideoTrack != null ? 128 : 12,
               width: 84,
               height: 116,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: lk.VideoTrackRenderer(
-                  _selfVideoTrack!,
-                  mirrorMode: _frontCamera
-                      ? lk.VideoViewMirrorMode.mirror
-                      : lk.VideoViewMirrorMode.off,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: lk.VideoTrackRenderer(
+                    _selfVideoTrack!,
+                    mirrorMode: _frontCamera
+                        ? lk.VideoViewMirrorMode.mirror
+                        : lk.VideoViewMirrorMode.off,
+                  ),
                 ),
               ),
             ),
@@ -666,37 +692,51 @@ class _RoomPageState extends State<RoomPage> {
             colors: [Color(0xD905071C), Colors.transparent],
           ),
         ),
-        child: Row(
+        // 两行布局: 第一行为会议状态+房间名, 第二行为时长/倒计时/点赞/网络
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Chip(
-              visualDensity: VisualDensity.compact,
-              backgroundColor:
-                  state.running ? Colors.green.shade700 : Colors.blueGrey,
-              label: Text(
-                state.running
-                    ? '会议进行中'
-                    : state.closed
-                        ? '已结束'
-                        : '等待就位',
-                style: const TextStyle(fontSize: 11, color: Colors.white),
-              ),
+            Row(
+              children: [
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor:
+                      state.running ? Colors.green.shade700 : Colors.blueGrey,
+                  label: Text(
+                    state.running
+                        ? '会议进行中'
+                        : state.closed
+                            ? '已结束'
+                            : '等待就位',
+                    style: const TextStyle(fontSize: 11, color: Colors.white),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${state.name} · ${state.roomCode}',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '${state.name} · ${state.roomCode}',
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _infoChip(Icons.access_time, _formatClock(_elapsedSeconds)),
+                const SizedBox(width: 6),
+                _infoChip(Icons.hourglass_bottom,
+                    '剩 ${_formatClock(_remainingSeconds)}',
+                    warning: _remainingSeconds != null &&
+                        _remainingSeconds! <= 300),
+                const SizedBox(width: 6),
+                _infoChip(Icons.favorite, '${state.likeCount}'),
+                const Spacer(),
+                _networkChip(),
+              ],
             ),
-            _infoChip(Icons.access_time, _formatClock(_elapsedSeconds)),
-            const SizedBox(width: 6),
-            _infoChip(Icons.hourglass_bottom, '剩 ${_formatClock(_remainingSeconds)}',
-                warning: _remainingSeconds != null && _remainingSeconds! <= 300),
-            const SizedBox(width: 6),
-            _infoChip(Icons.favorite, '${state.likeCount}'),
-            const SizedBox(width: 6),
-            _networkChip(),
           ],
         ),
       ),

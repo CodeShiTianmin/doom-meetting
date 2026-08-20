@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +32,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
   RoomModel? _room;
   CastSession? _session;
   Timer? _refreshTimer;
+  // 最近一次直接投放的本地文件路径(用于图片等非媒体文件的本地预览)
+  String? _lastCastPath;
   int _likeFlash = 0;
   double? _seekPreview;
   double _remoteBrightness = 0.5;
@@ -148,6 +151,10 @@ class _RoomCastPageState extends State<RoomCastPage> {
     if (checkConflict && !await _confirmReplaceCast()) return;
     final sources = await session.listCaptureSources();
     if (!mounted) return;
+    if (sources.isEmpty) {
+      _showToast('未枚举到可投屏的屏幕/窗口, 请检查系统屏幕录制权限');
+      return;
+    }
     final selected = await showDialog<webrtc.DesktopCapturerSource>(
       context: context,
       builder: (_) => SimpleDialog(
@@ -192,6 +199,13 @@ class _RoomCastPageState extends State<RoomCastPage> {
     'mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma',
   };
 
+  static const _imageExtensions = {
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
+  };
+
+  static String _extensionOf(String name) =>
+      name.contains('.') ? name.split('.').last.toLowerCase() : '';
+
   Future<void> _pickLocalFile() async {
     final session = _session;
     if (session == null) return;
@@ -204,7 +218,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     final path = result?.files.single.path;
     if (path == null) return;
     final name = path.split(RegExp(r'[\\/]')).last;
-    final extension = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+    final extension = _extensionOf(name);
 
     // 1) 真实文件上传到服务器存储并投放(手机端/管理网页可直接打开, 会议结束后自动删除)
     _showToast('正在上传: $name ...');
@@ -233,21 +247,20 @@ class _RoomCastPageState extends State<RoomCastPage> {
       return;
     }
 
-    // 2) 媒体文件: 本地播放器解码并捕获推流; 其他类型: 系统默认应用打开后可用窗口投屏
+    // 2) 媒体文件: 本地播放器解码并捕获推流;
+    //    其他类型(图片/文档等): 手机端通过服务器文件直接展示, 无需本地推流
     try {
       if (_mediaExtensions.contains(extension)) {
         final sources = await session.listCaptureSources();
-        final appWindow = sources.firstWhere(
-          (source) =>
-              source.type == webrtc.SourceType.Window &&
-              source.name.contains('投屏会议'),
-          orElse: () => sources.first,
-        );
-        await session.startFileCast(path, playerWindowSource: appWindow);
-      } else {
-        await launchUrl(Uri.file(path));
-        _showToast('已用系统应用打开, 可选择该窗口进行投屏');
-        await _pickScreenSource(checkConflict: false);
+        final appWindow = sources
+            .where((source) => source.type == webrtc.SourceType.Window)
+            .where((source) => source.name.contains('投屏会议'))
+            .firstOrNull;
+        if (appWindow == null && sources.isEmpty) {
+          throw Exception('未枚举到可捕获的窗口');
+        }
+        await session.startFileCast(path,
+            playerWindowSource: appWindow ?? sources.first);
       }
     } catch (error) {
       // 本地推流失败时回滚服务器投放状态, 避免假的"已投放"
@@ -258,8 +271,11 @@ class _RoomCastPageState extends State<RoomCastPage> {
       await _refreshRoom();
       return;
     }
+    if (mounted) setState(() => _lastCastPath = path);
     await _refreshRoom();
-    _showToast('已投放文件: $name');
+    _showToast(_mediaExtensions.contains(extension)
+        ? '已投放文件: $name'
+        : '已投放文件: $name (手机端直接展示)');
   }
 
   /// 打开服务器上存储的当前投放文件(使用服务端下发的带签名 token 的地址)
@@ -277,6 +293,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
   /// (无条件调用服务端停止, 不依赖本地轮询快照, 后端容忍无投放时的停止)
   Future<void> _stopCast({bool silent = false}) async {
     await _session?.stopCast();
+    if (mounted) setState(() => _lastCastPath = null);
     try {
       await ApiClient.instance.stopCastContent(widget.roomId);
     } on ApiException catch (error) {
@@ -558,26 +575,55 @@ class _RoomCastPageState extends State<RoomCastPage> {
       clipBehavior: Clip.antiAlias,
       child: session?.videoController != null
           ? Video(controller: session!.videoController!)
-          : Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                      session?.mode == CastMode.screen
-                          ? Icons.screen_share
-                          : Icons.cast,
-                      size: 48,
-                      color: Colors.white24),
-                  const SizedBox(height: 12),
-                  Text(
-                    session?.mode == CastMode.screen
-                        ? '屏幕/窗口投屏中'
-                        : '未投放 — 选择屏幕共享或上传文件投放',
-                    style: const TextStyle(color: Colors.white38),
-                  ),
-                ],
-              ),
-            ),
+          : _buildPreviewPlaceholder(session, scheme),
+    );
+  }
+
+  Widget _buildPreviewPlaceholder(CastSession? session, ColorScheme scheme) {
+    final room = _room;
+    // 非媒体文件直接投放: 图片本地预览, 其他类型展示文件卡片
+    final path = _lastCastPath;
+    if (room?.contentId != null && path != null) {
+      final name = path.split(RegExp(r'[\\/]')).last;
+      if (_imageExtensions.contains(_extensionOf(name))) {
+        return Image.file(File(path), fit: BoxFit.contain);
+      }
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.insert_drive_file, size: 48, color: scheme.primary),
+            const SizedBox(height: 12),
+            Text(name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            const Text('文件已投放, 手机端直接展示',
+                style: TextStyle(color: Colors.white38, fontSize: 12)),
+          ],
+        ),
+      );
+    }
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+              session?.mode == CastMode.screen
+                  ? Icons.screen_share
+                  : Icons.cast,
+              size: 48,
+              color: Colors.white24),
+          const SizedBox(height: 12),
+          Text(
+            session?.mode == CastMode.screen
+                ? '屏幕/窗口投屏中'
+                : '未投放 — 选择屏幕共享或上传文件投放',
+            style: const TextStyle(color: Colors.white38),
+          ),
+        ],
+      ),
     );
   }
 
@@ -710,13 +756,17 @@ class _RoomCastPageState extends State<RoomCastPage> {
   }
 
   Widget _buildCurrentCastCard(RoomModel room, ColorScheme scheme) {
-    final casting = room.contentId != null;
+    final casting = room.contentId != null || room.screenSharing;
     return Card(
       color: casting ? scheme.primary.withValues(alpha: 0.10) : null,
       child: ListTile(
         leading: Icon(casting ? Icons.cast_connected : Icons.cast,
             color: casting ? scheme.primary : Colors.white38),
-        title: Text(casting ? (room.contentName ?? '投放中') : '暂无投放内容'),
+        title: Text(room.contentId != null
+            ? (room.contentName ?? '投放中')
+            : room.screenSharing
+                ? '屏幕/窗口共享中'
+                : '暂无投放内容'),
         subtitle: Text(
           casting
               ? '播放 ${room.playbackState} @ ${_formatClock(room.playbackPositionSeconds.toInt())}'
