@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,7 +6,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../config/app_config.dart';
+import '../models/join_session.dart';
 import '../services/api_client.dart';
+import '../services/ws_service.dart';
 import 'room_page.dart';
 
 /// 入会页: 扫描 PC 端二维码或手动输入房号+凭证, 匿名昵称入会
@@ -99,6 +102,18 @@ class _JoinPageState extends State<JoinPage> {
         deviceInfo: Platform.operatingSystem,
       );
       if (!mounted) return;
+      if (session.pendingApproval) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => WaitingApprovalPage(
+              session: session,
+              inviteToken: _tokenController.text.trim(),
+              nickname: _nicknameController.text.trim(),
+            ),
+          ),
+        );
+        return;
+      }
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => RoomPage(session: session)),
       );
@@ -268,6 +283,111 @@ class _JoinPageState extends State<JoinPage> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 等候室: 等待主持人审批入会, 批准后自动重新入会进房
+class WaitingApprovalPage extends StatefulWidget {
+  final JoinSession session;
+  final String inviteToken;
+  final String nickname;
+
+  const WaitingApprovalPage({
+    super.key,
+    required this.session,
+    required this.inviteToken,
+    required this.nickname,
+  });
+
+  @override
+  State<WaitingApprovalPage> createState() => _WaitingApprovalPageState();
+}
+
+class _WaitingApprovalPageState extends State<WaitingApprovalPage> {
+  final RoomWsService _ws = RoomWsService();
+  Timer? _pollTimer;
+  bool _entering = false;
+  String? _rejectedReason;
+
+  @override
+  void initState() {
+    super.initState();
+    _ws.connect(widget.session.roomCode, widget.session.identity,
+        widget.session.memberToken, _onRoomEvent);
+    // 兼容 WS 断开时的兼底轮询
+    _pollTimer =
+        Timer.periodic(const Duration(seconds: 8), (_) => _tryEnter());
+  }
+
+  void _onRoomEvent(Map<String, dynamic> event) {
+    final type = event['type'] as String?;
+    final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
+    if (data['identity'] != widget.session.identity) return;
+    if (type == 'JOIN_APPROVED') {
+      _tryEnter();
+    } else if (type == 'JOIN_REJECTED') {
+      setState(() => _rejectedReason = '主持人拒绝了您的入会申请');
+    }
+  }
+
+  Future<void> _tryEnter() async {
+    if (_entering || _rejectedReason != null) return;
+    _entering = true;
+    try {
+      final session = await ApiClient.instance.joinRoom(
+        roomCode: widget.session.roomCode,
+        inviteToken: widget.inviteToken,
+        nickname: widget.nickname,
+        deviceInfo: Platform.operatingSystem,
+      );
+      if (!mounted) return;
+      if (!session.pendingApproval) {
+        _pollTimer?.cancel();
+        _ws.disconnect();
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => RoomPage(session: session)),
+        );
+        return;
+      }
+    } catch (_) {
+    } finally {
+      _entering = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    _ws.disconnect();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_rejectedReason == null) ...[
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              const Text('已提交入会申请, 等待主持人审批…'),
+            ] else ...[
+              const Icon(Icons.block, size: 48, color: Colors.redAccent),
+              const SizedBox(height: 16),
+              Text(_rejectedReason!),
+            ],
+            const SizedBox(height: 24),
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const JoinPage())),
+              child: const Text('返回'),
+            ),
+          ],
         ),
       ),
     );

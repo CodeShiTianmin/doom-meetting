@@ -27,6 +27,8 @@ class RecordingGuard {
     } on PlatformException {
       // 忽略原生启动失败, 保留水印与上报兜底
     }
+    // 重复 start 时先取消旧订阅, 避免事件监听泄漏
+    await _subscription?.cancel();
     _subscription = _events.receiveBroadcastStream().listen((event) {
       onDetected(event?.toString() ?? '检测到系统级录屏行为');
     }, onError: (_) {});

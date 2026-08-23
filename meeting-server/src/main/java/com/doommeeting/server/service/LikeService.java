@@ -8,7 +8,6 @@ import com.doommeeting.server.entity.RoomMember;
 import com.doommeeting.server.enums.RoomEventType;
 import com.doommeeting.server.enums.RoomStatus;
 import com.doommeeting.server.repository.RoomLikeRepository;
-import com.doommeeting.server.repository.RoomMemberRepository;
 import com.doommeeting.server.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -25,23 +24,19 @@ import java.util.Map;
 public class LikeService {
 
     private final RoomRepository roomRepository;
-    private final RoomMemberRepository memberRepository;
+    private final MemberService memberService;
     private final RoomLikeRepository likeRepository;
     private final RoomService roomService;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
 
     @Transactional
-    public long like(String roomCode, String identity) {
+    public long like(String roomCode, String identity, String memberToken) {
         Room room = roomService.getRoomByCode(roomCode);
         if (room.getStatus() == RoomStatus.CLOSED) {
             throw new BusinessException("房间已关闭, 无法点赞");
         }
-        RoomMember member = memberRepository.findByRoomAndIdentity(room, identity)
-                .orElseThrow(() -> new BusinessException(403, "非房间成员, 禁止点赞"));
-        if (!member.getOnline()) {
-            throw new BusinessException(403, "成员已离会, 禁止点赞");
-        }
+        RoomMember member = memberService.requireOnlineMember(room, identity, memberToken);
 
         RoomLike like = new RoomLike();
         like.setRoom(room);

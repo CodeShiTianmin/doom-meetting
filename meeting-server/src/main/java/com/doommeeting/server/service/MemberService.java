@@ -43,6 +43,9 @@ public class MemberService {
         if (room.getStatus() == RoomStatus.CLOSED) {
             throw new BusinessException("房间已关闭");
         }
+        if (room.getStatus() == RoomStatus.SCHEDULED) {
+            throw new BusinessException(403, "会议尚未开始, 预约时间: " + room.getScheduledStartAt());
+        }
         InviteToken invite = inviteTokenRepository.findByToken(request.inviteToken())
                 .orElseThrow(() -> new BusinessException(403, "入会凭证无效"));
         if (!invite.getRoom().getId().equals(room.getId())) {
@@ -51,22 +54,22 @@ public class MemberService {
         if (invite.getRevoked()) {
             throw new BusinessException(403, "入会凭证已失效");
         }
-        if (invite.getExpireAt().isBefore(LocalDateTime.now())) {
+        // 凭证有效期与会议生命周期关联: expireAt 为空时随房间关闭统一撤销
+        if (invite.getExpireAt() != null && invite.getExpireAt().isBefore(LocalDateTime.now())) {
             throw new BusinessException(403, "入会凭证已过期");
         }
-        // 房间人数硬限制: 手机客户端 ≤ 成员数上限 (PC 投屏端为后台隐藏角色, 不计入)
-        long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
-        if (onlineCount >= maxMembers(room)) {
-            throw new BusinessException(403, "房间人数已满");
+
+        // 离线复用按座位凭证绑定匹配(不可伪造), 而非昵称
+        RoomMember member = memberRepository.findByRoomAndInviteTokenId(room, invite.getId())
+                .orElse(null);
+        if (member != null && Boolean.TRUE.equals(member.getKicked())) {
+            throw new BusinessException(403, "已被主持人移出会议, 禁止再次入会");
+        }
+        if (member != null && Boolean.TRUE.equals(member.getOnline())) {
+            throw new BusinessException(403, "该座位已在会中, 禁止顶替");
         }
 
-        // 离会重进优先复用离线成员记录, 不重复消耗邀请凭证使用次数
-        RoomMember member = memberRepository.findByRoomAndOnlineFalse(room).stream()
-                .filter(m -> m.getNickname().equals(request.nickname()))
-                .filter(m -> m.getDeviceInfo() == null || request.deviceInfo() == null
-                        || m.getDeviceInfo().equals(request.deviceInfo()))
-                .findFirst()
-                .orElse(null);
+        long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
         if (member == null) {
             if (invite.getUsedCount() >= invite.getMaxUses()) {
                 throw new BusinessException(403, "入会凭证使用次数已达上限");
@@ -76,14 +79,37 @@ public class MemberService {
             member = new RoomMember();
             member.setRoom(room);
             member.setIdentity("client-" + UUID.randomUUID().toString().substring(0, 12));
+            member.setMemberToken(UUID.randomUUID().toString().replace("-", ""));
+            member.setInviteTokenId(invite.getId());
+            member.setSeatNo(invite.getSeatNo());
             member.setNickname(request.nickname());
             member.setDeviceInfo(request.deviceInfo());
+            member.setApproved(!Boolean.TRUE.equals(room.getApprovalRequired()));
+            member.setOnline(false);
         } else {
-            member.setOnline(true);
-            member.setLeftAt(null);
             member.setDeviceInfo(request.deviceInfo());
         }
         member.setLastHeartbeatAt(LocalDateTime.now());
+
+        // 等候室: 未批准前不上线、不发 LiveKit token; 客户端重试 join 轮询审批结果
+        if (Boolean.TRUE.equals(room.getApprovalRequired()) && !Boolean.TRUE.equals(member.getApproved())) {
+            memberRepository.save(member);
+            eventLogService.log(room, RoomEventType.JOIN_REQUEST, request.nickname() + " 申请入会, 等待审批");
+            notificationService.pushToAdmin("JOIN_REQUEST", room.getRoomCode(), Map.of(
+                    "identity", member.getIdentity(),
+                    "nickname", member.getNickname(),
+                    "seatNo", member.getSeatNo() == null ? 0 : member.getSeatNo()));
+            return pendingResponse(room, member);
+        }
+
+        // 房间人数硬限制: 手机客户端 ≤ 成员数上限 (PC 投屏端为后台隐藏角色, 不计入)
+        if (onlineCount >= maxMembers(room)) {
+            throw new BusinessException(403, "房间人数已满");
+        }
+        member.setOnline(true);
+        member.setLeftAt(null);
+        member.setLastOnlineAt(LocalDateTime.now());
+        member.setJoinCount(member.getJoinCount() + 1);
         memberRepository.save(member);
 
         eventLogService.log(room, RoomEventType.MEMBER_JOINED, request.nickname() + " 入会");
@@ -98,6 +124,9 @@ public class MemberService {
         return new JoinRoomResponse(
                 member.getId(),
                 member.getIdentity(),
+                member.getMemberToken(),
+                member.getSeatNo(),
+                false,
                 room.getRoomCode(),
                 room.getName(),
                 room.getStatus().name(),
@@ -117,16 +146,51 @@ public class MemberService {
                 liveKitTokenService.getWsUrl());
     }
 
+    /** 等候室待审批响应: 不下发 LiveKit 凭证 */
+    private JoinRoomResponse pendingResponse(Room room, RoomMember member) {
+        return new JoinRoomResponse(
+                member.getId(),
+                member.getIdentity(),
+                member.getMemberToken(),
+                member.getSeatNo(),
+                true,
+                room.getRoomCode(),
+                room.getName(),
+                room.getStatus().name(),
+                room.getVideoCallEnabled(),
+                room.getCameraEnabled(),
+                room.getScreenshotAllowed(),
+                room.getRecordingForbidden(),
+                room.getDurationMinutes(),
+                room.getMeetingStartAt(),
+                room.getMeetingEndAt(),
+                room.getPlaybackState().name(),
+                room.getPlaybackPositionSeconds(),
+                null,
+                null,
+                null,
+                null);
+    }
+
+    /** 离线结算累计出席时长 */
+    public void settleOnlineSeconds(RoomMember member, LocalDateTime now) {
+        if (member.getLastOnlineAt() != null) {
+            long seconds = java.time.Duration.between(member.getLastOnlineAt(), now).getSeconds();
+            member.setOnlineSeconds(member.getOnlineSeconds() + Math.max(0, seconds));
+            member.setLastOnlineAt(null);
+        }
+    }
+
     @Transactional
-    public void leave(String roomCode, String identity) {
+    public void leave(String roomCode, String identity, String memberToken) {
         Room room = roomService.getRoomByCode(roomCode);
-        RoomMember member = memberRepository.findByRoomAndIdentity(room, identity)
-                .orElseThrow(() -> new BusinessException(404, "成员不存在"));
+        RoomMember member = requireMember(room, identity, memberToken);
         if (!member.getOnline()) {
             return;
         }
         member.setOnline(false);
         member.setLeftAt(LocalDateTime.now());
+        settleOnlineSeconds(member, LocalDateTime.now());
         memberRepository.save(member);
 
         eventLogService.log(room, RoomEventType.MEMBER_LEFT, member.getNickname() + " 离会");
@@ -146,17 +210,19 @@ public class MemberService {
     }
 
     @Transactional
-    public void heartbeat(String roomCode, String identity) {
+    public void heartbeat(String roomCode, String identity, String memberToken) {
         Room room = roomService.getRoomByCode(roomCode);
-        RoomMember member = memberRepository.findByRoomAndIdentity(room, identity)
-                .orElseThrow(() -> new BusinessException(404, "成员不存在, 会话已失效"));
+        RoomMember member = requireMember(room, identity, memberToken);
         member.setLastHeartbeatAt(LocalDateTime.now());
         // 心跳超时被判定离线的成员恢复心跳后自动重新上线
         if (!member.getOnline()
+                && Boolean.TRUE.equals(member.getApproved())
                 && room.getStatus() != RoomStatus.CLOSED
                 && memberRepository.countByRoomAndOnlineTrue(room) < maxMembers(room)) {
             member.setOnline(true);
             member.setLeftAt(null);
+            member.setLastOnlineAt(LocalDateTime.now());
+            member.setJoinCount(member.getJoinCount() + 1);
             memberRepository.save(member);
             long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
             eventLogService.log(room, RoomEventType.MEMBER_JOINED,
@@ -182,6 +248,7 @@ public class MemberService {
             }
             member.setOnline(false);
             member.setLeftAt(now);
+            settleOnlineSeconds(member, now);
             memberRepository.save(member);
 
             eventLogService.log(room, RoomEventType.MEMBER_LEFT,
@@ -205,7 +272,7 @@ public class MemberService {
     @Transactional
     public void reportRecording(String roomCode, RecordingReportRequest request) {
         Room room = roomService.getRoomByCode(roomCode);
-        RoomMember member = requireOnlineMember(room, request.identity());
+        RoomMember member = requireOnlineMember(room, request.identity(), request.memberToken());
         eventLogService.log(room, RoomEventType.RECORDING_DETECTED,
                 member.getNickname() + " 检测到录屏行为: "
                         + (request.detail() == null ? "" : request.detail()));
@@ -238,10 +305,22 @@ public class MemberService {
         }
     }
 
-    /** 校验身份为房间在线成员 */
-    public RoomMember requireOnlineMember(Room room, String identity) {
+    /** 校验会话级成员凭证(identity + memberToken) */
+    public RoomMember requireMember(Room room, String identity, String memberToken) {
         RoomMember member = memberRepository.findByRoomAndIdentity(room, identity)
                 .orElseThrow(() -> new BusinessException(403, "非房间成员, 禁止操作"));
+        if (memberToken == null || !memberToken.equals(member.getMemberToken())) {
+            throw new BusinessException(403, "成员凭证无效, 禁止操作");
+        }
+        if (Boolean.TRUE.equals(member.getKicked())) {
+            throw new BusinessException(403, "已被主持人移出会议, 禁止操作");
+        }
+        return member;
+    }
+
+    /** 校验身份为房间在线成员(含会话凭证校验) */
+    public RoomMember requireOnlineMember(Room room, String identity, String memberToken) {
+        RoomMember member = requireMember(room, identity, memberToken);
         if (!Boolean.TRUE.equals(member.getOnline())) {
             throw new BusinessException(403, "成员已离会, 禁止操作");
         }

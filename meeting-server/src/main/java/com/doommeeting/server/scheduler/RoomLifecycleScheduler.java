@@ -49,6 +49,7 @@ public class RoomLifecycleScheduler {
     @Scheduled(fixedDelay = 5000)
     public void tick() {
         LocalDateTime now = LocalDateTime.now();
+        runStep("预约开会", () -> roomService.activateScheduledRooms(now));
         runStep("心跳离线判定", () -> memberService.markStaleMembersOffline(now));
         runStep("缺人预警", () -> checkUnderstaffedAlerts(now));
         runStep("倒计时提醒", () -> checkCountdownReminders(now));

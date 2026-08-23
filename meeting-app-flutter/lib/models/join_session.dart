@@ -2,6 +2,9 @@
 class JoinSession {
   final int memberId;
   final String identity;
+  final String memberToken;
+  final int? seatNo;
+  final bool pendingApproval;
   final String roomCode;
   final String roomName;
   final String roomStatus;
@@ -16,12 +19,15 @@ class JoinSession {
   final double playbackPositionSeconds;
   final int? contentId;
   final String? contentName;
-  final String livekitToken;
-  final String livekitWsUrl;
+  final String? livekitToken;
+  final String? livekitWsUrl;
 
   JoinSession({
     required this.memberId,
     required this.identity,
+    required this.memberToken,
+    this.seatNo,
+    this.pendingApproval = false,
     required this.roomCode,
     required this.roomName,
     required this.roomStatus,
@@ -36,13 +42,16 @@ class JoinSession {
     required this.playbackPositionSeconds,
     this.contentId,
     this.contentName,
-    required this.livekitToken,
-    required this.livekitWsUrl,
+    this.livekitToken,
+    this.livekitWsUrl,
   });
 
   factory JoinSession.fromJson(Map<String, dynamic> json) => JoinSession(
         memberId: (json['memberId'] as num).toInt(),
         identity: json['identity'] as String,
+        memberToken: (json['memberToken'] as String?) ?? '',
+        seatNo: (json['seatNo'] as num?)?.toInt(),
+        pendingApproval: json['pendingApproval'] == true,
         roomCode: json['roomCode'] as String,
         roomName: json['roomName'] as String,
         roomStatus: json['roomStatus'] as String,
@@ -58,7 +67,7 @@ class JoinSession {
             (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
         contentId: (json['contentId'] as num?)?.toInt(),
         contentName: json['contentName'] as String?,
-        livekitToken: json['livekitToken'] as String,
-        livekitWsUrl: json['livekitWsUrl'] as String,
+        livekitToken: json['livekitToken'] as String?,
+        livekitWsUrl: json['livekitWsUrl'] as String?,
       );
 }

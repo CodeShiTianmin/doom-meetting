@@ -8,7 +8,7 @@ import '../config/app_config.dart';
 class RoomWsService {
   StompClient? _client;
 
-  void connect(String roomCode, String identity,
+  void connect(String roomCode, String identity, String memberToken,
       void Function(Map<String, dynamic>) onEvent) {
     disconnect();
     _client = StompClient(
@@ -18,6 +18,7 @@ class RoomWsService {
         stompConnectHeaders: {
           'roomCode': roomCode,
           'identity': identity,
+          'memberToken': memberToken,
         },
         onConnect: (frame) {
           _client?.subscribe(

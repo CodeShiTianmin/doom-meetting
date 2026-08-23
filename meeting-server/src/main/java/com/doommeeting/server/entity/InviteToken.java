@@ -26,8 +26,11 @@ public class InviteToken {
     @Column(nullable = false, length = 64)
     private String token;
 
-    @Column(nullable = false)
+    /** 过期时间; null 表示与会议生命周期一致(房间关闭时统一撤销) */
     private LocalDateTime expireAt;
+
+    /** 座位号(每座位独立二维码) */
+    private Integer seatNo;
 
     /** 限用次数(默认 2, 与房间人数上限一致) */
     @Column(nullable = false)

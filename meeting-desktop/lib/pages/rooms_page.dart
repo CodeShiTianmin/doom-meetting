@@ -63,24 +63,56 @@ class _RoomsPageState extends State<RoomsPage> {
       builder: (_) => AlertDialog(
         title: Text('邀请二维码 · ${room.roomCode}'),
         content: SizedBox(
-          width: 280,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (room.qrContent != null)
-                Container(
-                  color: Colors.white,
-                  padding: const EdgeInsets.all(12),
-                  child: QrImageView(data: room.qrContent!, size: 220),
+          width: 320,
+          height: 420,
+          child: room.invites.isNotEmpty
+              // 每个座位独立二维码: 分别发给不同客户, 一码一人
+              ? ListView(
+                  children: [
+                    for (final invite in room.invites)
+                      Column(
+                        children: [
+                          Text('座位 ${invite.seatNo ?? '-'}'
+                              '${invite.used ? ' (已使用)' : ''}'),
+                          const SizedBox(height: 6),
+                          if (invite.inviteUrl != null)
+                            Container(
+                              color: Colors.white,
+                              padding: const EdgeInsets.all(10),
+                              child: QrImageView(
+                                  data: invite.inviteUrl!, size: 180),
+                            ),
+                          const SizedBox(height: 4),
+                          SelectableText(invite.inviteUrl ?? '',
+                              style: const TextStyle(
+                                  fontSize: 10, color: Colors.white54)),
+                          const Divider(height: 20),
+                        ],
+                      ),
+                    const Text('每个座位一张二维码, 分别发给不同客户扫码入会',
+                        style:
+                            TextStyle(fontSize: 11, color: Colors.white38)),
+                  ],
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (room.qrContent != null)
+                      Container(
+                        color: Colors.white,
+                        padding: const EdgeInsets.all(12),
+                        child: QrImageView(data: room.qrContent!, size: 220),
+                      ),
+                    const SizedBox(height: 8),
+                    SelectableText(room.inviteUrl ?? '',
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.white54)),
+                    const SizedBox(height: 4),
+                    const Text('截图后经微信等渠道发给客户, 客户扫码即可匿名入会',
+                        style:
+                            TextStyle(fontSize: 11, color: Colors.white38)),
+                  ],
                 ),
-              const SizedBox(height: 8),
-              SelectableText(room.inviteUrl ?? '',
-                  style: const TextStyle(fontSize: 11, color: Colors.white54)),
-              const SizedBox(height: 4),
-              const Text('截图后经微信等渠道发给客户, 客户扫码即可匿名入会',
-                  style: TextStyle(fontSize: 11, color: Colors.white38)),
-            ],
-          ),
         ),
         actions: [
           TextButton(
@@ -317,6 +349,8 @@ class _CreateRoomDialogState extends State<_CreateRoomDialog> {
   int _maxMembers = 2;
   bool _videoCallEnabled = true;
   bool _cameraEnabled = true;
+  bool _approvalRequired = false;
+  DateTime? _scheduledStartAt;
   bool _submitting = false;
 
   @override
@@ -335,6 +369,8 @@ class _CreateRoomDialogState extends State<_CreateRoomDialog> {
         maxMembers: _maxMembers,
         videoCallEnabled: _videoCallEnabled,
         cameraEnabled: _cameraEnabled,
+        approvalRequired: _approvalRequired,
+        scheduledStartAt: _scheduledStartAt?.toIso8601String(),
       );
       if (mounted) Navigator.of(context).pop(room);
     } catch (error) {
@@ -407,6 +443,36 @@ class _CreateRoomDialogState extends State<_CreateRoomDialog> {
               title: const Text('开放摄像头'),
               value: _cameraEnabled,
               onChanged: (value) => setState(() => _cameraEnabled = value),
+            ),
+            SwitchListTile(
+              dense: true,
+              title: const Text('开启等候室(入会需审批)'),
+              value: _approvalRequired,
+              onChanged: (value) =>
+                  setState(() => _approvalRequired = value),
+            ),
+            ListTile(
+              dense: true,
+              title: Text(_scheduledStartAt == null
+                  ? '预约开会时间(可选, 不选则立即开会)'
+                  : '预约: $_scheduledStartAt'),
+              trailing: const Icon(Icons.schedule),
+              onTap: () async {
+                final now = DateTime.now();
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: now,
+                  firstDate: now,
+                  lastDate: now.add(const Duration(days: 365)),
+                );
+                if (date == null || !mounted) return;
+                final time = await showTimePicker(
+                    context: this.context, initialTime: TimeOfDay.now());
+                if (time == null) return;
+                setState(() => _scheduledStartAt = DateTime(date.year,
+                    date.month, date.day, time.hour, time.minute));
+              },
+              onLongPress: () => setState(() => _scheduledStartAt = null),
             ),
           ],
         ),

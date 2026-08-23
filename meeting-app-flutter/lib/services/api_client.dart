@@ -42,45 +42,87 @@ class ApiClient {
     return JoinSession.fromJson(_unwrap(response));
   }
 
-  Future<void> leaveRoom(String roomCode, String identity) async {
+  Future<void> leaveRoom(
+      String roomCode, String identity, String memberToken) async {
     await _dio.post('/api/mobile/rooms/$roomCode/leave',
-        data: {'identity': identity});
+        data: {'identity': identity, 'memberToken': memberToken});
   }
 
-  Future<void> heartbeat(String roomCode, String identity) async {
+  Future<void> heartbeat(
+      String roomCode, String identity, String memberToken) async {
     await _dio.post('/api/mobile/rooms/$roomCode/heartbeat',
-        data: {'identity': identity});
+        data: {'identity': identity, 'memberToken': memberToken});
   }
 
-  /// 播放控制: PLAY / PAUSE / SEEK 为共享指令(带序号防两端冲突)
+  /// 播放控制: PLAY / PAUSE / SEEK 为共享指令(序号由服务端权威分配)
   Future<Map<String, dynamic>> controlPlayback({
     required String roomCode,
     required String identity,
+    required String memberToken,
     required String action,
     double? positionSeconds,
     double? value,
-    required int seq,
   }) async {
     final response = await _dio.post('/api/mobile/rooms/$roomCode/playback', data: {
       'identity': identity,
+      'memberToken': memberToken,
       'action': action,
       'positionSeconds': positionSeconds,
       'value': value,
-      'seq': seq,
     });
     return _unwrap(response);
   }
 
-  Future<int> sendLike(String roomCode, String identity) async {
+  Future<int> sendLike(
+      String roomCode, String identity, String memberToken) async {
     final response = await _dio.post('/api/mobile/rooms/$roomCode/like',
-        data: {'identity': identity});
+        data: {'identity': identity, 'memberToken': memberToken});
     return ((_unwrap(response))['likeCount'] as num?)?.toInt() ?? 0;
   }
 
-  Future<void> reportRecording(
-      String roomCode, String identity, String detail) async {
-    await _dio.post('/api/mobile/rooms/$roomCode/report-recording',
-        data: {'identity': identity, 'detail': detail});
+  Future<void> reportRecording(String roomCode, String identity,
+      String memberToken, String detail) async {
+    await _dio.post('/api/mobile/rooms/$roomCode/report-recording', data: {
+      'identity': identity,
+      'memberToken': memberToken,
+      'detail': detail
+    });
+  }
+
+  /// 会中文字聊天/表情: 发送
+  Future<void> sendChat({
+    required String roomCode,
+    required String identity,
+    required String memberToken,
+    required String content,
+  }) async {
+    final response = await _dio.post('/api/mobile/rooms/$roomCode/chat', data: {
+      'identity': identity,
+      'memberToken': memberToken,
+      'content': content,
+    });
+    _unwrap(response);
+  }
+
+  /// 聊天历史(最近 100 条)
+  Future<List<Map<String, dynamic>>> chatHistory({
+    required String roomCode,
+    required String identity,
+    required String memberToken,
+  }) async {
+    final response =
+        await _dio.get('/api/mobile/rooms/$roomCode/chat', queryParameters: {
+      'identity': identity,
+      'memberToken': memberToken,
+    });
+    final body = response.data as Map<String, dynamic>;
+    if (body['code'] != 0) {
+      throw ApiException(
+          (body['message'] as String?) ?? '请求失败', body['code'] as int? ?? -1);
+    }
+    return ((body['data'] as List<dynamic>?) ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
   }
 
   /// 手机端上传真实文件并直接投放到本房间(服务器保存, 会议结束后自动删除);
@@ -88,6 +130,7 @@ class ApiClient {
   Future<Map<String, dynamic>> uploadAndCastFile({
     required String roomCode,
     required String identity,
+    required String memberToken,
     String? nickname,
     required String filePath,
     bool replace = false,
@@ -95,6 +138,7 @@ class ApiClient {
     final formData = FormData.fromMap({
       'file': await MultipartFile.fromFile(filePath),
       'identity': identity,
+      'memberToken': memberToken,
       if (nickname != null) 'nickname': nickname,
       'replace': replace,
     });

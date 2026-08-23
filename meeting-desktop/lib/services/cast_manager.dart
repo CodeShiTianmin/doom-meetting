@@ -24,10 +24,17 @@ class CastManager {
         CastSession(
             roomId: roomId, roomCode: tokenInfo['roomCode'] as String);
     _sessions[roomId] = session;
-    await session.connect(
-      tokenInfo['livekitWsUrl'] as String,
-      tokenInfo['livekitToken'] as String,
-    );
+    try {
+      await session.connect(
+        tokenInfo['livekitWsUrl'] as String,
+        tokenInfo['livekitToken'] as String,
+      );
+    } catch (_) {
+      // 连接失败的会话不留在缓存, 避免后续复用失败实例
+      _sessions.remove(roomId);
+      session.dispose();
+      rethrow;
+    }
     return session;
   }
 

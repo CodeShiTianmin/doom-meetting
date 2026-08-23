@@ -15,10 +15,13 @@ import com.doommeeting.server.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -40,6 +43,7 @@ public class RoomService {
     private final RoomMemberRepository memberRepository;
     private final InviteTokenRepository inviteTokenRepository;
     private final RoomEventLogRepository eventLogRepository;
+    private final RoomLikeRepository likeRepository;
     private final ContentService contentService;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
@@ -55,20 +59,41 @@ public class RoomService {
                 ? properties.getRoom().getMaxClients() : request.maxMembers());
         room.setVideoCallEnabled(request.videoCallEnabled() == null || request.videoCallEnabled());
         room.setCameraEnabled(request.cameraEnabled() == null || request.cameraEnabled());
+        room.setApprovalRequired(Boolean.TRUE.equals(request.approvalRequired()));
         room.setCreatedBy(createdBy);
-        // 创建即进入缺人等待状态, 超过阈值(默认3分钟)后台亮红灯预警
-        room.setUnderstaffedSince(LocalDateTime.now());
+        // 预约会议: 到达预约时间前不接受入会, 邀请二维码提前发放
+        if (request.scheduledStartAt() != null && request.scheduledStartAt().isAfter(LocalDateTime.now())) {
+            room.setScheduledStartAt(request.scheduledStartAt());
+            room.setStatus(RoomStatus.SCHEDULED);
+        } else {
+            // 创建即进入缺人等待状态, 超过阈值(默认3分钟)后台亮红灯预警
+            room.setUnderstaffedSince(LocalDateTime.now());
+        }
         if (request.contentId() != null) {
             room.setCurrentContent(contentService.getCastable(request.contentId()));
         }
         roomRepository.save(room);
 
-        InviteToken invite = createInviteToken(room);
+        createSeatInvites(room);
         eventLogService.log(room, RoomEventType.ROOM_CREATED,
-                "房间创建, 会议时长 " + room.getDurationMinutes() + " 分钟");
+                "房间创建, 会议时长 " + room.getDurationMinutes() + " 分钟"
+                        + (room.getScheduledStartAt() == null ? "" : ", 预约开始 " + room.getScheduledStartAt()));
         notificationService.pushToAdmin("ROOM_CREATED", room.getRoomCode(),
                 Map.of("roomId", room.getId(), "name", room.getName()));
-        return toResponse(room, invite);
+        return toResponse(room, latestInvite(room));
+    }
+
+    /** 到达预约时间的房间自动进入等待就位(调度器周期调用) */
+    @Transactional
+    public void activateScheduledRooms(LocalDateTime now) {
+        for (Room room : roomRepository.findByStatusAndScheduledStartAtBefore(RoomStatus.SCHEDULED, now)) {
+            room.setStatus(RoomStatus.WAITING);
+            room.setUnderstaffedSince(now);
+            roomRepository.save(room);
+            eventLogService.log(room, RoomEventType.ROOM_ACTIVATED, "到达预约时间, 会议进入等待就位");
+            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_ACTIVATED", Map.of(
+                    "roomId", room.getId(), "name", room.getName()));
+        }
     }
 
     @Transactional(readOnly = true)
@@ -125,10 +150,11 @@ public class RoomService {
             }
             room.setMaxMembers(request.maxMembers());
             detail.append(" 成员数上限=").append(request.maxMembers()).append("人");
-            InviteToken activeInvite = latestInvite(room);
-            if (activeInvite != null) {
-                activeInvite.setMaxUses(Math.max(activeInvite.getUsedCount(), request.maxMembers()));
-                inviteTokenRepository.save(activeInvite);
+            // 新增座位补发独立二维码
+            int existingSeats = (int) inviteTokenRepository.findByRoom(room).stream()
+                    .filter(t -> !t.getRevoked()).count();
+            for (int seat = existingSeats + 1; seat <= request.maxMembers(); seat++) {
+                createInviteToken(room, seat);
             }
             if (onlineCount >= request.maxMembers()) {
                 if (room.getStatus() == RoomStatus.WAITING) {
@@ -185,6 +211,11 @@ public class RoomService {
                     "房间正在屏幕共享, 请先停止屏幕共享后再投放新内容");
         }
         ContentItem content = contentService.getCastable(contentId);
+        // 替换屏幕共享时下发停止指令, 保证 PC 端真实推流与服务端状态一致
+        if (Boolean.TRUE.equals(room.getScreenSharing())) {
+            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "SCREEN_SHARE_STOPPED", Map.of(
+                    "operator", operator, "reason", "REPLACED"));
+        }
         room.setScreenSharing(false);
         room.setScreenShareBy(null);
         room.setCurrentContent(content);
@@ -313,17 +344,33 @@ public class RoomService {
         room.setScreenShareBy(null);
         roomRepository.save(room);
 
+        LocalDateTime now = LocalDateTime.now();
         for (RoomMember member : memberRepository.findByRoomAndOnlineTrue(room)) {
             member.setOnline(false);
-            member.setLeftAt(LocalDateTime.now());
+            member.setLeftAt(now);
+            if (member.getLastOnlineAt() != null) {
+                long seconds = Duration.between(member.getLastOnlineAt(), now).getSeconds();
+                member.setOnlineSeconds(member.getOnlineSeconds() + Math.max(0, seconds));
+                member.setLastOnlineAt(null);
+            }
             memberRepository.save(member);
         }
         for (InviteToken token : inviteTokenRepository.findByRoom(room)) {
             token.setRevoked(true);
             inviteTokenRepository.save(token);
         }
-        // 会议结束: 删除该房间上传到服务器的所有投放文件
-        contentService.deleteRoomFiles(room.getId());
+        // 会议结束: 文件删除改到事务提交后执行, 避免事务回滚后文件不可恢复
+        Long roomId = room.getId();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    contentService.deleteRoomFiles(roomId);
+                }
+            });
+        } else {
+            contentService.deleteRoomFiles(roomId);
+        }
 
         eventLogService.log(room, RoomEventType.ROOM_CLOSED,
                 reason == CloseReason.MANUAL ? "PC 端手动结束会议" : "会议时长到期自动关闭");
@@ -342,8 +389,34 @@ public class RoomService {
             token.setRevoked(true);
             inviteTokenRepository.save(token);
         }
-        InviteToken invite = createInviteToken(room);
-        return toResponse(room, invite);
+        createSeatInvites(room);
+        return toResponse(room, latestInvite(room));
+    }
+
+    /** 会后出席统计: 出席时长/离会次数/点赞数 */
+    @Transactional(readOnly = true)
+    public List<AttendanceResponse> attendance(Long id) {
+        Room room = getRoomById(id);
+        LocalDateTime now = LocalDateTime.now();
+        List<AttendanceResponse> result = new ArrayList<>();
+        for (RoomMember member : memberRepository.findByRoomOrderByJoinedAtAsc(room)) {
+            long onlineSeconds = member.getOnlineSeconds();
+            if (Boolean.TRUE.equals(member.getOnline()) && member.getLastOnlineAt() != null) {
+                onlineSeconds += Math.max(0, Duration.between(member.getLastOnlineAt(), now).getSeconds());
+            }
+            result.add(new AttendanceResponse(
+                    member.getId(),
+                    member.getIdentity(),
+                    member.getNickname(),
+                    member.getSeatNo(),
+                    member.getOnline(),
+                    member.getJoinedAt(),
+                    member.getLeftAt(),
+                    onlineSeconds,
+                    member.getJoinCount(),
+                    likeRepository.countByRoomAndMemberIdentity(room, member.getIdentity())));
+        }
+        return result;
     }
 
     @Transactional(readOnly = true)
@@ -393,6 +466,7 @@ public class RoomService {
         state.put("contentFileUrl", content == null ? null : contentService.fileUrlOf(content));
         state.put("contentMimeType", content == null ? null : content.getMimeType());
         state.put("screenSharing", room.getScreenSharing());
+        state.put("allMuted", room.getAllMuted());
         return state;
     }
 
@@ -406,13 +480,23 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(404, "房间不存在"));
     }
 
-    public InviteToken createInviteToken(Room room) {
+    /** 每个座位生成一张独立二维码(限用1次) */
+    public void createSeatInvites(Room room) {
+        int seats = room.getMaxMembers() == null
+                ? properties.getRoom().getMaxClients() : room.getMaxMembers();
+        for (int seat = 1; seat <= seats; seat++) {
+            createInviteToken(room, seat);
+        }
+    }
+
+    public InviteToken createInviteToken(Room room, Integer seatNo) {
         InviteToken invite = new InviteToken();
         invite.setRoom(room);
         invite.setToken(UUID.randomUUID().toString().replace("-", ""));
-        invite.setExpireAt(LocalDateTime.now().plusMinutes(properties.getInvite().getExpireMinutes()));
-        invite.setMaxUses(room.getMaxMembers() == null
-                ? properties.getRoom().getMaxClients() : room.getMaxMembers());
+        // 有效期与会议生命周期关联: 随房间关闭统一撤销, 不再固定分钟数过期
+        invite.setExpireAt(null);
+        invite.setSeatNo(seatNo);
+        invite.setMaxUses(1);
         inviteTokenRepository.save(invite);
         return invite;
     }
@@ -444,6 +528,17 @@ public class RoomService {
         }
         ContentItem content = room.getCurrentContent();
         String inviteUrl = buildInviteUrl(room, invite);
+        List<SeatInviteResponse> invites = inviteTokenRepository.findByRoom(room).stream()
+                .filter(t -> !t.getRevoked())
+                .sorted(Comparator.comparing(t -> t.getSeatNo() == null ? 0 : t.getSeatNo()))
+                .map(t -> new SeatInviteResponse(
+                        t.getSeatNo(),
+                        t.getToken(),
+                        buildInviteUrl(room, t),
+                        t.getExpireAt(),
+                        t.getUsedCount() >= t.getMaxUses(),
+                        t.getRevoked()))
+                .toList();
         return new RoomResponse(
                 room.getId(),
                 room.getRoomCode(),
@@ -476,6 +571,10 @@ public class RoomService {
                 inviteUrl,
                 inviteUrl,
                 invite == null ? null : invite.getExpireAt(),
+                invites,
+                room.getScheduledStartAt(),
+                room.getApprovalRequired(),
+                room.getAllMuted(),
                 room.getCloseReason() == null ? null : room.getCloseReason().name(),
                 room.getClosedAt(),
                 room.getCreatedBy(),
@@ -489,6 +588,11 @@ public class RoomService {
                 member.getNickname(),
                 member.getDeviceInfo(),
                 member.getOnline(),
+                member.getSeatNo(),
+                member.getMuted(),
+                member.getCameraDisabled(),
+                member.getKicked(),
+                member.getApproved(),
                 member.getJoinedAt(),
                 member.getLeftAt());
     }

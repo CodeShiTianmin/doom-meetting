@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Alert, Box, Button, Card, CardContent, Chip, Divider, FormControlLabel,
-  Grid, LinearProgress, List, ListItem, ListItemText, Switch, Table,
-  TableBody, TableCell, TableHead, TableRow, TextField, Typography,
+  Grid, IconButton, LinearProgress, List, ListItem, ListItemText, Switch,
+  Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip,
+  Typography,
 } from '@mui/material'
 import CastIcon from '@mui/icons-material/Cast'
 import CloseIcon from '@mui/icons-material/Close'
@@ -13,11 +14,19 @@ import SmartphoneIcon from '@mui/icons-material/Smartphone'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import PauseIcon from '@mui/icons-material/Pause'
 import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
+import MicIcon from '@mui/icons-material/Mic'
+import MicOffIcon from '@mui/icons-material/MicOff'
+import VideocamIcon from '@mui/icons-material/Videocam'
+import VideocamOffIcon from '@mui/icons-material/VideocamOff'
+import PersonRemoveIcon from '@mui/icons-material/PersonRemove'
+import CheckIcon from '@mui/icons-material/Check'
+import SendIcon from '@mui/icons-material/Send'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  castContent, closeRoom, controlRoomPlayback, deleteContent, getRoom,
-  listRoomEvents, regenerateInvite, stopCast, updateRoomSettings,
-  uploadContentFile,
+  approveMember, castContent, closeRoom, controlRoomPlayback, deleteContent,
+  getAttendance, getRoom, getRoomChat, kickMember, listRoomEvents, muteAllMembers,
+  muteMember, regenerateInvite, sendRoomChat, setMemberCamera, stopCast,
+  updateRoomSettings, uploadContentFile,
 } from '../api'
 import { subscribeRoom } from '../api/ws'
 import RoomStatusChip from '../components/RoomStatusChip.jsx'
@@ -40,6 +49,9 @@ export default function RoomDetailPage() {
   const [casting, setCasting] = useState(false)
   const [error, setError] = useState('')
   const [remaining, setRemaining] = useState(null)
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatInput, setChatInput] = useState('')
+  const [attendance, setAttendance] = useState(null)
   const fileInputRef = useRef(null)
 
   const refresh = useCallback(async () => {
@@ -51,11 +63,17 @@ export default function RoomDetailPage() {
 
   useEffect(() => {
     refresh().catch((err) => setError(err.message))
-  }, [refresh])
+    getRoomChat(id).then(setChatMessages).catch(() => {})
+  }, [refresh, id])
 
   useEffect(() => {
     if (!room?.roomCode) return undefined
-    const unsubscribe = subscribeRoom(room.roomCode, () => refresh().catch(() => {}))
+    const unsubscribe = subscribeRoom(room.roomCode, (event) => {
+      if (event?.type === 'CHAT_MESSAGE' && event.payload) {
+        setChatMessages((prev) => [...prev, event.payload])
+      }
+      refresh().catch(() => {})
+    })
     return unsubscribe
   }, [room?.roomCode, refresh])
 
@@ -150,6 +168,34 @@ export default function RoomDetailPage() {
     try {
       await regenerateInvite(id)
       await refresh()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const doMemberAction = async (action) => {
+    try {
+      await action()
+      await refresh()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const doSendChat = async () => {
+    const content = chatInput.trim()
+    if (!content) return
+    try {
+      await sendRoomChat(id, content)
+      setChatInput('')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const loadAttendance = async () => {
+    try {
+      setAttendance(await getAttendance(id))
     } catch (err) {
       setError(err.message)
     }
@@ -306,22 +352,97 @@ export default function RoomDetailPage() {
         <Grid item xs={12} md={8} sx={{ display: 'flex', flexDirection: 'column' }}>
           <Card sx={{ mb: 2.5 }}>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                <SmartphoneIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-                手机客户端({room.onlineMemberCount}/{room.maxMembers ?? 2} 在线)
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 1 }}>
+                <Typography variant="h6">
+                  <SmartphoneIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+                  手机客户端({room.onlineMemberCount}/{room.maxMembers ?? 2} 在线)
+                </Typography>
+                <Box sx={{ flexGrow: 1 }} />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={room.allMuted ? <MicIcon /> : <MicOffIcon />}
+                  disabled={closed}
+                  onClick={() => doMemberAction(() => muteAllMembers(id, !room.allMuted))}
+                >
+                  {room.allMuted ? '解除全员静音' : '全员静音'}
+                </Button>
+                <Button size="small" variant="outlined" onClick={loadAttendance}>出席报表</Button>
+              </Box>
               <List dense disablePadding>
-                {(room.members || []).map((member) => (
-                  <ListItem key={member.id} disableGutters>
+                {(room.members || []).filter((member) => !member.kicked).map((member) => (
+                  <ListItem
+                    key={member.id}
+                    disableGutters
+                    secondaryAction={member.approved === false ? (
+                      <Box>
+                        <Tooltip title="批准入会">
+                          <IconButton
+                            size="small"
+                            color="success"
+                            onClick={() => doMemberAction(() => approveMember(id, member.identity, true))}
+                          >
+                            <CheckIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="拒绝入会">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => doMemberAction(() => approveMember(id, member.identity, false))}
+                          >
+                            <CloseIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Box>
+                    ) : (
+                      <Box>
+                        <Tooltip title={member.muted ? '取消静音' : '静音'}>
+                          <IconButton
+                            size="small"
+                            color={member.muted ? 'warning' : 'default'}
+                            disabled={closed}
+                            onClick={() => doMemberAction(() => muteMember(id, member.identity, !member.muted))}
+                          >
+                            {member.muted ? <MicOffIcon fontSize="small" /> : <MicIcon fontSize="small" />}
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title={member.cameraDisabled ? '允许摄像头' : '禁止摄像头'}>
+                          <IconButton
+                            size="small"
+                            color={member.cameraDisabled ? 'warning' : 'default'}
+                            disabled={closed}
+                            onClick={() => doMemberAction(() => setMemberCamera(id, member.identity, !member.cameraDisabled))}
+                          >
+                            {member.cameraDisabled ? <VideocamOffIcon fontSize="small" /> : <VideocamIcon fontSize="small" />}
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="移出会议">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            disabled={closed}
+                            onClick={() => doMemberAction(() => kickMember(id, member.identity))}
+                          >
+                            <PersonRemoveIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Box>
+                    )}
+                  >
                     <ListItemText
                       primary={
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography>{member.nickname}</Typography>
+                          <Typography>
+                            {member.seatNo != null ? `${member.seatNo}号 · ` : ''}{member.nickname}
+                          </Typography>
                           <Chip
                             size="small"
-                            label={member.online ? '在线' : '离线'}
-                            color={member.online ? 'success' : 'default'}
+                            label={member.approved === false ? '待审批' : (member.online ? '在线' : '离线')}
+                            color={member.approved === false ? 'warning' : (member.online ? 'success' : 'default')}
                           />
+                          {member.muted && <Chip size="small" label="已静音" />}
+                          {member.cameraDisabled && <Chip size="small" label="禁摄像头" />}
                         </Box>
                       }
                       secondary={`${member.deviceInfo || ''} · 加入 ${member.joinedAt?.replace('T', ' ') || ''}`}
@@ -332,6 +453,65 @@ export default function RoomDetailPage() {
                   <Typography color="text.secondary">等待手机客户扫码加入…</Typography>
                 )}
               </List>
+              {attendance && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>出席统计报表</Typography>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>昵称</TableCell>
+                        <TableCell>座位</TableCell>
+                        <TableCell>在线时长</TableCell>
+                        <TableCell>入会次数</TableCell>
+                        <TableCell>点赞</TableCell>
+                        <TableCell>状态</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {attendance.map((row) => (
+                        <TableRow key={row.memberId}>
+                          <TableCell>{row.nickname}</TableCell>
+                          <TableCell>{row.seatNo ?? '-'}</TableCell>
+                          <TableCell>{formatSeconds(row.onlineSeconds)}</TableCell>
+                          <TableCell>{row.joinCount}</TableCell>
+                          <TableCell>{row.likeCount}</TableCell>
+                          <TableCell>{row.online ? '在线' : '离线'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card sx={{ mb: 2.5 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ mb: 1.5 }}>会中聊天</Typography>
+              <Box sx={{ maxHeight: 220, overflow: 'auto', mb: 1.5 }}>
+                {chatMessages.map((message, index) => (
+                  <Typography key={message.id ?? index} variant="body2" sx={{ mb: 0.5 }}>
+                    <b>{message.nickname}: </b>{message.content}
+                  </Typography>
+                ))}
+                {chatMessages.length === 0 && (
+                  <Typography color="text.secondary" variant="body2">暂无消息</Typography>
+                )}
+              </Box>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="发送消息…"
+                  value={chatInput}
+                  disabled={closed}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') doSendChat() }}
+                />
+                <IconButton color="primary" disabled={closed} onClick={doSendChat}>
+                  <SendIcon />
+                </IconButton>
+              </Box>
             </CardContent>
           </Card>
 
@@ -427,14 +607,33 @@ export default function RoomDetailPage() {
           <Card>
             <CardContent sx={{ textAlign: 'center' }}>
               <Typography variant="h6" sx={{ mb: 2 }}>入会二维码</Typography>
-              {room.qrContent && !closed ? (
-                <QRCodeSVG value={room.qrContent} size={168} />
-              ) : (
-                <Typography color="text.secondary">房间已关闭</Typography>
+              {closed && <Typography color="text.secondary">房间已关闭</Typography>}
+              {!closed && (room.invites || []).length > 0 && (
+                <Box>
+                  {(room.invites || []).map((invite) => (
+                    <Box key={invite.token} sx={{ mb: 2 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                        座位 {invite.seatNo ?? '-'}{invite.used ? ' (已使用)' : ''}
+                      </Typography>
+                      {invite.inviteUrl && <QRCodeSVG value={invite.inviteUrl} size={144} />}
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ wordBreak: 'break-all' }}>
+                        {invite.inviteUrl}
+                      </Typography>
+                    </Box>
+                  ))}
+                  <Typography variant="caption" color="text.secondary">
+                    每个座位一张二维码, 分别发给不同客户扫码入会
+                  </Typography>
+                </Box>
               )}
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5, wordBreak: 'break-all' }}>
-                {room.inviteUrl}
-              </Typography>
+              {!closed && (room.invites || []).length === 0 && room.qrContent && (
+                <Box>
+                  <QRCodeSVG value={room.qrContent} size={168} />
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5, wordBreak: 'break-all' }}>
+                    {room.inviteUrl}
+                  </Typography>
+                </Box>
+              )}
               {room.inviteExpireAt && (
                 <Typography variant="caption" color="text.secondary">
                   有效期至 {room.inviteExpireAt.replace('T', ' ')}

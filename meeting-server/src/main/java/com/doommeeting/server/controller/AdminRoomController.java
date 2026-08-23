@@ -3,8 +3,11 @@ package com.doommeeting.server.controller;
 import com.doommeeting.server.common.ApiResponse;
 import com.doommeeting.server.dto.LikeDtos.LikeRecordResponse;
 import com.doommeeting.server.dto.RoomDtos.*;
+import com.doommeeting.server.dto.MobileDtos.ChatMessageResponse;
+import com.doommeeting.server.service.ChatService;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.LiveKitTokenService;
+import com.doommeeting.server.service.MemberManagementService;
 import com.doommeeting.server.service.PlaybackService;
 import com.doommeeting.server.service.RoomService;
 import jakarta.validation.Valid;
@@ -27,6 +30,72 @@ public class AdminRoomController {
     private final LikeService likeService;
     private final LiveKitTokenService liveKitTokenService;
     private final PlaybackService playbackService;
+    private final MemberManagementService memberManagementService;
+    private final ChatService chatService;
+
+    /** 踢出成员(同时从 LiveKit 服务端断开其媒体连接) */
+    @PostMapping("/{id}/members/{identity}/kick")
+    public ApiResponse<Void> kickMember(@PathVariable Long id, @PathVariable String identity,
+                                        Authentication authentication) {
+        memberManagementService.kick(id, identity, authentication.getName());
+        return ApiResponse.ok();
+    }
+
+    /** 单人静音/取消静音 */
+    @PostMapping("/{id}/members/{identity}/mute")
+    public ApiResponse<Void> muteMember(@PathVariable Long id, @PathVariable String identity,
+                                        @RequestParam(defaultValue = "true") boolean muted,
+                                        Authentication authentication) {
+        memberManagementService.mute(id, identity, muted, authentication.getName());
+        return ApiResponse.ok();
+    }
+
+    /** 全员静音/解除全员静音 */
+    @PostMapping("/{id}/members/mute-all")
+    public ApiResponse<Void> muteAll(@PathVariable Long id,
+                                     @RequestParam(defaultValue = "true") boolean muted,
+                                     Authentication authentication) {
+        memberManagementService.muteAll(id, muted, authentication.getName());
+        return ApiResponse.ok();
+    }
+
+    /** 禁止/允许成员开启摄像头 */
+    @PostMapping("/{id}/members/{identity}/camera")
+    public ApiResponse<Void> setMemberCamera(@PathVariable Long id, @PathVariable String identity,
+                                             @RequestParam(defaultValue = "true") boolean disabled,
+                                             Authentication authentication) {
+        memberManagementService.setCameraDisabled(id, identity, disabled, authentication.getName());
+        return ApiResponse.ok();
+    }
+
+    /** 等候室审批: 批准/拒绝入会申请 */
+    @PostMapping("/{id}/members/{identity}/approve")
+    public ApiResponse<Void> approveMember(@PathVariable Long id, @PathVariable String identity,
+                                           @RequestParam(defaultValue = "true") boolean approved,
+                                           Authentication authentication) {
+        memberManagementService.approve(id, identity, approved, authentication.getName());
+        return ApiResponse.ok();
+    }
+
+    /** 会后出席统计报表(出席时长/离会次数/点赞数) */
+    @GetMapping("/{id}/attendance")
+    public ApiResponse<List<AttendanceResponse>> attendance(@PathVariable Long id) {
+        return ApiResponse.ok(roomService.attendance(id));
+    }
+
+    /** 主持人发送聊天消息 */
+    @PostMapping("/{id}/chat")
+    public ApiResponse<ChatMessageResponse> sendChat(@PathVariable Long id,
+                                                     @Valid @RequestBody AdminChatRequest request,
+                                                     Authentication authentication) {
+        return ApiResponse.ok(chatService.sendAsAdmin(id, authentication.getName(), request.content()));
+    }
+
+    /** 聊天历史(最近 100 条) */
+    @GetMapping("/{id}/chat")
+    public ApiResponse<List<ChatMessageResponse>> chatHistory(@PathVariable Long id) {
+        return ApiResponse.ok(chatService.historyByRoomId(id));
+    }
 
     @PostMapping
     public ApiResponse<RoomResponse> createRoom(@Valid @RequestBody CreateRoomRequest request,

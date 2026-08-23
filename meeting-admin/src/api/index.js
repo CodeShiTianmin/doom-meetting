@@ -25,6 +25,24 @@ export const listRoomMembers = (id) => client.get(`/admin/rooms/${id}/members`)
 export const listRoomLikes = (id) => client.get(`/admin/rooms/${id}/likes`)
 export const listRoomEvents = (id) => client.get(`/admin/rooms/${id}/events`)
 
+// ---------- 成员管理 ----------
+export const kickMember = (id, identity) =>
+  client.post(`/admin/rooms/${id}/members/${identity}/kick`)
+export const muteMember = (id, identity, muted) =>
+  client.post(`/admin/rooms/${id}/members/${identity}/mute`, null, { params: { muted } })
+export const muteAllMembers = (id, muted) =>
+  client.post(`/admin/rooms/${id}/members/mute-all`, null, { params: { muted } })
+export const setMemberCamera = (id, identity, disabled) =>
+  client.post(`/admin/rooms/${id}/members/${identity}/camera`, null, { params: { disabled } })
+export const approveMember = (id, identity, approved) =>
+  client.post(`/admin/rooms/${id}/members/${identity}/approve`, null, { params: { approved } })
+export const getAttendance = (id) => client.get(`/admin/rooms/${id}/attendance`)
+
+// ---------- 会中聊天 ----------
+export const sendRoomChat = (id, content) =>
+  client.post(`/admin/rooms/${id}/chat`, { content })
+export const getRoomChat = (id) => client.get(`/admin/rooms/${id}/chat`)
+
 // ---------- 内容(仅上传文件) ----------
 export const uploadContentFile = (file, roomId) => {
   const formData = new FormData()

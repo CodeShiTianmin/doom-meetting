@@ -53,6 +53,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     if (room == null) return;
     _ws.connect(onDashboardEvent: (_) {});
     _ws.subscribeRoom(room.roomCode, _onRoomEvent);
+    _loadChatHistory();
     try {
       final session = await CastManager.instance.ensureSession(widget.roomId);
       session.addListener(_onSessionChanged);
@@ -100,6 +101,28 @@ class _RoomCastPageState extends State<RoomCastPage> {
         break;
       case 'RECORDING_DETECTED':
         _showToast('警告: 手机端检测到录屏行为!');
+        break;
+      case 'SCREEN_SHARE_STOPPED':
+        // 服务端已登记停止屏幕共享(如被新投放替换), 同步停止本地推流
+        _session?.stopCast();
+        _refreshRoom();
+        _showToast('屏幕共享已停止');
+        break;
+      case 'CHAT_MESSAGE':
+        setState(() => _chatMessages.add(data));
+        break;
+      case 'JOIN_REQUEST':
+        _showToast('新入会申请: ${data['nickname'] ?? ''}, 请审批');
+        _refreshRoom();
+        break;
+      case 'JOIN_APPROVED':
+      case 'JOIN_REJECTED':
+      case 'MEMBER_KICKED':
+      case 'MEMBER_MUTED':
+      case 'ALL_MUTED':
+      case 'MEMBER_CAMERA_DISABLED':
+      case 'ROOM_ACTIVATED':
+        _refreshRoom();
         break;
       case 'ROOM_CLOSED':
         _showToast('房间已关闭');
@@ -321,6 +344,95 @@ class _RoomCastPageState extends State<RoomCastPage> {
     }
   }
 
+  // ---------- 成员管理 / 聊天 ----------
+
+  final List<Map<String, dynamic>> _chatMessages = [];
+  final TextEditingController _chatController = TextEditingController();
+
+  Future<void> _loadChatHistory() async {
+    try {
+      final history = await ApiClient.instance.chatHistory(widget.roomId);
+      if (mounted) {
+        setState(() => _chatMessages
+          ..clear()
+          ..addAll(history.whereType<Map<String, dynamic>>()));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _sendChat() async {
+    final text = _chatController.text.trim();
+    if (text.isEmpty) return;
+    try {
+      await ApiClient.instance.sendChat(widget.roomId, text);
+      _chatController.clear();
+    } on ApiException catch (error) {
+      _showToast('发送失败: ${error.message}');
+    }
+  }
+
+  Future<void> _memberAction(Future<void> Function() action) async {
+    try {
+      await action();
+      await _refreshRoom();
+    } on ApiException catch (error) {
+      _showToast('操作失败: ${error.message}');
+    } catch (error) {
+      _showToast('操作失败: $error');
+    }
+  }
+
+  Future<void> _showAttendance() async {
+    List<dynamic> rows;
+    try {
+      rows = await ApiClient.instance.attendance(widget.roomId);
+    } catch (error) {
+      _showToast('获取报表失败: $error');
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('出席统计报表'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: DataTable(
+              columns: const [
+                DataColumn(label: Text('昵称')),
+                DataColumn(label: Text('座位')),
+                DataColumn(label: Text('在线时长')),
+                DataColumn(label: Text('入会次数')),
+                DataColumn(label: Text('点赞')),
+                DataColumn(label: Text('状态')),
+              ],
+              rows: [
+                for (final row
+                    in rows.whereType<Map<String, dynamic>>())
+                  DataRow(cells: [
+                    DataCell(Text('${row['nickname'] ?? ''}')),
+                    DataCell(Text('${row['seatNo'] ?? '-'}')),
+                    DataCell(Text(_formatClock(
+                        (row['onlineSeconds'] as num?)?.toInt()))),
+                    DataCell(Text('${row['joinCount'] ?? 0}')),
+                    DataCell(Text('${row['likeCount'] ?? 0}')),
+                    DataCell(Text(
+                        row['online'] == true ? '在线' : '离线')),
+                  ]),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+
   Future<void> _closeRoom() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -338,8 +450,15 @@ class _RoomCastPageState extends State<RoomCastPage> {
       ),
     );
     if (confirmed != true) return;
+    // 先请求服务端关房, 成功后再停止本地推流;
+    // 服务端失败时保留推流, 避免房间还开着但推流已断
+    try {
+      await ApiClient.instance.closeRoom(widget.roomId);
+    } catch (error) {
+      _showToast('关闭房间失败: $error');
+      return;
+    }
     await CastManager.instance.closeSession(widget.roomId);
-    await ApiClient.instance.closeRoom(widget.roomId);
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -364,6 +483,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     _refreshTimer?.cancel();
     _session?.removeListener(_onSessionChanged);
     _ws.disconnect();
+    _chatController.dispose();
     super.dispose();
   }
 
@@ -508,22 +628,186 @@ class _RoomCastPageState extends State<RoomCastPage> {
                           ],
                         ),
                         const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            TextButton.icon(
+                              onPressed: () => _memberAction(() => ApiClient
+                                  .instance
+                                  .muteAll(room.id, !room.allMuted)),
+                              icon: Icon(
+                                  room.allMuted
+                                      ? Icons.mic
+                                      : Icons.mic_off,
+                                  size: 15),
+                              label: Text(
+                                  room.allMuted ? '解除全员静音' : '全员静音'),
+                            ),
+                            const Spacer(),
+                            TextButton.icon(
+                              onPressed: _showAttendance,
+                              icon: const Icon(Icons.bar_chart, size: 15),
+                              label: const Text('出席报表'),
+                            ),
+                          ],
+                        ),
                         for (final member in room.members)
-                          ListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(Icons.circle,
-                                size: 10,
-                                color: member.online
-                                    ? Colors.green
-                                    : Colors.grey),
-                            title: Text(member.nickname),
-                            subtitle: Text(member.identity,
-                                style: const TextStyle(fontSize: 10)),
-                          ),
+                          if (!member.kicked)
+                            ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.circle,
+                                  size: 10,
+                                  color: !member.approved
+                                      ? Colors.orange
+                                      : member.online
+                                          ? Colors.green
+                                          : Colors.grey),
+                              title: Text(
+                                  '${member.seatNo != null ? '${member.seatNo}号 · ' : ''}${member.nickname}'
+                                  '${member.approved ? '' : ' (待审批)'}'),
+                              subtitle: Text(member.identity,
+                                  style: const TextStyle(fontSize: 10)),
+                              trailing: !member.approved
+                                  ? Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          tooltip: '批准入会',
+                                          iconSize: 17,
+                                          icon: const Icon(Icons.check,
+                                              color: Colors.greenAccent),
+                                          onPressed: () => _memberAction(
+                                              () => ApiClient.instance
+                                                  .approveMember(room.id,
+                                                      member.identity, true)),
+                                        ),
+                                        IconButton(
+                                          tooltip: '拒绝入会',
+                                          iconSize: 17,
+                                          icon: const Icon(Icons.close,
+                                              color: Colors.redAccent),
+                                          onPressed: () => _memberAction(
+                                              () => ApiClient.instance
+                                                  .approveMember(room.id,
+                                                      member.identity, false)),
+                                        ),
+                                      ],
+                                    )
+                                  : Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          tooltip: member.muted
+                                              ? '取消静音'
+                                              : '静音',
+                                          iconSize: 17,
+                                          icon: Icon(
+                                              member.muted
+                                                  ? Icons.mic_off
+                                                  : Icons.mic,
+                                              color: member.muted
+                                                  ? Colors.orange
+                                                  : Colors.white54),
+                                          onPressed: () => _memberAction(
+                                              () => ApiClient.instance
+                                                  .muteMember(
+                                                      room.id,
+                                                      member.identity,
+                                                      !member.muted)),
+                                        ),
+                                        IconButton(
+                                          tooltip: member.cameraDisabled
+                                              ? '允许摄像头'
+                                              : '禁止摄像头',
+                                          iconSize: 17,
+                                          icon: Icon(
+                                              member.cameraDisabled
+                                                  ? Icons.videocam_off
+                                                  : Icons.videocam,
+                                              color: member.cameraDisabled
+                                                  ? Colors.orange
+                                                  : Colors.white54),
+                                          onPressed: () => _memberAction(
+                                              () => ApiClient.instance
+                                                  .setMemberCamera(
+                                                      room.id,
+                                                      member.identity,
+                                                      !member
+                                                          .cameraDisabled)),
+                                        ),
+                                        IconButton(
+                                          tooltip: '移出会议',
+                                          iconSize: 17,
+                                          icon: const Icon(
+                                              Icons.person_remove,
+                                              color: Colors.redAccent),
+                                          onPressed: () => _memberAction(
+                                              () => ApiClient.instance
+                                                  .kickMember(room.id,
+                                                      member.identity)),
+                                        ),
+                                      ],
+                                    ),
+                            ),
                         if (room.members.isEmpty)
                           const Text('暂无成员',
                               style: TextStyle(color: Colors.white38)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // 会中聊天(主持人可发言)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.chat_bubble_outline, size: 18),
+                            SizedBox(width: 6),
+                            Text('会中聊天',
+                                style:
+                                    TextStyle(fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 160,
+                          child: ListView(
+                            reverse: true,
+                            children: [
+                              for (final message
+                                  in _chatMessages.reversed)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 2),
+                                  child: Text(
+                                      '${message['nickname'] ?? ''}: ${message['content'] ?? ''}',
+                                      style:
+                                          const TextStyle(fontSize: 12)),
+                                ),
+                            ],
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _chatController,
+                                decoration: const InputDecoration(
+                                    hintText: '发送消息…',
+                                    isDense: true),
+                                onSubmitted: (_) => _sendChat(),
+                              ),
+                            ),
+                            IconButton(
+                                onPressed: _sendChat,
+                                icon: const Icon(Icons.send, size: 18)),
+                          ],
+                        ),
                       ],
                     ),
                   ),

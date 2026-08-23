@@ -57,10 +57,13 @@ class _RoomPageState extends State<RoomPage> {
   int? _remainingSeconds;
   bool _recordingBlocked = false;
   String? _closedReason;
-  // 以服务器权威序号为基准(进房/广播/指令返回时同步), 不再用本机时间戳
-  int _commandSeq = 0;
+  bool _mutedByHost = false;
+  bool _cameraDisabledByHost = false;
+  bool _screenSharing = false;
   int _heartId = 0;
   final List<HeartItem> _hearts = [];
+  final List<Map<String, dynamic>> _chatMessages = [];
+  int _unreadChat = 0;
 
   Timer? _heartbeatTimer;
   Timer? _stateTimer;
@@ -75,10 +78,12 @@ class _RoomPageState extends State<RoomPage> {
     _initLocalControls();
     _refreshState();
     _connectLiveKit();
-    _ws.connect(session.roomCode, session.identity, _onRoomEvent);
+    _ws.connect(session.roomCode, session.identity, session.memberToken,
+        _onRoomEvent);
+    _loadChatHistory();
     _heartbeatTimer = Timer.periodic(AppConfig.heartbeatInterval, (_) {
       ApiClient.instance
-          .heartbeat(session.roomCode, session.identity)
+          .heartbeat(session.roomCode, session.identity, session.memberToken)
           .catchError((_) {});
     });
     _stateTimer = Timer.periodic(
@@ -102,11 +107,26 @@ class _RoomPageState extends State<RoomPage> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _loadChatHistory() async {
+    try {
+      final history = await ApiClient.instance.chatHistory(
+        roomCode: session.roomCode,
+        identity: session.identity,
+        memberToken: session.memberToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _chatMessages
+          ..clear()
+          ..addAll(history);
+      });
+    } catch (_) {}
+  }
+
   Future<void> _refreshState() async {
     try {
       final state = await ApiClient.instance.getRoomState(session.roomCode);
       if (!mounted) return;
-      _syncCommandSeq(state.playbackSeq);
       setState(() {
         _state = state;
         _remainingSeconds = state.remainingSeconds ?? _remainingSeconds;
@@ -159,14 +179,6 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
-  /// 与服务器权威序号同步, 避免本机序号落后导致指令被永久丢弃
-  void _syncCommandSeq(num? serverSeq) {
-    if (serverSeq == null) return;
-    if (serverSeq.toInt() > _commandSeq) {
-      _commandSeq = serverSeq.toInt();
-    }
-  }
-
   // ---------------- LiveKit ----------------
 
   Future<void> _connectLiveKit() async {
@@ -206,9 +218,12 @@ class _RoomPageState extends State<RoomPage> {
         }
       });
 
+    final wsUrl = session.livekitWsUrl;
+    final lkToken = session.livekitToken;
+    if (wsUrl == null || lkToken == null) return;
     try {
-      await room.connect(session.livekitWsUrl, session.livekitToken);
-      if (_micOn && session.videoCallEnabled) {
+      await room.connect(wsUrl, lkToken);
+      if (_micOn && session.videoCallEnabled && !_mutedByHost) {
         await room.localParticipant?.setMicrophoneEnabled(true);
       }
     } catch (_) {
@@ -244,6 +259,10 @@ class _RoomPageState extends State<RoomPage> {
       _showToast('公司已关闭视频通话功能');
       return;
     }
+    if (_mutedByHost && !_micOn) {
+      _showToast('已被主持人静音, 无法开启麦克风');
+      return;
+    }
     final next = !_micOn;
     await _lkRoom?.localParticipant?.setMicrophoneEnabled(next);
     setState(() => _micOn = next);
@@ -253,6 +272,10 @@ class _RoomPageState extends State<RoomPage> {
     final state = _state;
     if (state == null || !state.camAllowed) {
       _showToast('公司已关闭摄像头功能');
+      return;
+    }
+    if (_cameraDisabledByHost && !_camOn) {
+      _showToast('已被主持人禁止开启摄像头');
       return;
     }
     final next = !_camOn;
@@ -285,6 +308,20 @@ class _RoomPageState extends State<RoomPage> {
     setState(() => _speakerOn = next);
   }
 
+  /// 手机端屏幕共享给对端(LiveKit 双向媒体)
+  Future<void> _toggleScreenShare() async {
+    final participant = _lkRoom?.localParticipant;
+    if (participant == null) return;
+    final next = !_screenSharing;
+    try {
+      await participant.setScreenShareEnabled(next);
+      setState(() => _screenSharing = next);
+      _showToast(next ? '已开始屏幕共享' : '已停止屏幕共享');
+    } catch (error) {
+      _showToast('屏幕共享失败: $error');
+    }
+  }
+
   Future<void> _switchCamera() async {
     final track = _selfVideoTrack;
     if (track == null) return;
@@ -301,7 +338,6 @@ class _RoomPageState extends State<RoomPage> {
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
       case 'PLAYBACK_CONTROL':
-        _syncCommandSeq(data['seq'] as num?);
         setState(() {
           _state = _state?.copyWith(
             playbackState: data['playbackState'] as String? ??
@@ -339,8 +375,64 @@ class _RoomPageState extends State<RoomPage> {
         setState(() {
           _state = _state?.copyWith(
               likeCount: (data['likeCount'] as num?)?.toInt());
-          _pushHeart();
+          // 本机点赞已在点击时弹过爱心, 广播回声不重复动画
+          if (data['identity'] != session.identity) {
+            _pushHeart();
+          }
         });
+        break;
+      case 'CHAT_MESSAGE':
+        setState(() {
+          _chatMessages.add(data);
+          if (data['identity'] != session.identity) _unreadChat++;
+        });
+        break;
+      case 'MEMBER_KICKED':
+        if (data['identity'] == session.identity) {
+          _onRoomClosed('您已被主持人移出会议');
+        } else {
+          _refreshState();
+        }
+        break;
+      case 'MEMBER_MUTED':
+        if (data['identity'] == session.identity) {
+          final muted = data['muted'] == true;
+          _mutedByHost = muted;
+          if (muted) {
+            _lkRoom?.localParticipant?.setMicrophoneEnabled(false);
+            if (mounted) setState(() => _micOn = false);
+          }
+          _showToast(muted ? '您已被主持人静音' : '主持人已取消对您的静音');
+        }
+        break;
+      case 'ALL_MUTED':
+        final muted = data['muted'] == true;
+        _mutedByHost = muted;
+        if (muted) {
+          _lkRoom?.localParticipant?.setMicrophoneEnabled(false);
+          if (mounted) setState(() => _micOn = false);
+        }
+        _showToast(muted ? '主持人已开启全员静音' : '主持人已解除全员静音');
+        break;
+      case 'MEMBER_CAMERA_DISABLED':
+        if (data['identity'] == session.identity) {
+          final disabled = data['disabled'] == true;
+          _cameraDisabledByHost = disabled;
+          if (disabled && _camOn) {
+            _lkRoom?.localParticipant?.setCameraEnabled(false);
+            if (mounted) {
+              setState(() {
+                _camOn = false;
+                _selfVideoTrack = null;
+              });
+            }
+          }
+          _showToast(disabled ? '主持人已禁止您开启摄像头' : '主持人已允许您开启摄像头');
+        }
+        break;
+      case 'ROOM_ACTIVATED':
+        _refreshState();
+        _showToast('预约会议已开始, 等待全员就位');
         break;
       case 'MEMBER_JOINED':
       case 'MEMBER_LEFT':
@@ -368,12 +460,11 @@ class _RoomPageState extends State<RoomPage> {
       final result = await ApiClient.instance.controlPlayback(
         roomCode: session.roomCode,
         identity: session.identity,
+        memberToken: session.memberToken,
         action: action,
         positionSeconds: positionSeconds,
         value: value,
-        seq: ++_commandSeq,
       );
-      _syncCommandSeq(result['seq'] as num?);
       final playbackState = result['playbackState'] as String?;
       if (playbackState != null && mounted) {
         setState(() {
@@ -428,8 +519,144 @@ class _RoomPageState extends State<RoomPage> {
   Future<void> _like() async {
     setState(_pushHeart);
     try {
-      await ApiClient.instance.sendLike(session.roomCode, session.identity);
+      await ApiClient.instance
+          .sendLike(session.roomCode, session.identity, session.memberToken);
     } catch (_) {}
+  }
+
+  // ---------------- 聊天 ----------------
+
+  static const List<String> _quickEmojis = [
+    '👍', '👏', '😂', '❤️', '🎉', '🙏', '💪', '😎', '🤔', '👌'
+  ];
+
+  Future<void> _sendChatMessage(String content) async {
+    final text = content.trim();
+    if (text.isEmpty) return;
+    try {
+      await ApiClient.instance.sendChat(
+        roomCode: session.roomCode,
+        identity: session.identity,
+        memberToken: session.memberToken,
+        content: text,
+      );
+    } catch (error) {
+      _showToast('发送失败: $error');
+    }
+  }
+
+  void _openChatSheet() {
+    setState(() => _unreadChat = 0);
+    final controller = TextEditingController();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0B1030),
+      builder: (sheetContext) {
+        return StatefulBuilder(builder: (context, setSheetState) {
+          return Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
+            child: SizedBox(
+              height: 420,
+              child: Column(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: Text('会中聊天',
+                        style: TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w700)),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      itemCount: _chatMessages.length,
+                      itemBuilder: (context, index) {
+                        final message = _chatMessages[index];
+                        final mine =
+                            message['identity'] == session.identity;
+                        return Align(
+                          alignment: mine
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 3),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: mine
+                                  ? const Color(0xFF2E4A9E)
+                                  : Colors.white10,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('${message['nickname'] ?? ''}',
+                                    style: const TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.white54)),
+                                Text('${message['content'] ?? ''}',
+                                    style: const TextStyle(fontSize: 14)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  SizedBox(
+                    height: 40,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      children: _quickEmojis
+                          .map((emoji) => TextButton(
+                                onPressed: () => _sendChatMessage(emoji),
+                                child: Text(emoji,
+                                    style: const TextStyle(fontSize: 20)),
+                              ))
+                          .toList(),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: controller,
+                            maxLength: 500,
+                            decoration: const InputDecoration(
+                              hintText: '输入消息…',
+                              counterText: '',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (value) {
+                              _sendChatMessage(value);
+                              controller.clear();
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          onPressed: () {
+                            _sendChatMessage(controller.text);
+                            controller.clear();
+                          },
+                          icon: const Icon(Icons.send),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
   }
 
   // ---------------- 文件投放 ----------------
@@ -474,6 +701,7 @@ class _RoomPageState extends State<RoomPage> {
       final content = await ApiClient.instance.uploadAndCastFile(
         roomCode: session.roomCode,
         identity: session.identity,
+        memberToken: session.memberToken,
         filePath: path,
         replace: replace,
       );
@@ -515,7 +743,8 @@ class _RoomPageState extends State<RoomPage> {
     if (!mounted) return;
     setState(() => _recordingBlocked = true);
     ApiClient.instance
-        .reportRecording(session.roomCode, session.identity, detail)
+        .reportRecording(
+            session.roomCode, session.identity, session.memberToken, detail)
         .catchError((_) {});
   }
 
@@ -523,7 +752,8 @@ class _RoomPageState extends State<RoomPage> {
 
   Future<void> _leave() async {
     try {
-      await ApiClient.instance.leaveRoom(session.roomCode, session.identity);
+      await ApiClient.instance.leaveRoom(
+          session.roomCode, session.identity, session.memberToken);
     } catch (_) {}
     await _lkRoom?.disconnect();
     if (!mounted) return;
@@ -883,6 +1113,33 @@ class _RoomPageState extends State<RoomPage> {
                 IconButton.filledTonal(
                   onPressed: _camOn ? _switchCamera : null,
                   icon: const Icon(Icons.cameraswitch),
+                ),
+                IconButton.filledTonal(
+                  onPressed: _toggleScreenShare,
+                  icon: Icon(_screenSharing
+                      ? Icons.stop_screen_share
+                      : Icons.screen_share),
+                ),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    IconButton.filledTonal(
+                      onPressed: _openChatSheet,
+                      icon: const Icon(Icons.chat_bubble_outline),
+                    ),
+                    if (_unreadChat > 0)
+                      Positioned(
+                        top: -2,
+                        right: -2,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                              color: Colors.red, shape: BoxShape.circle),
+                          child: Text('$_unreadChat',
+                              style: const TextStyle(fontSize: 9)),
+                        ),
+                      ),
+                  ],
                 ),
                 IconButton.filledTonal(
                   onPressed: _toggleSpeaker,
