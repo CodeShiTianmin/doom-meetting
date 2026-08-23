@@ -1,10 +1,12 @@
 package com.doommeeting.server.service;
 
 import com.doommeeting.server.common.BusinessException;
+import com.doommeeting.server.entity.InviteToken;
 import com.doommeeting.server.entity.Room;
 import com.doommeeting.server.entity.RoomMember;
 import com.doommeeting.server.enums.RoomEventType;
 import com.doommeeting.server.enums.RoomStatus;
+import com.doommeeting.server.repository.InviteTokenRepository;
 import com.doommeeting.server.repository.RoomMemberRepository;
 import com.doommeeting.server.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +27,7 @@ public class MemberManagementService {
 
     private final RoomRepository roomRepository;
     private final RoomMemberRepository memberRepository;
+    private final InviteTokenRepository inviteTokenRepository;
     private final RoomService roomService;
     private final MemberService memberService;
     private final EventLogService eventLogService;
@@ -42,6 +45,7 @@ public class MemberManagementService {
         memberService.settleOnlineSeconds(member, LocalDateTime.now());
         // 轮换凭证, 防止被踢成员继续使用旧凭证调用接口
         member.setMemberToken(UUID.randomUUID().toString().replace("-", ""));
+        revokeInviteAndReissueSeat(room, member);
         memberRepository.save(member);
 
         eventLogService.log(room, RoomEventType.MEMBER_KICKED,
@@ -122,12 +126,34 @@ public class MemberManagementService {
             member.setApproved(false);
             member.setKicked(true);
             member.setMemberToken(UUID.randomUUID().toString().replace("-", ""));
+            revokeInviteAndReissueSeat(room, member);
             memberRepository.save(member);
             eventLogService.log(room, RoomEventType.JOIN_REJECTED,
                     "PC(" + operator + ") 拒绝 " + member.getNickname() + " 入会");
             notificationService.pushToRoomAndAdmin(room.getRoomCode(), "JOIN_REJECTED", Map.of(
                     "identity", member.getIdentity(),
                     "nickname", member.getNickname()));
+        }
+    }
+
+    /**
+     * 踢出/审批拒绝后: 撤销其绑定的入会凭证(旧二维码失效)并解除绑定,
+     * 为该座位重新签发新凭证, 使座位可被其他人使用,
+     * 而被踢/被拒成员无法用旧凭证或占用绑定记录阻塞座位。
+     */
+    private void revokeInviteAndReissueSeat(Room room, RoomMember member) {
+        if (member.getInviteTokenId() != null) {
+            inviteTokenRepository.findById(member.getInviteTokenId()).ifPresent(invite -> {
+                invite.setRevoked(true);
+                inviteTokenRepository.save(invite);
+            });
+            member.setInviteTokenId(null);
+        }
+        if (room.getStatus() != RoomStatus.CLOSED && member.getSeatNo() != null) {
+            InviteToken renewed = roomService.createInviteToken(room, member.getSeatNo());
+            notificationService.pushToAdmin("SEAT_INVITE_RENEWED", room.getRoomCode(), Map.of(
+                    "seatNo", member.getSeatNo(),
+                    "inviteUrl", String.valueOf(roomService.buildInviteUrl(room, renewed))));
         }
     }
 

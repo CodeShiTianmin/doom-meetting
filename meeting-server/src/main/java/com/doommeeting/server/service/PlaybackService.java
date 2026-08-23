@@ -24,6 +24,7 @@ import java.util.Map;
  * PC 管理端可通过 adminControl 控制房间内全部手机端(含明暗/音量远程下发)。
  * 控制指令带序号, 后端串行转发, 按最后指令执行并广播权威状态,
  * 解决多端同时操作冲突。
+ * 序号自增使用数据库行级悲观锁串行化(锁随事务提交释放), 多实例部署亦安全。
  */
 @Service
 @RequiredArgsConstructor
@@ -31,13 +32,13 @@ public class PlaybackService {
 
     private final RoomRepository roomRepository;
     private final MemberService memberService;
-    private final RoomService roomService;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
 
     @Transactional
-    public synchronized Map<String, Object> control(String roomCode, PlaybackControlRequest request) {
-        Room room = roomService.getRoomByCode(roomCode);
+    public Map<String, Object> control(String roomCode, PlaybackControlRequest request) {
+        Room room = roomRepository.findByRoomCodeForUpdate(roomCode)
+                .orElseThrow(() -> new BusinessException(404, "房间不存在"));
         if (room.getStatus() != RoomStatus.RUNNING) {
             throw new BusinessException("房间未运行, 无法进行播放控制");
         }
@@ -108,9 +109,10 @@ public class PlaybackService {
      * BRIGHTNESS/VOLUME 下发到房间内全部手机端本地执行。
      */
     @Transactional
-    public synchronized Map<String, Object> adminControl(Long roomId, AdminPlaybackRequest request,
-                                                         String operator) {
-        Room room = roomService.getRoomById(roomId);
+    public Map<String, Object> adminControl(Long roomId, AdminPlaybackRequest request,
+                                            String operator) {
+        Room room = roomRepository.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new BusinessException(404, "房间不存在"));
         if (room.getStatus() != RoomStatus.RUNNING) {
             throw new BusinessException("房间未运行, 无法进行播放控制");
         }

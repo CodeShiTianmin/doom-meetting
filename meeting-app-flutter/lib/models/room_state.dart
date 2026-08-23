@@ -17,6 +17,7 @@ class RoomState {
   final double playbackPositionSeconds;
   final int? playbackSeq;
   final bool screenSharing;
+  final bool allMuted;
   final int likeCount;
   final int? contentId;
   final String? contentName;
@@ -41,6 +42,7 @@ class RoomState {
     required this.playbackPositionSeconds,
     this.playbackSeq,
     this.screenSharing = false,
+    this.allMuted = false,
     required this.likeCount,
     this.contentId,
     this.contentName,
@@ -72,6 +74,7 @@ class RoomState {
             (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
         playbackSeq: (json['playbackSeq'] as num?)?.toInt(),
         screenSharing: json['screenSharing'] == true,
+        allMuted: json['allMuted'] == true,
         likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
         contentId: (json['contentId'] as num?)?.toInt(),
         contentName: json['contentName'] as String?,
@@ -92,6 +95,7 @@ class RoomState {
     double? playbackPositionSeconds,
     int? playbackSeq,
     bool? screenSharing,
+    bool? allMuted,
     int? likeCount,
     Object? contentId = _unset,
     Object? contentName = _unset,
@@ -121,6 +125,7 @@ class RoomState {
             playbackPositionSeconds ?? this.playbackPositionSeconds,
         playbackSeq: playbackSeq ?? this.playbackSeq,
         screenSharing: screenSharing ?? this.screenSharing,
+        allMuted: allMuted ?? this.allMuted,
         likeCount: likeCount ?? this.likeCount,
         contentId: contentId == _unset ? this.contentId : contentId as int?,
         contentName:

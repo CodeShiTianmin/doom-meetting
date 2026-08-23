@@ -6,12 +6,15 @@ import com.doommeeting.server.enums.RoomStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnDefault;
 
 import java.time.LocalDateTime;
 
 /**
  * 会议房间。单房间成员数可设置(默认 2 个手机客户端);
  * 公司 PC 端以后台身份推流与管理, 不出现在房间成员中。
+ * 非空列均声明 @ColumnDefault: ddl-auto 在已有表上新增列时,
+ * 已有数据行按该默认值回填, 与 Java 字段初始值保持一致。
  */
 @Getter
 @Setter
@@ -35,22 +38,27 @@ public class Room {
     private RoomStatus status = RoomStatus.WAITING;
 
     /** 房间成员数上限(手机客户端, PC 端创建/设置时可指定) */
+    @ColumnDefault("2")
     @Column(nullable = false)
     private Integer maxMembers = 2;
 
     /** 手机端"视频通话"功能开关(PC 端按房间设置) */
+    @ColumnDefault("1")
     @Column(nullable = false)
     private Boolean videoCallEnabled = true;
 
     /** 手机端"摄像头"功能开关(PC 端按房间设置) */
+    @ColumnDefault("1")
     @Column(nullable = false)
     private Boolean cameraEnabled = true;
 
     /** 允许截屏(固定放开) */
+    @ColumnDefault("1")
     @Column(nullable = false)
     private Boolean screenshotAllowed = true;
 
     /** 禁止录制(录屏检测 + 遮挡上报) */
+    @ColumnDefault("1")
     @Column(nullable = false)
     private Boolean recordingForbidden = true;
 
@@ -62,10 +70,12 @@ public class Room {
     private LocalDateTime scheduledStartAt;
 
     /** 等候室: 入会需管理员批准 */
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Boolean approvalRequired = false;
 
     /** 全员静音 */
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Boolean allMuted = false;
 
@@ -82,20 +92,24 @@ public class Room {
 
     /** 播放状态(手机端控制, 后端串行转发权威状态) */
     @Enumerated(EnumType.STRING)
+    @ColumnDefault("'IDLE'")
     @Column(nullable = false, length = 16)
     private PlaybackState playbackState = PlaybackState.IDLE;
 
     /** 播放进度(秒) */
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Double playbackPositionSeconds = 0.0;
 
     /** 最后一条播放控制指令序号(解决两客户端同时操作冲突) */
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Long lastCommandSeq = 0L;
 
     private LocalDateTime playbackUpdatedAt;
 
     /** PC 端屏幕/窗口共享中(跨端冲突检查用) */
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Boolean screenSharing = false;
 
@@ -104,10 +118,12 @@ public class Room {
     private String screenShareBy;
 
     /** 点赞总数 */
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Long likeCount = 0L;
 
     /** 红灯预警: 缺人状态超过阈值 */
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Boolean understaffedAlert = false;
 
@@ -115,9 +131,11 @@ public class Room {
     private LocalDateTime understaffedSince;
 
     /** 到期前提醒标记(剩余5分钟 / 剩余1分钟) */
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Boolean reminder5Sent = false;
 
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Boolean reminder1Sent = false;
 
