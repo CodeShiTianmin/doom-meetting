@@ -9,7 +9,6 @@ import com.doommeeting.server.enums.PlaybackAction;
 import com.doommeeting.server.enums.PlaybackState;
 import com.doommeeting.server.enums.RoomEventType;
 import com.doommeeting.server.enums.RoomStatus;
-import com.doommeeting.server.repository.RoomMemberRepository;
 import com.doommeeting.server.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -31,7 +30,7 @@ import java.util.Map;
 public class PlaybackService {
 
     private final RoomRepository roomRepository;
-    private final RoomMemberRepository memberRepository;
+    private final MemberService memberService;
     private final RoomService roomService;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
@@ -42,11 +41,7 @@ public class PlaybackService {
         if (room.getStatus() != RoomStatus.RUNNING) {
             throw new BusinessException("房间未运行, 无法进行播放控制");
         }
-        RoomMember member = memberRepository.findByRoomAndIdentity(room, request.identity())
-                .orElseThrow(() -> new BusinessException(403, "非房间成员, 禁止操作"));
-        if (!member.getOnline()) {
-            throw new BusinessException(403, "成员已离会, 禁止操作");
-        }
+        RoomMember member = memberService.requireOnlineMember(room, request.identity(), request.memberToken());
 
         PlaybackAction action;
         try {
@@ -60,11 +55,9 @@ public class PlaybackService {
                 || action == PlaybackAction.SEEK;
 
         if (sharedControl) {
-            // 序号过期的指令丢弃(两客户端同时操作时按最后指令为准)
-            if (request.seq() <= room.getLastCommandSeq()) {
-                return authoritativeState(room, "指令序号过期, 已按最新状态同步");
-            }
-            room.setLastCommandSeq(request.seq());
+            // 序号由服务端权威分配(串行递增), 按最后到达指令为准,
+            // 避免多台手机各自计数导致指令被永久判过期
+            room.setLastCommandSeq(room.getLastCommandSeq() + 1);
             switch (action) {
                 case PLAY -> room.setPlaybackState(PlaybackState.PLAYING);
                 case PAUSE -> room.setPlaybackState(PlaybackState.PAUSED);

@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * STOMP CONNECT/SUBSCRIBE 访问控制:
  * - CONNECT 携带 Authorization: Bearer <管理端JWT> -> 管理端会话, 可订阅全部 topic;
- * - CONNECT 携带 roomCode + identity(入会返回的成员身份) -> 手机端会话, 仅可订阅对应房间 topic;
+ * - CONNECT 携带 roomCode + identity + memberToken(入会签发的会话级凭证) -> 手机端会话, 仅可订阅对应房间 topic;
  * - /topic/admin/** 仅管理端可订阅; /topic/rooms/{roomCode} 需管理端或该房间成员。
  */
 @Slf4j
@@ -82,6 +82,7 @@ public class WsAuthChannelInterceptor implements ChannelInterceptor {
         }
         String roomCode = accessor.getFirstNativeHeader("roomCode");
         String identity = accessor.getFirstNativeHeader("identity");
+        String memberToken = accessor.getFirstNativeHeader("memberToken");
         if (roomCode != null && identity != null) {
             Room room = roomRepository.findByRoomCode(roomCode).orElse(null);
             if (room == null) {
@@ -90,6 +91,13 @@ public class WsAuthChannelInterceptor implements ChannelInterceptor {
             RoomMember member = memberRepository.findByRoomAndIdentity(room, identity).orElse(null);
             if (member == null) {
                 throw new MessageDeliveryException("非房间成员, 禁止连接");
+            }
+            // 会话级凭证校验: 仅知道房间码/广播可见的 identity 无法订阅房间事件
+            if (memberToken == null || !memberToken.equals(member.getMemberToken())) {
+                throw new MessageDeliveryException("成员凭证无效, 禁止连接");
+            }
+            if (Boolean.TRUE.equals(member.getKicked())) {
+                throw new MessageDeliveryException("已被移出会议, 禁止连接");
             }
             sessionRooms.computeIfAbsent(sessionId, k -> new HashSet<>()).add(roomCode);
         }

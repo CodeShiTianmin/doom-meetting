@@ -21,4 +21,6 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
     long countByRoomAndOnlineTrue(Room room);
 
     Optional<RoomMember> findByRoomAndIdentity(Room room, String identity);
+
+    Optional<RoomMember> findByRoomAndInviteTokenId(Room room, Long inviteTokenId);
 }

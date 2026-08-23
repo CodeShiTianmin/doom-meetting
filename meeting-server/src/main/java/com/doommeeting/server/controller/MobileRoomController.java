@@ -5,6 +5,7 @@ import com.doommeeting.server.dto.ContentDtos.ContentResponse;
 import com.doommeeting.server.dto.MobileDtos.*;
 import com.doommeeting.server.entity.Room;
 import com.doommeeting.server.entity.RoomMember;
+import com.doommeeting.server.service.ChatService;
 import com.doommeeting.server.service.ContentService;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.MemberService;
@@ -30,6 +31,7 @@ public class MobileRoomController {
     private final LikeService likeService;
     private final RoomService roomService;
     private final ContentService contentService;
+    private final ChatService chatService;
 
     /** 扫码入会: 校验一次性凭证 -> 签发 LiveKit 入会 JWT */
     @PostMapping("/join")
@@ -40,14 +42,14 @@ public class MobileRoomController {
     @PostMapping("/{roomCode}/leave")
     public ApiResponse<Void> leave(@PathVariable String roomCode,
                                    @Valid @RequestBody LeaveRequest request) {
-        memberService.leave(roomCode, request.identity());
+        memberService.leave(roomCode, request.identity(), request.memberToken());
         return ApiResponse.ok();
     }
 
     @PostMapping("/{roomCode}/heartbeat")
     public ApiResponse<Void> heartbeat(@PathVariable String roomCode,
                                        @Valid @RequestBody HeartbeatRequest request) {
-        memberService.heartbeat(roomCode, request.identity());
+        memberService.heartbeat(roomCode, request.identity(), request.memberToken());
         return ApiResponse.ok();
     }
 
@@ -62,7 +64,7 @@ public class MobileRoomController {
     @PostMapping("/{roomCode}/like")
     public ApiResponse<Map<String, Object>> like(@PathVariable String roomCode,
                                                  @Valid @RequestBody LikeRequest request) {
-        long likeCount = likeService.like(roomCode, request.identity());
+        long likeCount = likeService.like(roomCode, request.identity(), request.memberToken());
         return ApiResponse.ok(Map.of("likeCount", likeCount));
     }
 
@@ -79,11 +81,12 @@ public class MobileRoomController {
     public ApiResponse<ContentResponse> uploadAndCast(@PathVariable String roomCode,
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam String identity,
+                                                      @RequestParam String memberToken,
                                                       @RequestParam(required = false) String nickname,
                                                       @RequestParam(defaultValue = "false") boolean replace) {
         Room room = roomService.getRoomByCode(roomCode);
         // 与播放控制一致: 必须是房间在线成员, 操作人昵称以库中记录为准
-        RoomMember member = memberService.requireOnlineMember(room, identity);
+        RoomMember member = memberService.requireOnlineMember(room, identity, memberToken);
         String operator = member.getNickname();
         roomService.checkCastConflict(room.getId(), replace);
         ContentResponse content = contentService.upload(file, room.getId(), operator);
@@ -95,6 +98,23 @@ public class MobileRoomController {
             throw e;
         }
         return ApiResponse.ok(content);
+    }
+
+    /** 会中文字聊天/表情: 发送(广播到房间 STOMP 通道) */
+    @PostMapping("/{roomCode}/chat")
+    public ApiResponse<ChatMessageResponse> sendChat(@PathVariable String roomCode,
+                                                     @Valid @RequestBody ChatSendRequest request) {
+        return ApiResponse.ok(chatService.sendAsMember(
+                roomCode, request.identity(), request.memberToken(), request.content()));
+    }
+
+    /** 聊天历史(最近 100 条) */
+    @GetMapping("/{roomCode}/chat")
+    public ApiResponse<java.util.List<ChatMessageResponse>> chatHistory(
+            @PathVariable String roomCode,
+            @RequestParam String identity,
+            @RequestParam String memberToken) {
+        return ApiResponse.ok(chatService.history(roomCode, identity, memberToken));
     }
 
     /** 房间实时状态(会议时间/剩余时长/播放状态/功能开关) */

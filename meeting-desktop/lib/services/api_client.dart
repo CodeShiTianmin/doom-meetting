@@ -85,6 +85,8 @@ class ApiClient {
     required bool videoCallEnabled,
     required bool cameraEnabled,
     int? contentId,
+    String? scheduledStartAt,
+    bool approvalRequired = false,
   }) async {
     final response = await _dio.post('/api/admin/rooms', data: {
       'name': name,
@@ -93,6 +95,8 @@ class ApiClient {
       'videoCallEnabled': videoCallEnabled,
       'cameraEnabled': cameraEnabled,
       'contentId': contentId,
+      'scheduledStartAt': scheduledStartAt,
+      'approvalRequired': approvalRequired,
     });
     return RoomModel.fromJson(_unwrap(response));
   }
@@ -173,6 +177,62 @@ class ApiClient {
 
   Future<List<dynamic>> listLikes(int roomId) async {
     final response = await _dio.get('/api/admin/rooms/$roomId/likes');
+    return _unwrapList(response);
+  }
+
+  // ---------- 成员管理 ----------
+
+  Future<void> kickMember(int roomId, String identity) async {
+    final response =
+        await _dio.post('/api/admin/rooms/$roomId/members/$identity/kick');
+    _unwrap(response);
+  }
+
+  Future<void> muteMember(int roomId, String identity, bool muted) async {
+    final response = await _dio.post(
+        '/api/admin/rooms/$roomId/members/$identity/mute',
+        queryParameters: {'muted': muted});
+    _unwrap(response);
+  }
+
+  Future<void> muteAll(int roomId, bool muted) async {
+    final response = await _dio.post('/api/admin/rooms/$roomId/members/mute-all',
+        queryParameters: {'muted': muted});
+    _unwrap(response);
+  }
+
+  Future<void> setMemberCamera(
+      int roomId, String identity, bool disabled) async {
+    final response = await _dio.post(
+        '/api/admin/rooms/$roomId/members/$identity/camera',
+        queryParameters: {'disabled': disabled});
+    _unwrap(response);
+  }
+
+  Future<void> approveMember(
+      int roomId, String identity, bool approved) async {
+    final response = await _dio.post(
+        '/api/admin/rooms/$roomId/members/$identity/approve',
+        queryParameters: {'approved': approved});
+    _unwrap(response);
+  }
+
+  /// 会后出席统计报表
+  Future<List<dynamic>> attendance(int roomId) async {
+    final response = await _dio.get('/api/admin/rooms/$roomId/attendance');
+    return _unwrapList(response);
+  }
+
+  // ---------- 聊天 ----------
+
+  Future<void> sendChat(int roomId, String content) async {
+    final response = await _dio
+        .post('/api/admin/rooms/$roomId/chat', data: {'content': content});
+    _unwrap(response);
+  }
+
+  Future<List<dynamic>> chatHistory(int roomId) async {
+    final response = await _dio.get('/api/admin/rooms/$roomId/chat');
     return _unwrapList(response);
   }
 

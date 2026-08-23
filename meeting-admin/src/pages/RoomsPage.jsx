@@ -24,6 +24,8 @@ export default function RoomsPage() {
     videoCallEnabled: true,
     cameraEnabled: true,
     contentId: '',
+    approvalRequired: false,
+    scheduledStartAt: '',
   })
   const [error, setError] = useState('')
 
@@ -57,9 +59,11 @@ export default function RoomsPage() {
         videoCallEnabled: form.videoCallEnabled,
         cameraEnabled: form.cameraEnabled,
         contentId: form.contentId || null,
+        approvalRequired: form.approvalRequired,
+        scheduledStartAt: form.scheduledStartAt || null,
       })
       setDialogOpen(false)
-      setForm({ name: '', durationMinutes: 60, maxMembers: 2, videoCallEnabled: true, cameraEnabled: true, contentId: '' })
+      setForm({ name: '', durationMinutes: 60, maxMembers: 2, videoCallEnabled: true, cameraEnabled: true, contentId: '', approvalRequired: false, scheduledStartAt: '' })
       navigate(`/rooms/${created.id}`)
     } catch (err) {
       setError(err.message)
@@ -77,6 +81,7 @@ export default function RoomsPage() {
           onChange={(e, value) => setStatusFilter(value ?? '')}
         >
           <ToggleButton value="">全部</ToggleButton>
+          <ToggleButton value="SCHEDULED">已预约</ToggleButton>
           <ToggleButton value="WAITING">等待中</ToggleButton>
           <ToggleButton value="RUNNING">运行中</ToggleButton>
           <ToggleButton value="CLOSED">已关闭</ToggleButton>
@@ -186,6 +191,22 @@ export default function RoomsPage() {
               />
             }
             label="开放手机端摄像头"
+          />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={form.approvalRequired}
+                onChange={(e) => setForm({ ...form, approvalRequired: e.target.checked })}
+              />
+            }
+            label="开启等候室(入会需审批)"
+          />
+          <TextField
+            label="预约开会时间(可选, 不选则立即开会)"
+            type="datetime-local"
+            InputLabelProps={{ shrink: true }}
+            value={form.scheduledStartAt}
+            onChange={(e) => setForm({ ...form, scheduledStartAt: e.target.value })}
           />
         </DialogContent>
         <DialogActions>

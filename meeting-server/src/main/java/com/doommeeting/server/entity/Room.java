@@ -58,6 +58,17 @@ public class Room {
     @Column(nullable = false)
     private Integer durationMinutes;
 
+    /** 预约开始时间(为空表示创建即进入等待) */
+    private LocalDateTime scheduledStartAt;
+
+    /** 等候室: 入会需管理员批准 */
+    @Column(nullable = false)
+    private Boolean approvalRequired = false;
+
+    /** 全员静音 */
+    @Column(nullable = false)
+    private Boolean allMuted = false;
+
     /** 全部成员就位, 会议开始时间 */
     private LocalDateTime meetingStartAt;
 

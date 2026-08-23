@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -21,7 +22,9 @@ public class RoomDtos {
             @Max(value = 50, message = "成员数最多50人") Integer maxMembers,
             Boolean videoCallEnabled,
             Boolean cameraEnabled,
-            Long contentId) {
+            Long contentId,
+            LocalDateTime scheduledStartAt,
+            Boolean approvalRequired) {
     }
 
     public record RoomSettingsRequest(
@@ -65,6 +68,10 @@ public class RoomDtos {
             String inviteUrl,
             String qrContent,
             LocalDateTime inviteExpireAt,
+            List<SeatInviteResponse> invites,
+            LocalDateTime scheduledStartAt,
+            Boolean approvalRequired,
+            Boolean allMuted,
             String closeReason,
             LocalDateTime closedAt,
             String createdBy,
@@ -77,8 +84,42 @@ public class RoomDtos {
             String nickname,
             String deviceInfo,
             Boolean online,
+            Integer seatNo,
+            Boolean muted,
+            Boolean cameraDisabled,
+            Boolean kicked,
+            Boolean approved,
             LocalDateTime joinedAt,
             LocalDateTime leftAt) {
+    }
+
+    /** 每座位独立入会二维码 */
+    public record SeatInviteResponse(
+            Integer seatNo,
+            String token,
+            String inviteUrl,
+            LocalDateTime expireAt,
+            Boolean used,
+            Boolean revoked) {
+    }
+
+    /** 会后出席统计 */
+    public record AttendanceResponse(
+            Long memberId,
+            String identity,
+            String nickname,
+            Integer seatNo,
+            Boolean online,
+            LocalDateTime firstJoinedAt,
+            LocalDateTime leftAt,
+            Long onlineSeconds,
+            Integer joinCount,
+            Long likeCount) {
+    }
+
+    public record AdminChatRequest(
+            @NotBlank(message = "消息内容不能为空")
+            @Size(max = 500, message = "消息最长 500 字") String content) {
     }
 
     public record CastRequest(

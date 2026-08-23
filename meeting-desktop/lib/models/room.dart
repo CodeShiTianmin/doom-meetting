@@ -27,6 +27,10 @@ class RoomModel {
   final String? inviteUrl;
   final String? qrContent;
   final String? inviteExpireAt;
+  final String? scheduledStartAt;
+  final bool approvalRequired;
+  final bool allMuted;
+  final List<SeatInviteModel> invites;
   final List<MemberModel> members;
 
   RoomModel({
@@ -57,11 +61,16 @@ class RoomModel {
     this.inviteUrl,
     this.qrContent,
     this.inviteExpireAt,
+    this.scheduledStartAt,
+    this.approvalRequired = false,
+    this.allMuted = false,
+    this.invites = const [],
     required this.members,
   });
 
   bool get running => status == 'RUNNING';
   bool get closed => status == 'CLOSED';
+  bool get scheduled => status == 'SCHEDULED';
 
   factory RoomModel.fromJson(Map<String, dynamic> json) => RoomModel(
         id: (json['id'] as num).toInt(),
@@ -92,6 +101,13 @@ class RoomModel {
         inviteUrl: json['inviteUrl'] as String?,
         qrContent: json['qrContent'] as String?,
         inviteExpireAt: json['inviteExpireAt'] as String?,
+        scheduledStartAt: json['scheduledStartAt'] as String?,
+        approvalRequired: json['approvalRequired'] == true,
+        allMuted: json['allMuted'] == true,
+        invites: ((json['invites'] as List<dynamic>?) ?? const [])
+            .map((item) =>
+                SeatInviteModel.fromJson(item as Map<String, dynamic>))
+            .toList(),
         members: ((json['members'] as List<dynamic>?) ?? const [])
             .map((item) => MemberModel.fromJson(item as Map<String, dynamic>))
             .toList(),
@@ -104,6 +120,11 @@ class MemberModel {
   final String nickname;
   final bool online;
   final String? joinedAt;
+  final int? seatNo;
+  final bool muted;
+  final bool cameraDisabled;
+  final bool kicked;
+  final bool approved;
 
   MemberModel({
     required this.id,
@@ -111,6 +132,11 @@ class MemberModel {
     required this.nickname,
     required this.online,
     this.joinedAt,
+    this.seatNo,
+    this.muted = false,
+    this.cameraDisabled = false,
+    this.kicked = false,
+    this.approved = true,
   });
 
   factory MemberModel.fromJson(Map<String, dynamic> json) => MemberModel(
@@ -119,6 +145,40 @@ class MemberModel {
         nickname: json['nickname'] as String,
         online: json['online'] == true,
         joinedAt: json['joinedAt'] as String?,
+        seatNo: (json['seatNo'] as num?)?.toInt(),
+        muted: json['muted'] == true,
+        cameraDisabled: json['cameraDisabled'] == true,
+        kicked: json['kicked'] == true,
+        approved: json['approved'] != false,
+      );
+}
+
+/// 座位邀请码(每个座位独立二维码)
+class SeatInviteModel {
+  final int? seatNo;
+  final String token;
+  final String? inviteUrl;
+  final String? expireAt;
+  final bool used;
+  final bool revoked;
+
+  SeatInviteModel({
+    this.seatNo,
+    required this.token,
+    this.inviteUrl,
+    this.expireAt,
+    this.used = false,
+    this.revoked = false,
+  });
+
+  factory SeatInviteModel.fromJson(Map<String, dynamic> json) =>
+      SeatInviteModel(
+        seatNo: (json['seatNo'] as num?)?.toInt(),
+        token: json['token'] as String,
+        inviteUrl: json['inviteUrl'] as String?,
+        expireAt: json['expireAt'] as String?,
+        used: json['used'] == true,
+        revoked: json['revoked'] == true,
       );
 }
 
