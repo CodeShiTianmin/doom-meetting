@@ -37,6 +37,7 @@ public class FileStorageService {
     public String store(MultipartFile file) {
         String original = file.getOriginalFilename() == null ? "file" : file.getOriginalFilename();
         String safeName = Paths.get(original).getFileName().toString().replaceAll("[\\\\/:*?\"<>|]", "_");
+        safeName = truncateFileName(safeName, 128);
         String relativePath = UUID.randomUUID().toString().replace("-", "") + "_" + safeName;
         Path target = rootDir.resolve(relativePath);
         try {
@@ -51,6 +52,19 @@ public class FileStorageService {
             throw new BusinessException("文件保存失败: " + e.getMessage());
         }
         return relativePath;
+    }
+
+    /** 截断过长文件名(保留扩展名), 避免超出文件系统文件名长度限制 */
+    private String truncateFileName(String name, int maxLength) {
+        if (name.length() <= maxLength) {
+            return name;
+        }
+        int dot = name.lastIndexOf('.');
+        String ext = dot > 0 ? name.substring(dot) : "";
+        if (ext.length() >= maxLength) {
+            return name.substring(0, maxLength);
+        }
+        return name.substring(0, maxLength - ext.length()) + ext;
     }
 
     public Resource loadAsResource(String relativePath) {
