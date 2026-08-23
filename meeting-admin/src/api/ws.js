@@ -6,8 +6,8 @@ import SockJS from 'sockjs-client'
  * 房间运行/红灯预警/点赞/播放状态等事件实时推送
  */
 let stompClient = null
+// key -> { destination, handler, sub } (sub 为当前连接上的订阅, 断线后失效)
 const subscriptions = new Map()
-const pendingSubs = []
 
 export function connectWs(onConnect) {
   if (stompClient?.active) {
@@ -22,9 +22,8 @@ export function connectWs(onConnect) {
       stompClient.connectHeaders = token ? { Authorization: `Bearer ${token}` } : {}
     },
     onConnect: () => {
-      pendingSubs.splice(0).forEach(({ destination, handler, key }) => {
-        doSubscribe(destination, handler, key)
-      })
+      // 每次连接(含断线重连)都重新建立全部订阅
+      subscriptions.forEach((entry, key) => doSubscribe(key))
       onConnect?.()
     },
   })
@@ -32,30 +31,31 @@ export function connectWs(onConnect) {
   return stompClient
 }
 
-function doSubscribe(destination, handler, key) {
-  const sub = stompClient.subscribe(destination, (message) => {
+function doSubscribe(key) {
+  const entry = subscriptions.get(key)
+  if (!entry) return
+  entry.sub = stompClient.subscribe(entry.destination, (message) => {
     try {
-      handler(JSON.parse(message.body))
+      entry.handler(JSON.parse(message.body))
     } catch {
       // 忽略非 JSON 消息
     }
   })
-  subscriptions.set(key, sub)
 }
 
 export function subscribeTopic(destination, handler) {
   const key = `${destination}:${Math.random().toString(36).slice(2)}`
+  subscriptions.set(key, { destination, handler, sub: null })
   if (stompClient?.connected) {
-    doSubscribe(destination, handler, key)
+    doSubscribe(key)
   } else {
-    pendingSubs.push({ destination, handler, key })
     connectWs()
   }
   return () => {
-    const sub = subscriptions.get(key)
-    if (sub) {
-      sub.unsubscribe()
-      subscriptions.delete(key)
+    const entry = subscriptions.get(key)
+    subscriptions.delete(key)
+    if (entry?.sub && stompClient?.connected) {
+      entry.sub.unsubscribe()
     }
   }
 }

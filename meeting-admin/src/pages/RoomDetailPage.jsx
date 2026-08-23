@@ -15,8 +15,9 @@ import PauseIcon from '@mui/icons-material/Pause'
 import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  castContent, closeRoom, controlRoomPlayback, getRoom, listRoomEvents,
-  regenerateInvite, stopCast, updateRoomSettings, uploadContentFile,
+  castContent, closeRoom, controlRoomPlayback, deleteContent, getRoom,
+  listRoomEvents, regenerateInvite, stopCast, updateRoomSettings,
+  uploadContentFile,
 } from '../api'
 import { subscribeRoom } from '../api/ws'
 import RoomStatusChip from '../components/RoomStatusChip.jsx'
@@ -87,19 +88,31 @@ export default function RoomDetailPage() {
     e.target.value = ''
     if (!file) return
     // 投放前冲突检查: 已有投放时提示先停止当前投放
-    if (room?.contentId != null) {
+    if (room?.contentId != null || room?.screenSharing) {
+      const currentDesc = room?.contentId != null
+        ? `「${room.contentName || '当前内容'}」`
+        : '屏幕共享'
       const ok = window.confirm(
-        `该房间正在投放「${room.contentName || '当前内容'}」。\n需要先停止当前投放, 才能投放新内容。\n\n确认停止当前投放并投放新文件?`,
+        `该房间正在投放${currentDesc}。\n需要先停止当前投放, 才能投放新内容。\n\n确认停止当前投放并投放新文件?`,
       )
       if (!ok) return
     }
     setCasting(true)
+    let content = null
     try {
       // 真实文件上传到服务器, 会议结束后自动删除
-      const content = await uploadContentFile(file, id)
+      content = await uploadContentFile(file, id)
       await castContent(id, content.id, true)
       await refresh()
     } catch (err) {
+      // 上传成功但投放失败时删除刚上传的内容, 避免孤儿文件
+      if (content?.id) {
+        try {
+          await deleteContent(content.id)
+        } catch {
+          // 清理失败不影响错误提示
+        }
+      }
       setError(err.code === 409 ? `投放冲突: ${err.message}` : err.message)
     } finally {
       setCasting(false)
