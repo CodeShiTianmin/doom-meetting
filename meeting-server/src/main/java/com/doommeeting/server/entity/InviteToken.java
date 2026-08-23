@@ -3,6 +3,7 @@ package com.doommeeting.server.entity;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnDefault;
 
 import java.time.LocalDateTime;
 
@@ -33,12 +34,15 @@ public class InviteToken {
     private Integer seatNo;
 
     /** 限用次数(默认 2, 与房间人数上限一致) */
+    @ColumnDefault("2")
     @Column(nullable = false)
     private Integer maxUses = 2;
 
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Integer usedCount = 0;
 
+    @ColumnDefault("0")
     @Column(nullable = false)
     private Boolean revoked = false;
 

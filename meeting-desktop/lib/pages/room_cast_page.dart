@@ -75,6 +75,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
   }
 
   void _onRoomEvent(Map<String, dynamic> event) {
+    if (!mounted) return;
     final type = event['type'] as String?;
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
@@ -239,7 +240,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
       dialogTitle: '选择投放文件(所有类型, 上传服务器保存, 会议结束后删除)',
     );
     final path = result?.files.single.path;
-    if (path == null) return;
+    if (path == null || !mounted) return;
     final name = path.split(RegExp(r'[\\/]')).last;
     final extension = _extensionOf(name);
 

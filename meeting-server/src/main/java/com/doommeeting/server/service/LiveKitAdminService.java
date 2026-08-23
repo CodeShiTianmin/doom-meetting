@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -26,11 +27,16 @@ public class LiveKitAdminService {
 
     private final AppProperties.Livekit livekit;
     private final SecretKey key;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
 
     public LiveKitAdminService(AppProperties properties) {
         this.livekit = properties.getLivekit();
         this.key = Keys.hmacShaKeyFor(livekit.getApiSecret().getBytes(StandardCharsets.UTF_8));
+        // 尽力而为调用: 设置超时, 避免 LiveKit 不可达时长时间阻塞业务线程
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(3_000);
+        factory.setReadTimeout(5_000);
+        this.restTemplate = new RestTemplate(factory);
     }
 
     /** 服务端强制移除参与者(踢人后立即断开其媒体连接) */
@@ -47,8 +53,10 @@ public class LiveKitAdminService {
             return;
         }
         for (Object item : tracks) {
+            // 注意: protobuf JSON 会省略默认值字段, TrackType.AUDIO=0 时 type 可能缺失,
+            // 因此把缺失的 type 也视为音频轨
             if (item instanceof Map<?, ?> track
-                    && "AUDIO".equals(String.valueOf(track.get("type")))
+                    && (track.get("type") == null || "AUDIO".equals(String.valueOf(track.get("type"))))
                     && track.get("sid") != null) {
                 callTwirp("MutePublishedTrack", Map.of(
                         "room", roomCode,

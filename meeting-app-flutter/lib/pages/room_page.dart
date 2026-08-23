@@ -138,8 +138,16 @@ class _RoomPageState extends State<RoomPage> {
     } catch (_) {}
   }
 
-  /// PC 端关闭视频通话/摄像头后, 已开启的麦克风/摄像头立即关闭
+  /// PC 端关闭视频通话/摄像头后, 已开启的麦克风/摄像头立即关闭;
+  /// 全员静音状态也按服务端权威状态同步(含初始刷新)
   Future<void> _enforceFeatureToggles(RoomState state) async {
+    if (state.allMuted != _mutedByHost) {
+      _mutedByHost = state.allMuted;
+      if (state.allMuted && _micOn) {
+        await _lkRoom?.localParticipant?.setMicrophoneEnabled(false);
+        if (mounted) setState(() => _micOn = false);
+      }
+    }
     if (!state.videoCallEnabled && _micOn) {
       await _lkRoom?.localParticipant?.setMicrophoneEnabled(false);
       if (mounted) setState(() => _micOn = false);
@@ -196,6 +204,7 @@ class _RoomPageState extends State<RoomPage> {
       ..on<lk.TrackUnsubscribedEvent>(
           (event) => _detachRemoteTrack(event.participant, event.track))
       ..on<lk.ParticipantDisconnectedEvent>((event) {
+        if (!mounted) return;
         if (event.participant.identity
             .startsWith(AppConfig.castIdentityPrefix)) {
           setState(() => _castVideoTrack = null);
@@ -223,7 +232,14 @@ class _RoomPageState extends State<RoomPage> {
     if (wsUrl == null || lkToken == null) return;
     try {
       await room.connect(wsUrl, lkToken);
-      if (_micOn && session.videoCallEnabled && !_mutedByHost) {
+      if (!mounted) {
+        await room.disconnect();
+        return;
+      }
+      if (_micOn &&
+          session.videoCallEnabled &&
+          !_mutedByHost &&
+          _state?.allMuted != true) {
         await room.localParticipant?.setMicrophoneEnabled(true);
       }
     } catch (_) {
@@ -232,7 +248,7 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   void _attachRemoteTrack(lk.RemoteParticipant participant, lk.Track track) {
-    if (track is! lk.VideoTrack) return;
+    if (track is! lk.VideoTrack || !mounted) return;
     setState(() {
       if (participant.identity.startsWith(AppConfig.castIdentityPrefix)) {
         _castVideoTrack = track;
@@ -243,7 +259,7 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   void _detachRemoteTrack(lk.RemoteParticipant participant, lk.Track track) {
-    if (track is! lk.VideoTrack) return;
+    if (track is! lk.VideoTrack || !mounted) return;
     setState(() {
       if (participant.identity.startsWith(AppConfig.castIdentityPrefix)) {
         if (_castVideoTrack == track) _castVideoTrack = null;
@@ -265,6 +281,7 @@ class _RoomPageState extends State<RoomPage> {
     }
     final next = !_micOn;
     await _lkRoom?.localParticipant?.setMicrophoneEnabled(next);
+    if (!mounted) return;
     setState(() => _micOn = next);
   }
 
@@ -288,6 +305,7 @@ class _RoomPageState extends State<RoomPage> {
             _frontCamera ? lk.CameraPosition.front : lk.CameraPosition.back,
       ),
     );
+    if (!mounted) return;
     setState(() {
       _camOn = next;
       _selfVideoTrack = next
@@ -305,6 +323,7 @@ class _RoomPageState extends State<RoomPage> {
     try {
       await lk.Hardware.instance.setSpeakerphoneOn(next);
     } catch (_) {}
+    if (!mounted) return;
     setState(() => _speakerOn = next);
   }
 
@@ -315,6 +334,7 @@ class _RoomPageState extends State<RoomPage> {
     final next = !_screenSharing;
     try {
       await participant.setScreenShareEnabled(next);
+      if (!mounted) return;
       setState(() => _screenSharing = next);
       _showToast(next ? '已开始屏幕共享' : '已停止屏幕共享');
     } catch (error) {
@@ -328,12 +348,14 @@ class _RoomPageState extends State<RoomPage> {
     _frontCamera = !_frontCamera;
     await track.setCameraPosition(
         _frontCamera ? lk.CameraPosition.front : lk.CameraPosition.back);
+    if (!mounted) return;
     setState(() {});
   }
 
   // ---------------- 房间事件 ----------------
 
   void _onRoomEvent(Map<String, dynamic> event) {
+    if (!mounted) return;
     final type = event['type'] as String?;
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
@@ -448,7 +470,8 @@ class _RoomPageState extends State<RoomPage> {
 
   void _onRoomClosed(String reason) {
     if (_closedReason != null) return;
-    setState(() => _closedReason = reason);
+    _closedReason = reason;
+    if (mounted) setState(() {});
     _lkRoom?.disconnect();
   }
 
@@ -487,6 +510,7 @@ class _RoomPageState extends State<RoomPage> {
     if (value == null) return;
     if (value > 1) value = value / 100;
     value = value.clamp(0.0, 1.0);
+    if (!mounted) return;
     if (action == 'BRIGHTNESS') {
       setState(() => _brightness = value!);
       try {
@@ -694,7 +718,7 @@ class _RoomPageState extends State<RoomPage> {
     }
     final result = await FilePicker.platform.pickFiles(type: FileType.any);
     final path = result?.files.single.path;
-    if (path == null) return;
+    if (path == null || !mounted) return;
     setState(() => _uploading = true);
     _showToast('正在上传文件...');
     try {
