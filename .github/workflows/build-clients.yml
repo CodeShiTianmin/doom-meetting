@@ -1,0 +1,61 @@
+name: build-clients
+
+on:
+  push:
+    branches: [devin/**]
+  workflow_dispatch:
+
+env:
+  API_BASE_URL: https://meet.ja4.club
+  WS_URL: wss://meet.ja4.club/ws
+
+jobs:
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.35.4
+      - name: Build iOS (unsigned)
+        working-directory: meeting-app-flutter
+        run: |
+          flutter pub get
+          flutter build ios --release --no-codesign \
+            --dart-define=API_BASE_URL=$API_BASE_URL \
+            --dart-define=WS_URL=$WS_URL
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -qr meeting-app-ios-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meeting-app-ios-unsigned
+          path: meeting-app-flutter/meeting-app-ios-unsigned.ipa
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.35.4
+      - name: Build Windows desktop
+        working-directory: meeting-desktop
+        shell: bash
+        run: |
+          flutter config --enable-windows-desktop
+          flutter create . --platforms=windows --org com.doommeeting --project-name meeting_desktop
+          flutter pub get
+          flutter build windows --release \
+            --dart-define=API_BASE_URL=$API_BASE_URL \
+            --dart-define=WS_URL=$WS_URL
+      - name: Package
+        shell: pwsh
+        working-directory: meeting-desktop
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath meeting-desktop-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meeting-desktop-windows
+          path: meeting-desktop/meeting-desktop-windows.zip
