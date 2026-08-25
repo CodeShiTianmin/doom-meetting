@@ -21,6 +21,7 @@ jobs:
       - name: Build iOS (unsigned)
         working-directory: meeting-app-flutter
         run: |
+          flutter create . --platforms=ios --org com.doommeeting --project-name meeting_app
           flutter pub get
           flutter build ios --release --no-codesign \
             --dart-define=API_BASE_URL=$API_BASE_URL \
@@ -34,7 +35,7 @@ jobs:
           path: meeting-app-flutter/meeting-app-ios-unsigned.ipa
 
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
