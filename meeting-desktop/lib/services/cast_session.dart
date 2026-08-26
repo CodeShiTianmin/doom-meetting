@@ -1,11 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:ui';
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 /// 推流模式(全部走 LiveKit 实时流)
 enum CastMode { none, screen, video, camera }
@@ -13,14 +12,14 @@ enum CastMode { none, screen, video, camera }
 /// 单房间推流会话(核心):
 ///
 /// 每个房间一个独立的 CastSession = 独立 LiveKit RTC 连接(隐藏推流身份,
-/// 只发不收) + 独立播放窗口 + 独立音视频轨。
+/// 只发不收) + 独立播放器 + 独立音视频轨。
 /// 多房并发时各会话完全隔离, 天然不串音、不串频。
 ///
 /// - 屏幕/窗口推流: getDisplayMedia 捕获整屏或指定窗口, 系统伴音走
 ///   WASAPI loopback (captureScreenAudio)
-/// - 本地视频推流: 每房间开一个独立播放窗口(子 Flutter 引擎, media_kit
-///   解码), 对该窗口做窗口捕获推流; 播放与主窗口页面解耦, 主窗口切到
-///   其他房间操作时后台持续播放推流
+/// - 本地视频推流: media_kit 在房间页内直接解码播放(无独立窗口),
+///   同时对本程序主窗口做窗口捕获推流; 播放器归会话持有, 页面关闭
+///   不停止播放
 /// - 摄像头推流: 直接采集本机摄像头推流
 class CastSession extends ChangeNotifier {
   final int roomId;
@@ -29,7 +28,13 @@ class CastSession extends ChangeNotifier {
   CastSession({required this.roomId, required this.roomCode});
 
   lk.Room? _lkRoom;
-  int? _playerWindowId;
+
+  /// 本地视频播放器(页内播放, 归会话持有)
+  Player? player;
+  VideoController? videoController;
+  StreamSubscription<bool>? _playingSub;
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
 
   CastMode mode = CastMode.none;
 
@@ -40,7 +45,7 @@ class CastSession extends ChangeNotifier {
   bool connected = false;
   bool publishing = false;
 
-  /// 独立播放窗口上报的播放状态(本地视频推流模式)
+  /// 本地视频播放状态(本地视频推流模式)
   bool playerPlaying = false;
   int playerPositionMs = 0;
   int playerDurationMs = 0;
@@ -175,29 +180,34 @@ class CastSession extends ChangeNotifier {
     }
   }
 
-  /// 本地视频推流: 开独立播放窗口本地解码播放(不上传服务器),
-  /// 对该窗口做窗口捕获以 LiveKit 实时流推给房间内手机端。
-  /// 播放窗口独立于主窗口, 切换房间/页面不影响后台推流。
+  /// 本地视频推流: media_kit 在房间页内直接解码播放(不上传服务器),
+  /// 同时捕获本程序主窗口以 LiveKit 实时流推给房间内手机端。
   Future<void> startVideoCast(String path) async {
     await stopCast();
     final participant = _requireParticipant();
 
-    final title = '投屏播放-$roomCode';
-    final window = await DesktopMultiWindow.createWindow(jsonEncode({
-      'roomId': roomId,
-      'path': path,
-      'title': title,
-    }));
-    _playerWindowId = window.windowId;
-    await window.setTitle(title);
-    await window.setFrame(const Rect.fromLTWH(120, 120, 960, 560));
-    await window.show();
+    final mediaPlayer = Player();
+    player = mediaPlayer;
+    videoController = VideoController(mediaPlayer);
+    _playingSub = mediaPlayer.stream.playing.listen((playing) {
+      playerPlaying = playing;
+      notifyListeners();
+    });
+    _positionSub = mediaPlayer.stream.position.listen((position) {
+      playerPositionMs = position.inMilliseconds;
+      notifyListeners();
+    });
+    _durationSub = mediaPlayer.stream.duration.listen((duration) {
+      playerDurationMs = duration.inMilliseconds;
+      notifyListeners();
+    });
 
     try {
-      final source = await _waitPlayerWindowSource(title);
+      await mediaPlayer.open(Media(path), play: true);
+      final source = await _findMainWindowSource();
       await _publishCaptureTrack(participant, source.id);
     } catch (error) {
-      await _closePlayerWindow();
+      await _disposePlayer();
       rethrow;
     }
     filePath = path;
@@ -207,75 +217,42 @@ class CastSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 等待播放窗口出现在可捕获窗口列表中(子引擎启动需要时间)
-  Future<webrtc.DesktopCapturerSource> _waitPlayerWindowSource(
-      String title) async {
-    for (var attempt = 0; attempt < 30; attempt++) {
-      final sources = await listCaptureSources();
-      final source = sources
-          .where((source) => source.type == webrtc.SourceType.Window)
-          .where((source) => source.name.contains(title))
-          .firstOrNull;
-      if (source != null) return source;
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-    }
-    throw StateError('播放窗口未就绪, 无法捕获推流');
+  /// 查找本程序主窗口作为捕获源; 找不到时回退整屏捕获
+  Future<webrtc.DesktopCapturerSource> _findMainWindowSource() async {
+    final sources = await listCaptureSources();
+    final window = sources
+        .where((source) => source.type == webrtc.SourceType.Window)
+        .where((source) => source.name.contains('投屏会议'))
+        .firstOrNull;
+    if (window != null) return window;
+    final screen = sources
+        .where((source) => source.type == webrtc.SourceType.Screen)
+        .firstOrNull;
+    if (screen != null) return screen;
+    throw StateError('未找到可捕获的窗口/屏幕, 无法推流');
   }
 
-  /// 播放/暂停(转发给独立播放窗口)
-  Future<void> playerPlayPause() => _invokePlayerWindow('playOrPause');
+  /// 播放/暂停
+  Future<void> playerPlayPause() async => player?.playOrPause();
 
-  /// 跳转进度(转发给独立播放窗口)
-  Future<void> playerSeek(int positionMs) =>
-      _invokePlayerWindow('seekMs', positionMs);
+  /// 跳转进度
+  Future<void> playerSeek(int positionMs) async =>
+      player?.seek(Duration(milliseconds: positionMs));
 
-  Future<void> _invokePlayerWindow(String method, [dynamic arguments]) async {
-    final windowId = _playerWindowId;
-    if (windowId == null) return;
-    try {
-      await DesktopMultiWindow.invokeMethod(windowId, method, arguments);
-    } catch (_) {
-      // 播放窗口已关闭/未就绪时忽略
-    }
-  }
-
-  /// 接收播放窗口周期性上报的播放状态
-  void updatePlayerState(
-      {required int windowId,
-      required bool playing,
-      required int positionMs,
-      required int durationMs}) {
-    if (windowId != _playerWindowId) return;
-    if (playing == playerPlaying &&
-        positionMs == playerPositionMs &&
-        durationMs == playerDurationMs) {
-      return;
-    }
-    playerPlaying = playing;
-    playerPositionMs = positionMs;
-    playerDurationMs = durationMs;
-    notifyListeners();
-  }
-
-  /// 播放窗口被外部关闭(如用户手动关窗): 同步停止本房间推流
-  Future<void> onPlayerWindowClosed(int windowId) async {
-    if (windowId != _playerWindowId) return;
-    _playerWindowId = null;
-    await stopCast();
-  }
-
-  Future<void> _closePlayerWindow() async {
-    final windowId = _playerWindowId;
-    _playerWindowId = null;
+  Future<void> _disposePlayer() async {
+    await _playingSub?.cancel();
+    await _positionSub?.cancel();
+    await _durationSub?.cancel();
+    _playingSub = null;
+    _positionSub = null;
+    _durationSub = null;
+    final mediaPlayer = player;
+    player = null;
+    videoController = null;
     playerPlaying = false;
     playerPositionMs = 0;
     playerDurationMs = 0;
-    if (windowId == null) return;
-    try {
-      await WindowController.fromWindowId(windowId).close();
-    } catch (_) {
-      // 窗口已关闭时忽略
-    }
+    await mediaPlayer?.dispose();
   }
 
   /// 未连接时直接报错, 避免静默跳过推流却显示投屏中的"假成功"
@@ -299,7 +276,7 @@ class CastSession extends ChangeNotifier {
         } catch (_) {}
       }
     }
-    await _closePlayerWindow();
+    await _disposePlayer();
     filePath = null;
     sourceLabel = null;
     mode = CastMode.none;

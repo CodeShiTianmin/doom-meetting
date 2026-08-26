@@ -1,5 +1,3 @@
-import 'package:desktop_multi_window/desktop_multi_window.dart';
-
 import 'api_client.dart';
 import 'cast_session.dart';
 
@@ -13,40 +11,6 @@ class CastManager {
   final Map<int, CastSession> _sessions = {};
 
   CastSession? sessionOf(int roomId) => _sessions[roomId];
-
-  /// 监听各房间独立播放窗口上报的事件(主窗口引擎注册一次)
-  void bindPlayerWindowEvents() {
-    DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
-      final args = call.arguments is Map
-          ? Map<String, dynamic>.from(call.arguments as Map)
-          : const <String, dynamic>{};
-      final session = _sessions[args['roomId'] as int?];
-      if (session == null) return null;
-      switch (call.method) {
-        case 'playerState':
-          session.updatePlayerState(
-            windowId: args['windowId'] as int,
-            playing: args['playing'] as bool,
-            positionMs: args['positionMs'] as int,
-            durationMs: args['durationMs'] as int,
-          );
-          break;
-        case 'playerClosed':
-          // 播放窗口被手动关闭: 停推流并同步服务端推流登记
-          final windowId = args['windowId'] as int;
-          if (session.mode == CastMode.video) {
-            await session.onPlayerWindowClosed(windowId);
-            if (!session.publishing) {
-              try {
-                await ApiClient.instance.stopCast(session.roomId);
-              } catch (_) {}
-            }
-          }
-          break;
-      }
-      return null;
-    });
-  }
 
   Iterable<CastSession> get sessions => _sessions.values;
 
