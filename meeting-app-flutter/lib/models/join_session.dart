@@ -17,6 +17,10 @@ class JoinSession {
   final String? meetingEndAt;
   final String? castType;
   final String? castLabel;
+
+  /// 重新入会时恢复主持人管控状态(单人静音含全员静音/禁摄像头)
+  final bool mutedByHost;
+  final bool cameraDisabledByHost;
   final String? livekitToken;
   final String? livekitWsUrl;
 
@@ -38,6 +42,8 @@ class JoinSession {
     this.meetingEndAt,
     this.castType,
     this.castLabel,
+    this.mutedByHost = false,
+    this.cameraDisabledByHost = false,
     this.livekitToken,
     this.livekitWsUrl,
   });
@@ -60,6 +66,8 @@ class JoinSession {
         meetingEndAt: json['meetingEndAt'] as String?,
         castType: json['castType'] as String?,
         castLabel: json['castLabel'] as String?,
+        mutedByHost: json['muted'] == true,
+        cameraDisabledByHost: json['cameraDisabled'] == true,
         livekitToken: json['livekitToken'] as String?,
         livekitWsUrl: json['livekitWsUrl'] as String?,
       );

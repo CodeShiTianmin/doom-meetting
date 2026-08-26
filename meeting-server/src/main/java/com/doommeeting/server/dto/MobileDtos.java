@@ -31,6 +31,8 @@ public class MobileDtos {
             LocalDateTime meetingEndAt,
             String castType,
             String castLabel,
+            Boolean muted,
+            Boolean cameraDisabled,
             String livekitToken,
             String livekitWsUrl) {
     }
