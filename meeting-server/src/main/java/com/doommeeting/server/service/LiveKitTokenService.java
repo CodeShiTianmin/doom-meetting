@@ -35,15 +35,17 @@ public class LiveKitTokenService {
     }
 
     /**
-     * PC 隐藏推流端: 只发不收, hidden=true 不出现在成员列表
-     * (公司 PC 端以后台身份推流, 不作为房间成员)
+     * PC 推流端: 只发不收。不能用 hidden=true —— LiveKit 不会向其他成员广播
+     * 隐藏参与者的轨道, 手机端将永远订阅不到推流画面。
+     * "不出现在成员列表"由业务层保证: 成员列表取自数据库,
+     * 手机端按 identity 前缀(pc-publisher-)区分推流画面与对方客户小窗。
      */
     public String createHiddenPublisherToken(String roomCode, String identity) {
         Map<String, Object> grants = baseGrants(roomCode);
         grants.put("canPublish", true);
         grants.put("canSubscribe", false);
-        grants.put("hidden", true);
-        return buildToken(identity, "PC投屏端", grants, true);
+        grants.put("hidden", false);
+        return buildToken(identity, "PC投屏端", grants, false);
     }
 
     public String getWsUrl() {
