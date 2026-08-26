@@ -63,32 +63,47 @@ class _RoomsPageState extends State<RoomsPage> {
       builder: (_) => AlertDialog(
         title: Text('邀请二维码 · ${room.roomCode}'),
         content: SizedBox(
-          width: 320,
-          height: 420,
+          width: room.invites.isNotEmpty ? 720 : 320,
+          height: room.invites.isNotEmpty ? 340 : 420,
           child: room.invites.isNotEmpty
-              // 每个座位独立二维码: 分别发给不同客户, 一码一人
-              ? ListView(
+              // 每个座位独立二维码: 横向排列, 分别发给不同客户, 一码一人
+              ? Column(
                   children: [
-                    for (final invite in room.invites)
-                      Column(
+                    Expanded(
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
                         children: [
-                          Text('座位 ${invite.seatNo ?? '-'}'
-                              '${invite.used ? ' (已使用)' : ''}'),
-                          const SizedBox(height: 6),
-                          if (invite.inviteUrl != null)
+                          for (final invite in room.invites)
                             Container(
-                              color: Colors.white,
-                              padding: const EdgeInsets.all(10),
-                              child: QrImageView(
-                                  data: invite.inviteUrl!, size: 180),
+                              width: 220,
+                              margin: const EdgeInsets.only(right: 12),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text('座位 ${invite.seatNo ?? '-'}'
+                                      '${invite.used ? ' (已使用)' : ''}'),
+                                  const SizedBox(height: 6),
+                                  if (invite.inviteUrl != null)
+                                    Container(
+                                      color: Colors.white,
+                                      padding: const EdgeInsets.all(10),
+                                      child: QrImageView(
+                                          data: invite.inviteUrl!,
+                                          size: 180),
+                                    ),
+                                  const SizedBox(height: 4),
+                                  SelectableText(invite.inviteUrl ?? '',
+                                      maxLines: 2,
+                                      style: const TextStyle(
+                                          fontSize: 9,
+                                          color: Colors.white54)),
+                                ],
+                              ),
                             ),
-                          const SizedBox(height: 4),
-                          SelectableText(invite.inviteUrl ?? '',
-                              style: const TextStyle(
-                                  fontSize: 10, color: Colors.white54)),
-                          const Divider(height: 20),
                         ],
                       ),
+                    ),
+                    const SizedBox(height: 6),
                     const Text('每个座位一张二维码, 分别发给不同客户扫码入会',
                         style:
                             TextStyle(fontSize: 11, color: Colors.white38)),
@@ -132,6 +147,38 @@ class _RoomsPageState extends State<RoomsPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _deleteRoom(RoomModel room) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('删除房间 · ${room.name}'),
+        content: const Text('删除后房间及成员/点赞/聊天/事件记录将全部清除, 不可恢复。'
+            '\n未结束的会议会先自动结束。确定删除?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await CastManager.instance.closeSession(room.id);
+      await ApiClient.instance.deleteRoom(room.id);
+      await _refresh();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除失败: $error')));
+      }
+    }
   }
 
   @override
@@ -179,6 +226,7 @@ class _RoomsPageState extends State<RoomsPage> {
                             RoomCastPage(roomId: _rooms[index].id)))
                     .then((_) => _refresh()),
                 onShowQr: () => _showQr(_rooms[index]),
+                onDelete: () => _deleteRoom(_rooms[index]),
               ),
             ),
     );
@@ -189,9 +237,13 @@ class _RoomCard extends StatelessWidget {
   final RoomModel room;
   final VoidCallback onOpen;
   final VoidCallback onShowQr;
+  final VoidCallback onDelete;
 
   const _RoomCard(
-      {required this.room, required this.onOpen, required this.onShowQr});
+      {required this.room,
+      required this.onOpen,
+      required this.onShowQr,
+      required this.onDelete});
 
   static String _formatRemaining(int seconds) {
     final m = seconds ~/ 60;
@@ -318,6 +370,12 @@ class _RoomCard extends StatelessWidget {
                     onPressed: onShowQr,
                     icon: const Icon(Icons.qr_code, size: 16),
                     label: const Text('二维码'),
+                  ),
+                  IconButton(
+                    tooltip: '删除房间',
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline,
+                        size: 18, color: Colors.redAccent),
                   ),
                   const Spacer(),
                   TextButton.icon(

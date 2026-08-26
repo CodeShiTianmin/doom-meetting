@@ -132,6 +132,12 @@ class ApiClient {
     await _dio.post('/api/admin/rooms/$id/close');
   }
 
+  /// 删除房间(未关闭先关闭, 再级联删除全部关联数据)
+  Future<void> deleteRoom(int id) async {
+    final response = await _dio.delete('/api/admin/rooms/$id');
+    _unwrap(response);
+  }
+
   Future<RoomModel> regenerateInvite(int id) async {
     final response = await _dio.post('/api/admin/rooms/$id/invite/regenerate');
     return RoomModel.fromJson(_unwrap(response));
@@ -145,6 +151,19 @@ class ApiClient {
 
   Future<List<dynamic>> listLikes(int roomId) async {
     final response = await _dio.get('/api/admin/rooms/$roomId/likes');
+    return _unwrapList(response);
+  }
+
+  // ---------- 文字聊天 ----------
+
+  Future<void> sendChat(int roomId, String content) async {
+    final response = await _dio
+        .post('/api/admin/rooms/$roomId/chat', data: {'content': content});
+    _unwrap(response);
+  }
+
+  Future<List<dynamic>> chatHistory(int roomId) async {
+    final response = await _dio.get('/api/admin/rooms/$roomId/chat');
     return _unwrapList(response);
   }
 

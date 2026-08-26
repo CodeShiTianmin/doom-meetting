@@ -1,14 +1,14 @@
 package com.doommeeting.server.repository;
 
+import com.doommeeting.server.entity.ChatMessage;
 import com.doommeeting.server.entity.Room;
-import com.doommeeting.server.entity.RoomEventLog;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
 
-public interface RoomEventLogRepository extends JpaRepository<RoomEventLog, Long> {
+public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
 
-    List<RoomEventLog> findTop200ByRoomOrderByCreatedAtDesc(Room room);
+    List<ChatMessage> findTop50ByRoomOrderByIdDesc(Room room);
 
     void deleteByRoom(Room room);
 }

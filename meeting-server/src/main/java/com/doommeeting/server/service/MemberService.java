@@ -21,7 +21,7 @@ import java.util.UUID;
 
 /**
  * 手机客户端入会/离会/心跳。
- * 全部成员就位(人数上限可设置, 默认 2) -> 推送 PC 端显示"该房间已运行" -> 开始会议计时。
+ * 会议计时以 PC 端首次开始推流为准; 成员就位仅解除缺人预警。
  */
 @Service
 @RequiredArgsConstructor
@@ -117,7 +117,7 @@ public class MemberService {
                 "nickname", member.getNickname(),
                 "onlineCount", onlineCount + 1));
 
-        startOrRecoverIfFull(room, onlineCount + 1);
+        recoverIfFull(room, onlineCount + 1);
 
         return new JoinRoomResponse(
                 member.getId(),
@@ -229,7 +229,7 @@ public class MemberService {
                     "identity", member.getIdentity(),
                     "nickname", member.getNickname(),
                     "onlineCount", onlineCount));
-            startOrRecoverIfFull(room, onlineCount);
+            recoverIfFull(room, onlineCount);
         } else {
             memberRepository.save(member);
         }
@@ -280,27 +280,12 @@ public class MemberService {
                 "detail", request.detail() == null ? "" : request.detail()));
     }
 
-    /** 全部成员就位 -> 房间运行开始会议计时; 运行中重新满员 -> 解除缺人预警 */
-    private void startOrRecoverIfFull(Room room, long onlineCount) {
+    /** 满员 -> 解除缺人预警(会议计时由 PC 端首次推流触发, 与就位无关) */
+    private void recoverIfFull(Room room, long onlineCount) {
         if (onlineCount < maxMembers(room)) {
             return;
         }
-        if (room.getStatus() == RoomStatus.WAITING) {
-            room.setStatus(RoomStatus.RUNNING);
-            room.setMeetingStartAt(LocalDateTime.now());
-            room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
-            room.setUnderstaffedAlert(false);
-            room.setUnderstaffedSince(null);
-            roomRepository.save(room);
-            eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                    maxMembers(room) + " 个手机客户端已就位, 会议开始计时");
-            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
-                    "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
-                    "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
-                    "durationMinutes", room.getDurationMinutes()));
-        } else {
-            clearUnderstaffed(room);
-        }
+        clearUnderstaffed(room);
     }
 
     /** 校验会话级成员凭证(identity + memberToken) */

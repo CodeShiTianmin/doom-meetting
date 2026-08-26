@@ -12,4 +12,6 @@ public interface InviteTokenRepository extends JpaRepository<InviteToken, Long> 
     Optional<InviteToken> findByToken(String token);
 
     List<InviteToken> findByRoom(Room room);
+
+    void deleteByRoom(Room room);
 }

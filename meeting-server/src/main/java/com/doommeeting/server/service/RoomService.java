@@ -41,6 +41,7 @@ public class RoomService {
     private final InviteTokenRepository inviteTokenRepository;
     private final RoomEventLogRepository eventLogRepository;
     private final RoomLikeRepository likeRepository;
+    private final ChatMessageRepository chatMessageRepository;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
     private final AppProperties properties;
@@ -150,9 +151,6 @@ public class RoomService {
                 createInviteToken(room, seat);
             }
             if (onlineCount >= request.maxMembers()) {
-                if (room.getStatus() == RoomStatus.WAITING) {
-                    startMeeting(room);
-                }
                 room.setUnderstaffedAlert(false);
                 room.setUnderstaffedSince(null);
             } else if (room.getUnderstaffedSince() == null) {
@@ -171,13 +169,16 @@ public class RoomService {
         return toResponse(room, latestInvite(room));
     }
 
-    /** 成员数上限调整后已满员的等待房间立即进入运行状态 */
-    private void startMeeting(Room room) {
+    /** 首次开始推流(播放视频/屏幕/摄像头) -> 会议开始计时 */
+    private void startMeetingOnFirstCast(Room room) {
+        if (room.getStatus() != RoomStatus.WAITING || room.getMeetingStartAt() != null) {
+            return;
+        }
         room.setStatus(RoomStatus.RUNNING);
         room.setMeetingStartAt(LocalDateTime.now());
         room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
         eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                "成员数上限调整后已满员, 会议开始计时");
+                "PC 端首次开始推流, 会议开始计时");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
                 "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
                 "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
@@ -203,6 +204,8 @@ public class RoomService {
         room.setCastType(type);
         room.setCastLabel(label);
         room.setCastBy(operator);
+        // 会议计时以首次开始推流为准(不随成员就位触发)
+        startMeetingOnFirstCast(room);
         roomRepository.save(room);
         eventLogService.log(room, RoomEventType.CAST_STARTED,
                 operator + " 开始推流: " + castDescription(room));
@@ -287,6 +290,23 @@ public class RoomService {
                 reason == CloseReason.MANUAL ? "PC 端手动结束会议" : "会议时长到期自动关闭");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_CLOSED",
                 Map.of("reason", reason.name()));
+    }
+
+    /** 删除房间: 未关闭的房间先执行关闭流程, 再级联删除全部关联数据 */
+    @Transactional
+    public void deleteRoom(Long id) {
+        Room room = getRoomById(id);
+        if (room.getStatus() != RoomStatus.CLOSED) {
+            closeRoomInternal(room, CloseReason.MANUAL);
+        }
+        String roomCode = room.getRoomCode();
+        likeRepository.deleteByRoom(room);
+        chatMessageRepository.deleteByRoom(room);
+        eventLogRepository.deleteByRoom(room);
+        memberRepository.deleteByRoom(room);
+        inviteTokenRepository.deleteByRoom(room);
+        roomRepository.delete(room);
+        notificationService.pushToAdmin("ROOM_DELETED", roomCode, Map.of("roomId", id));
     }
 
     /** 重新生成入会二维码(旧凭证全部失效) */

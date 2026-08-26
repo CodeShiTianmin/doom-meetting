@@ -77,6 +77,36 @@ class ApiClient {
     return _unwrap(response);
   }
 
+  /// 当前成员是否已点赞(重新入会时恢复按钮状态)
+  Future<bool> hasLiked(String roomCode, String identity) async {
+    final response = await _dio.get('/api/mobile/rooms/$roomCode/liked',
+        queryParameters: {'identity': identity});
+    return _unwrap(response)['liked'] == true;
+  }
+
+  /// 发送文字聊天消息
+  Future<void> sendChat(String roomCode, String identity, String memberToken,
+      String content) async {
+    final response = await _dio.post('/api/mobile/rooms/$roomCode/chat',
+        data: {
+          'identity': identity,
+          'memberToken': memberToken,
+          'content': content
+        });
+    _unwrap(response);
+  }
+
+  /// 房间聊天记录(最多50条, 时间正序)
+  Future<List<dynamic>> chatHistory(String roomCode) async {
+    final response = await _dio.get('/api/mobile/rooms/$roomCode/chat');
+    final body = response.data as Map<String, dynamic>;
+    if (body['code'] != 0) {
+      throw ApiException(
+          (body['message'] as String?) ?? '请求失败', body['code'] as int? ?? -1);
+    }
+    return (body['data'] as List<dynamic>?) ?? const [];
+  }
+
   Future<RoomState> getRoomState(String roomCode) async {
     final response = await _dio.get('/api/mobile/rooms/$roomCode/state');
     return RoomState.fromJson(_unwrap(response));

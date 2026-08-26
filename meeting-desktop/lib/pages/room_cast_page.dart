@@ -32,6 +32,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
   Timer? _refreshTimer;
   int _likeFlash = 0;
   double? _seekPreview;
+  final List<Map<String, dynamic>> _chatMessages = [];
+  final TextEditingController _chatController = TextEditingController();
+  final ScrollController _chatScroll = ScrollController();
 
   @override
   void initState() {
@@ -47,6 +50,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     if (room == null) return;
     _ws.connect(onDashboardEvent: (_) {});
     _ws.subscribeRoom(room.roomCode, _onRoomEvent);
+    _loadChatHistory();
     try {
       final session = await CastManager.instance.ensureSession(widget.roomId);
       session.addListener(_onSessionChanged);
@@ -77,8 +81,15 @@ class _RoomCastPageState extends State<RoomCastPage> {
         _refreshRoom();
         break;
       case 'ROOM_RUNNING':
-        _showToast('全部客户已就位, 该房间已运行');
+        _showToast('首次推流开始, 会议已开始计时');
         _refreshRoom();
+        break;
+      case 'CHAT_MESSAGE':
+        setState(() {
+          _chatMessages.add(data);
+          if (_chatMessages.length > 100) _chatMessages.removeAt(0);
+        });
+        _scrollChatToEnd();
         break;
       case 'MEMBER_JOINED':
       case 'MEMBER_LEFT':
@@ -324,6 +335,92 @@ class _RoomCastPageState extends State<RoomCastPage> {
     );
   }
 
+  // ---------- 文字聊天 ----------
+
+  Future<void> _loadChatHistory() async {
+    try {
+      final history = await ApiClient.instance.chatHistory(widget.roomId);
+      if (!mounted) return;
+      setState(() {
+        _chatMessages
+          ..clear()
+          ..addAll(history.whereType<Map<String, dynamic>>());
+      });
+      _scrollChatToEnd();
+    } catch (_) {}
+  }
+
+  void _scrollChatToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScroll.hasClients) {
+        _chatScroll.jumpTo(_chatScroll.position.maxScrollExtent);
+      }
+    });
+  }
+
+  Future<void> _sendChat() async {
+    final content = _chatController.text.trim();
+    if (content.isEmpty) return;
+    _chatController.clear();
+    try {
+      await ApiClient.instance.sendChat(widget.roomId, content);
+    } on ApiException catch (error) {
+      _showToast('发送失败: ${error.message}');
+    } catch (error) {
+      _showToast('发送失败: $error');
+    }
+  }
+
+  Future<void> _showLikeRecords() async {
+    List<dynamic> rows;
+    try {
+      rows = await ApiClient.instance.listLikes(widget.roomId);
+    } catch (error) {
+      _showToast('获取点赞记录失败: $error');
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('点赞记录 (${rows.length})'),
+        content: SizedBox(
+          width: 420,
+          height: 380,
+          child: rows.isEmpty
+              ? const Center(
+                  child: Text('暂无点赞记录',
+                      style: TextStyle(color: Colors.white38)))
+              : ListView(
+                  children: [
+                    for (final row in rows.whereType<Map<String, dynamic>>())
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.favorite,
+                            color: Colors.pinkAccent, size: 18),
+                        title: Text('${row['nickname'] ?? ''}'),
+                        subtitle: Text('${row['memberIdentity'] ?? ''}',
+                            style: const TextStyle(fontSize: 10)),
+                        trailing: Text(
+                            '${row['likedAt'] ?? ''}'
+                                .replaceFirst('T', ' ')
+                                .split('.')
+                                .first,
+                            style: const TextStyle(
+                                fontSize: 11, color: Colors.white54)),
+                      ),
+                  ],
+                ),
+        ),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+
   Future<void> _closeRoom() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -374,6 +471,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
     _refreshTimer?.cancel();
     _session?.removeListener(_onSessionChanged);
     _ws.disconnect();
+    _chatController.dispose();
+    _chatScroll.dispose();
     super.dispose();
   }
 
@@ -656,10 +755,15 @@ class _RoomCastPageState extends State<RoomCastPage> {
                             ? Colors.pinkAccent
                             : Colors.pink.shade200),
                     title: Text('点赞 ${room.likeCount}'),
-                    subtitle: const Text('手机端点赞实时同步并入库记录',
+                    subtitle: const Text('点击查看点赞记录列表',
                         style: TextStyle(fontSize: 11)),
+                    trailing:
+                        const Icon(Icons.chevron_right, color: Colors.white38),
+                    onTap: _showLikeRecords,
                   ),
                 ),
+                const SizedBox(height: 12),
+                _buildChatCard(),
                 const SizedBox(height: 12),
                 Card(
                   color: Colors.red.withValues(alpha: 0.08),
@@ -677,6 +781,88 @@ class _RoomCastPageState extends State<RoomCastPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildChatCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.chat_bubble_outline, size: 18),
+                SizedBox(width: 6),
+                Text('文字聊天',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 180,
+              child: _chatMessages.isEmpty
+                  ? const Center(
+                      child: Text('暂无消息',
+                          style: TextStyle(color: Colors.white38)))
+                  : ListView(
+                      controller: _chatScroll,
+                      children: [
+                        for (final msg in _chatMessages)
+                          Padding(
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 3),
+                            child: RichText(
+                              text: TextSpan(
+                                style: const TextStyle(fontSize: 12),
+                                children: [
+                                  TextSpan(
+                                    text:
+                                        '${msg['nickname'] ?? ''}${msg['fromAdmin'] == true ? ' (主持)' : ''}: ',
+                                    style: TextStyle(
+                                        color: msg['fromAdmin'] == true
+                                            ? Colors.orangeAccent
+                                            : Colors.lightBlueAccent,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                  TextSpan(
+                                      text: '${msg['content'] ?? ''}',
+                                      style: const TextStyle(
+                                          color: Colors.white70)),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _chatController,
+                    maxLength: 500,
+                    decoration: const InputDecoration(
+                      hintText: '发送消息到房间...',
+                      counterText: '',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => _sendChat(),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                IconButton.filledTonal(
+                  onPressed: _sendChat,
+                  icon: const Icon(Icons.send, size: 18),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

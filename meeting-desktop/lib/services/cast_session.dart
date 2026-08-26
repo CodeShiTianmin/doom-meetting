@@ -52,9 +52,13 @@ class CastSession extends ChangeNotifier {
         adaptiveStream: false,
         dynacast: true,
         defaultVideoPublishOptions: lk.VideoPublishOptions(
-          // 1080p/30fps, 2-4Mbps 自适应, simulcast 多档分辨率
+          // 高清: 1080p/30fps, 最高 8Mbps, simulcast 多档分辨率自适应
           videoEncoding: lk.VideoEncoding(
-            maxBitrate: 4 * 1000 * 1000,
+            maxBitrate: 8 * 1000 * 1000,
+            maxFramerate: 30,
+          ),
+          screenShareEncoding: lk.VideoEncoding(
+            maxBitrate: 8 * 1000 * 1000,
             maxFramerate: 30,
           ),
           simulcast: true,
@@ -92,9 +96,10 @@ class CastSession extends ChangeNotifier {
       lk.CameraCaptureOptions(
         deviceId: deviceId,
         params: const lk.VideoParameters(
-          dimensions: lk.VideoDimensionsPresets.h720_169,
+          // 高清摄像头: 1080p/30fps
+          dimensions: lk.VideoDimensionsPresets.h1080_169,
           encoding: lk.VideoEncoding(
-            maxBitrate: 2 * 1000 * 1000,
+            maxBitrate: 4 * 1000 * 1000,
             maxFramerate: 30,
           ),
         ),
@@ -130,6 +135,7 @@ class CastSession extends ChangeNotifier {
           sourceId: sourceId,
           captureScreenAudio: true,
           maxFrameRate: 30,
+          params: lk.VideoParametersPresets.screenShareH1080FPS30,
         ),
       );
     } catch (_) {
@@ -138,6 +144,7 @@ class CastSession extends ChangeNotifier {
           sourceId: sourceId,
           captureScreenAudio: false,
           maxFrameRate: 30,
+          params: lk.VideoParametersPresets.screenShareH1080FPS30,
         ),
       );
     }

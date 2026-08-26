@@ -1,7 +1,10 @@
 package com.doommeeting.server.controller;
 
 import com.doommeeting.server.common.ApiResponse;
+import com.doommeeting.server.dto.ChatDtos.ChatMessageResponse;
+import com.doommeeting.server.dto.ChatDtos.ChatSendRequest;
 import com.doommeeting.server.dto.MobileDtos.*;
+import com.doommeeting.server.service.ChatService;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.MemberService;
 import com.doommeeting.server.service.RoomService;
@@ -9,6 +12,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,6 +26,7 @@ public class MobileRoomController {
     private final MemberService memberService;
     private final LikeService likeService;
     private final RoomService roomService;
+    private final ChatService chatService;
 
     /** 扫码入会: 校验一次性凭证 -> 签发 LiveKit 入会 JWT */
     @PostMapping("/join")
@@ -51,12 +56,33 @@ public class MobileRoomController {
         return ApiResponse.ok(Map.of("likeCount", likeCount));
     }
 
+    /** 当前成员是否已点赞(重新入会时恢复按钮状态) */
+    @GetMapping("/{roomCode}/liked")
+    public ApiResponse<Map<String, Object>> liked(@PathVariable String roomCode,
+                                                  @RequestParam String identity) {
+        return ApiResponse.ok(Map.of("liked", likeService.hasLiked(roomCode, identity)));
+    }
+
     /** 录屏检测上报(允许截屏, 禁止录制) */
     @PostMapping("/{roomCode}/report-recording")
     public ApiResponse<Void> reportRecording(@PathVariable String roomCode,
                                              @Valid @RequestBody RecordingReportRequest request) {
         memberService.reportRecording(roomCode, request);
         return ApiResponse.ok();
+    }
+
+    /** 发送文字聊天消息 */
+    @PostMapping("/{roomCode}/chat")
+    public ApiResponse<ChatMessageResponse> sendChat(@PathVariable String roomCode,
+                                                     @Valid @RequestBody ChatSendRequest request) {
+        return ApiResponse.ok(chatService.sendFromMember(
+                roomCode, request.identity(), request.memberToken(), request.content()));
+    }
+
+    /** 房间聊天记录(最多50条, 时间正序) */
+    @GetMapping("/{roomCode}/chat")
+    public ApiResponse<List<ChatMessageResponse>> chatHistory(@PathVariable String roomCode) {
+        return ApiResponse.ok(chatService.historyByRoomCode(roomCode));
     }
 
     /** 房间实时状态(会议时间/剩余时长/推流状态/功能开关) */

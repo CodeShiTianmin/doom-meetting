@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -91,6 +92,38 @@ class _JoinPageState extends State<JoinPage> {
     setState(() => _scanning = true);
   }
 
+  /// 从图库选择二维码图片识别
+  Future<void> _pickQrFromGallery() async {
+    XFile? file;
+    try {
+      file = await ImagePicker().pickImage(source: ImageSource.gallery);
+    } catch (_) {
+      _showError('无法打开图库, 请检查相册权限');
+      return;
+    }
+    if (file == null) return; // 用户取消选择
+    final controller = MobileScannerController();
+    try {
+      final capture = await controller.analyzeImage(file.path);
+      final barcodes = capture?.barcodes ?? const <Barcode>[];
+      for (final barcode in barcodes) {
+        final raw = barcode.rawValue;
+        if (raw != null && _applyInviteLink(raw)) {
+          if (mounted) setState(() => _scanning = false);
+          _showError('已识别邀请二维码, 请填写昵称后进入房间');
+          return;
+        }
+      }
+      _showError(barcodes.isEmpty
+          ? '未在图片中识别到二维码'
+          : '二维码不是有效的会议邀请');
+    } catch (_) {
+      _showError('图片识别失败, 请换一张更清晰的二维码图片');
+    } finally {
+      await controller.dispose();
+    }
+  }
+
   Future<void> _join() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _joining = true);
@@ -151,6 +184,11 @@ class _JoinPageState extends State<JoinPage> {
               }
             }
           },
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _pickQrFromGallery,
+          icon: const Icon(Icons.photo_library_outlined),
+          label: const Text('从图库选图'),
         ),
       );
     }
@@ -214,6 +252,17 @@ class _JoinPageState extends State<JoinPage> {
                       icon: const Icon(Icons.qr_code_scanner),
                       label: const Text('扫描二维码'),
                       onPressed: _joining ? null : _openScanner,
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: const Text('从图库选择二维码图片'),
+                      onPressed: _joining ? null : _pickQrFromGallery,
                     ),
                     const SizedBox(height: 20),
                     const Row(children: [

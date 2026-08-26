@@ -1,11 +1,14 @@
 package com.doommeeting.server.controller;
 
 import com.doommeeting.server.common.ApiResponse;
+import com.doommeeting.server.dto.ChatDtos.AdminChatSendRequest;
+import com.doommeeting.server.dto.ChatDtos.ChatMessageResponse;
 import com.doommeeting.server.dto.LikeDtos.LikeRecordResponse;
 import com.doommeeting.server.dto.RoomDtos.*;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.LiveKitTokenService;
 import com.doommeeting.server.service.MemberManagementService;
+import com.doommeeting.server.service.ChatService;
 import com.doommeeting.server.service.RoomService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +30,7 @@ public class AdminRoomController {
     private final LikeService likeService;
     private final LiveKitTokenService liveKitTokenService;
     private final MemberManagementService memberManagementService;
+    private final ChatService chatService;
 
     /** 踢出成员(同时从 LiveKit 服务端断开其媒体连接) */
     @PostMapping("/{id}/members/{identity}/kick")
@@ -120,6 +124,27 @@ public class AdminRoomController {
     public ApiResponse<Void> closeRoom(@PathVariable Long id) {
         roomService.closeRoom(id);
         return ApiResponse.ok();
+    }
+
+    /** 删除房间(未关闭先执行关闭流程, 再级联删除全部关联数据) */
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> deleteRoom(@PathVariable Long id) {
+        roomService.deleteRoom(id);
+        return ApiResponse.ok();
+    }
+
+    /** PC 管理端发送文字聊天消息 */
+    @PostMapping("/{id}/chat")
+    public ApiResponse<ChatMessageResponse> sendChat(@PathVariable Long id,
+                                                     @Valid @RequestBody AdminChatSendRequest request,
+                                                     Authentication authentication) {
+        return ApiResponse.ok(chatService.sendFromAdmin(id, authentication.getName(), request.content()));
+    }
+
+    /** 房间聊天记录(最多50条, 时间正序) */
+    @GetMapping("/{id}/chat")
+    public ApiResponse<List<ChatMessageResponse>> chatHistory(@PathVariable Long id) {
+        return ApiResponse.ok(chatService.historyByRoomId(id));
     }
 
     @PostMapping("/{id}/invite/regenerate")

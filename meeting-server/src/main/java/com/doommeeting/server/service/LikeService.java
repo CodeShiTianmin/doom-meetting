@@ -10,6 +10,7 @@ import com.doommeeting.server.enums.RoomStatus;
 import com.doommeeting.server.repository.RoomLikeRepository;
 import com.doommeeting.server.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,11 +39,21 @@ public class LikeService {
         }
         RoomMember member = memberService.requireOnlineMember(room, identity, memberToken);
 
+        // 每人限点赞一次
+        if (likeRepository.countByRoomAndMemberIdentity(room, member.getIdentity()) > 0) {
+            throw new BusinessException(409, "您已点过赞, 每人只能点赞一次");
+        }
+
         RoomLike like = new RoomLike();
         like.setRoom(room);
         like.setMemberIdentity(member.getIdentity());
         like.setNickname(member.getNickname());
-        likeRepository.save(like);
+        try {
+            likeRepository.saveAndFlush(like);
+        } catch (DataIntegrityViolationException e) {
+            // 并发重复点赞被数据库唯一约束拦截
+            throw new BusinessException(409, "您已点过赞, 每人只能点赞一次");
+        }
 
         room.setLikeCount(room.getLikeCount() + 1);
         roomRepository.save(room);
@@ -53,6 +64,12 @@ public class LikeService {
                 "nickname", member.getNickname(),
                 "likeCount", room.getLikeCount()));
         return room.getLikeCount();
+    }
+
+    @Transactional(readOnly = true)
+    public boolean hasLiked(String roomCode, String identity) {
+        Room room = roomService.getRoomByCode(roomCode);
+        return likeRepository.countByRoomAndMemberIdentity(room, identity) > 0;
     }
 
     @Transactional(readOnly = true)

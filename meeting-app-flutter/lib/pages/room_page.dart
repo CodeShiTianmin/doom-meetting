@@ -57,6 +57,10 @@ class _RoomPageState extends State<RoomPage> {
   bool _cameraDisabledByHost = false;
   int _heartId = 0;
   final List<HeartItem> _hearts = [];
+  bool _liked = false;
+  bool _focusMode = false;
+  final List<Map<String, dynamic>> _chatMessages = [];
+  final TextEditingController _chatController = TextEditingController();
 
   Timer? _heartbeatTimer;
   Timer? _stateTimer;
@@ -76,6 +80,8 @@ class _RoomPageState extends State<RoomPage> {
     _connectLiveKit();
     _ws.connect(session.roomCode, session.identity, session.memberToken,
         _onRoomEvent);
+    _loadChatHistory();
+    _restoreLikedState();
     _heartbeatTimer = Timer.periodic(AppConfig.heartbeatInterval, (_) {
       ApiClient.instance
           .heartbeat(session.roomCode, session.identity, session.memberToken)
@@ -341,7 +347,13 @@ class _RoomPageState extends State<RoomPage> {
         break;
       case 'ROOM_RUNNING':
         _refreshState();
-        _showToast('全部客户已就位, 会议开始');
+        _showToast('公司已开始推流, 会议开始计时');
+        break;
+      case 'CHAT_MESSAGE':
+        setState(() {
+          _chatMessages.add(data);
+          if (_chatMessages.length > 30) _chatMessages.removeAt(0);
+        });
         break;
       case 'CAST_STARTED':
         _refreshState();
@@ -447,12 +459,105 @@ class _RoomPageState extends State<RoomPage> {
     } catch (_) {}
   }
 
+  Future<void> _restoreLikedState() async {
+    try {
+      final liked = await ApiClient.instance
+          .hasLiked(session.roomCode, session.identity);
+      if (mounted && liked) setState(() => _liked = true);
+    } catch (_) {}
+  }
+
+  /// 点赞(每人限一次)
   Future<void> _like() async {
+    if (_liked) {
+      _showToast('您已点过赞, 每人只能点赞一次');
+      return;
+    }
     setState(_pushHeart);
     try {
       await ApiClient.instance
           .sendLike(session.roomCode, session.identity, session.memberToken);
+      if (mounted) setState(() => _liked = true);
+    } on ApiException catch (error) {
+      if (error.code == 409 && mounted) {
+        setState(() => _liked = true);
+      }
+      _showToast(error.message);
     } catch (_) {}
+  }
+
+  // ---------------- 文字聊天 ----------------
+
+  Future<void> _loadChatHistory() async {
+    try {
+      final history =
+          await ApiClient.instance.chatHistory(session.roomCode);
+      if (!mounted) return;
+      setState(() {
+        _chatMessages
+          ..clear()
+          ..addAll(history.whereType<Map<String, dynamic>>());
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _sendChat(String content) async {
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) return;
+    try {
+      await ApiClient.instance.sendChat(
+          session.roomCode, session.identity, session.memberToken, trimmed);
+    } on ApiException catch (error) {
+      _showToast('发送失败: ${error.message}');
+    } catch (_) {
+      _showToast('发送失败, 请重试');
+    }
+  }
+
+  Future<void> _openChatInput() async {
+    _chatController.clear();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0B0F2B),
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.only(
+            left: 12,
+            right: 12,
+            top: 12,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _chatController,
+                autofocus: true,
+                maxLength: 500,
+                decoration: const InputDecoration(
+                  hintText: '发送消息...',
+                  counterText: '',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (value) {
+                  Navigator.of(sheetContext).pop();
+                  _sendChat(value);
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              onPressed: () {
+                final text = _chatController.text;
+                Navigator.of(sheetContext).pop();
+                _sendChat(text);
+              },
+              icon: const Icon(Icons.send),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _pushHeart() {
@@ -500,6 +605,7 @@ class _RoomPageState extends State<RoomPage> {
     } catch (_) {}
     _lkListener?.dispose();
     _lkRoom?.dispose();
+    _chatController.dispose();
     WakelockPlus.disable();
     super.dispose();
   }
@@ -580,9 +686,11 @@ class _RoomPageState extends State<RoomPage> {
                 ),
               ),
             ),
-          _buildTopBar(state),
+          if (!_focusMode) _buildTopBar(state),
+          _buildChatOverlay(),
           FloatingHearts(hearts: _hearts),
-          _buildBottomControls(state),
+          if (!_focusMode) _buildBottomControls(state),
+          _buildFocusToggle(),
           Positioned.fill(
               child: Watermark(
                   identityText:
@@ -612,8 +720,94 @@ class _RoomPageState extends State<RoomPage> {
           if (!state.running)
             const Padding(
               padding: EdgeInsets.only(top: 4),
-              child: Text('全部客户就位后会议开始计时',
+              child: Text('公司首次开始推流后会议开始计时',
                   style: TextStyle(color: Colors.white38, fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 左侧垂直居中: 专注模式开关(隐藏上下菜单, 专注看聊天与投屏)
+  Widget _buildFocusToggle() {
+    return Positioned(
+      left: 8,
+      top: 0,
+      bottom: 0,
+      child: Center(
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 200),
+          opacity: _focusMode ? 0.55 : 0.9,
+          child: IconButton.filledTonal(
+            style: IconButton.styleFrom(
+                backgroundColor: Colors.black.withValues(alpha: 0.45)),
+            onPressed: () => setState(() => _focusMode = !_focusMode),
+            icon: Icon(
+              _focusMode ? Icons.menu : Icons.fullscreen,
+              color: Colors.white70,
+            ),
+            tooltip: _focusMode ? '显示菜单' : '专注模式',
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 左下角聊天消息: 最多显示6条, 新消息从底部进入往上排
+  Widget _buildChatOverlay() {
+    final visible = _chatMessages.length > 6
+        ? _chatMessages.sublist(_chatMessages.length - 6)
+        : _chatMessages;
+    return Positioned(
+      left: 56,
+      right: 90,
+      bottom: _focusMode ? 24 : 148,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final msg in visible)
+            TweenAnimationBuilder<double>(
+              key: ValueKey(msg['id'] ?? msg.hashCode),
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 300),
+              builder: (context, value, child) => Opacity(
+                opacity: value,
+                child: Transform.translate(
+                  offset: Offset(0, 14 * (1 - value)),
+                  child: child,
+                ),
+              ),
+              child: Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text:
+                            '${msg['nickname'] ?? ''}${msg['fromAdmin'] == true ? ' (主持)' : ''}: ',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: msg['fromAdmin'] == true
+                                ? Colors.orangeAccent
+                                : Colors.lightBlueAccent),
+                      ),
+                      TextSpan(
+                        text: '${msg['content'] ?? ''}',
+                        style: const TextStyle(
+                            fontSize: 12, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
         ],
       ),
@@ -797,11 +991,17 @@ class _RoomPageState extends State<RoomPage> {
                   onPressed: _toggleSpeaker,
                   icon: Icon(_speakerOn ? Icons.volume_up : Icons.hearing),
                 ),
+                IconButton.filledTonal(
+                  onPressed: _openChatInput,
+                  icon: const Icon(Icons.chat_bubble_outline),
+                ),
                 IconButton.filled(
                   style: IconButton.styleFrom(
-                      backgroundColor: Colors.pink.shade400),
+                      backgroundColor: _liked
+                          ? Colors.grey.shade700
+                          : Colors.pink.shade400),
                   onPressed: _like,
-                  icon: const Icon(Icons.favorite),
+                  icon: Icon(_liked ? Icons.favorite : Icons.favorite_border),
                 ),
                 IconButton.filled(
                   style:
