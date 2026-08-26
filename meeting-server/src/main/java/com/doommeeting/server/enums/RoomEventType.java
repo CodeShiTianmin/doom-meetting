@@ -23,5 +23,9 @@ public enum RoomEventType {
     MEMBER_CAMERA_CHANGED,
     JOIN_REQUEST,
     JOIN_APPROVED,
-    JOIN_REJECTED
+    JOIN_REJECTED,
+    /** 历史遗留事件类型(兼容旧版本数据库中已存在的记录) */
+    CONTENT_CAST,
+    CHAT_MESSAGE,
+    PLAYBACK_CONTROL
 }
