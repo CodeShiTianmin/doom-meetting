@@ -104,7 +104,8 @@ public class LiveKitAdminService {
                 .claim("video", grants)
                 .issuedAt(new Date(now))
                 .expiration(new Date(now + 60_000L))
-                .signWith(key)
+                // LiveKit 仅接受 HS256, 显式指定避免 jjwt 按密钥长度自动升级为 HS384/HS512
+                .signWith(key, Jwts.SIG.HS256)
                 .compact();
     }
 }
