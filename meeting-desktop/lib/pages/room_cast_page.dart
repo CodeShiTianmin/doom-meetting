@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../models/room.dart';
 import '../services/api_client.dart';
@@ -14,8 +15,8 @@ import '../widgets/chat_overlay.dart';
 /// 单房间推流控制:
 /// - 每个房间可独立选择推流源: 屏幕/窗口共享、本地视频推流、摄像头推流(均走 LiveKit 实时流)
 /// - 推流前检查已有推流, 提示先停止当前推流
-/// - 本地视频在独立播放窗口后台播放推流, 退出本页/切到其他房间不中断;
-///   本页提供播放/暂停/进度控制(转发给播放窗口)
+/// - 本地视频在本页预览区内直接解码播放(无独立窗口), 同时捕获主窗口推流;
+///   本页提供播放/暂停/进度控制
 /// - 房间设置开关(视频通话/摄像头)、会议时长、成员就位、点赞实时展示、关闭房间
 class RoomCastPage extends StatefulWidget {
   final int roomId;
@@ -850,7 +851,16 @@ class _RoomCastPageState extends State<RoomCastPage> {
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          Positioned.fill(child: _buildPreviewPlaceholder(session, scheme)),
+          if (session?.mode == CastMode.video &&
+              session?.videoController != null)
+            Positioned.fill(
+              child: Video(
+                controller: session!.videoController!,
+                controls: null,
+              ),
+            )
+          else
+            Positioned.fill(child: _buildPreviewPlaceholder(session, scheme)),
           // 左下角聊天气泡(最多 6 条, 新消息从下往上滑入)
           Positioned(
             left: 12,
@@ -904,7 +914,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
   Widget _buildPreviewPlaceholder(CastSession? session, ColorScheme scheme) {
     final (icon, text) = switch (session?.mode) {
       CastMode.screen => (Icons.screen_share, '屏幕/窗口推流中 — 后台持续推流, 切换房间/页面不中断'),
-      CastMode.video => (Icons.movie_outlined, '本地视频推流中 — 独立播放窗口后台播放, 切换房间不中断'),
+      CastMode.video => (Icons.movie_outlined, '本地视频推流中'),
       CastMode.camera => (Icons.videocam, '摄像头推流中 — 后台持续推流, 切换房间/页面不中断'),
       _ => (Icons.cast, '未推流 — 选择屏幕共享、本地视频或摄像头开始推流'),
     };
@@ -950,7 +960,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     );
   }
 
-  /// 本地视频推流控制区: 播放/暂停/进度指令转发给独立播放窗口
+  /// 本地视频推流控制区: 播放/暂停/进度控制
   Widget _buildLocalPlayerControls(CastSession session, ColorScheme scheme) {
     final playing = session.playerPlaying;
     final duration = session.playerDurationMs / 1000.0;
