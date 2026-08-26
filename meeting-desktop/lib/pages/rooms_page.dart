@@ -138,7 +138,7 @@ class _RoomsPageState extends State<RoomsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('房间总览 — 多房并发投放'),
+        title: const Text('房间总览 — 多房并发推流'),
         actions: [
           IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh)),
           const SizedBox(width: 8),
@@ -291,19 +291,19 @@ class _RoomCard extends StatelessWidget {
               Row(
                 children: [
                   Icon(
-                      room.contentName != null
+                      room.casting
                           ? Icons.cast_connected
                           : Icons.cast,
                       size: 13,
-                      color: room.contentName != null
+                      color: room.casting
                           ? const Color(0xFF5B8DEF)
                           : Colors.white38),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      room.contentName != null
-                          ? '投放中: ${room.contentName}'
-                          : '暂无投放内容',
+                      room.casting
+                          ? '推流中: ${room.castDescription}'
+                          : '暂无推流',
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                           fontSize: 12, color: Colors.white70),
@@ -323,7 +323,7 @@ class _RoomCard extends StatelessWidget {
                   TextButton.icon(
                     onPressed: onOpen,
                     icon: const Icon(Icons.cast, size: 16),
-                    label: const Text('投放控制'),
+                    label: const Text('推流控制'),
                   ),
                 ],
               ),

@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Box, Button, Card, CardContent, Dialog, DialogActions, DialogContent,
-  DialogTitle, FormControlLabel, MenuItem, Switch, Table, TableBody, TableCell,
+  DialogTitle, FormControlLabel, Switch, Table, TableBody, TableCell,
   TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup, Typography,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
-import { createRoom, listContents, listRooms } from '../api'
+import { createRoom, listRooms } from '../api'
 import { subscribeAdminDashboard } from '../api/ws'
 import RoomStatusChip from '../components/RoomStatusChip.jsx'
 import RedAlertLight from '../components/RedAlertLight.jsx'
@@ -15,7 +15,6 @@ export default function RoomsPage() {
   const navigate = useNavigate()
   const [rooms, setRooms] = useState([])
   const [statusFilter, setStatusFilter] = useState('')
-  const [contents, setContents] = useState([])
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState({
     name: '',
@@ -23,7 +22,6 @@ export default function RoomsPage() {
     maxMembers: 2,
     videoCallEnabled: true,
     cameraEnabled: true,
-    contentId: '',
     approvalRequired: false,
     scheduledStartAt: '',
   })
@@ -39,14 +37,9 @@ export default function RoomsPage() {
     return unsubscribe
   }, [refresh])
 
-  const openDialog = async () => {
+  const openDialog = () => {
     setError('')
     setDialogOpen(true)
-    try {
-      setContents(await listContents())
-    } catch {
-      setContents([])
-    }
   }
 
   const submit = async () => {
@@ -58,12 +51,11 @@ export default function RoomsPage() {
         maxMembers: Number(form.maxMembers),
         videoCallEnabled: form.videoCallEnabled,
         cameraEnabled: form.cameraEnabled,
-        contentId: form.contentId || null,
         approvalRequired: form.approvalRequired,
         scheduledStartAt: form.scheduledStartAt || null,
       })
       setDialogOpen(false)
-      setForm({ name: '', durationMinutes: 60, maxMembers: 2, videoCallEnabled: true, cameraEnabled: true, contentId: '', approvalRequired: false, scheduledStartAt: '' })
+      setForm({ name: '', durationMinutes: 60, maxMembers: 2, videoCallEnabled: true, cameraEnabled: true, approvalRequired: false, scheduledStartAt: '' })
       navigate(`/rooms/${created.id}`)
     } catch (err) {
       setError(err.message)
@@ -101,7 +93,7 @@ export default function RoomsPage() {
                 <TableCell>房号</TableCell>
                 <TableCell>状态</TableCell>
                 <TableCell>在线人数</TableCell>
-                <TableCell>当前内容</TableCell>
+                <TableCell>当前推流</TableCell>
                 <TableCell>会议时长</TableCell>
                 <TableCell>点赞</TableCell>
                 <TableCell>创建时间</TableCell>
@@ -120,7 +112,11 @@ export default function RoomsPage() {
                   <TableCell>{room.roomCode}</TableCell>
                   <TableCell><RoomStatusChip status={room.status} /></TableCell>
                   <TableCell>{room.onlineMemberCount}/{room.maxMembers ?? 2}</TableCell>
-                  <TableCell>{room.contentName || '-'}</TableCell>
+                  <TableCell>
+                    {room.castType
+                      ? `${{ SCREEN: '屏幕共享', VIDEO: '视频推流', CAMERA: '摄像头推流' }[room.castType] || room.castType}${room.castLabel ? `(${room.castLabel})` : ''}`
+                      : '-'}
+                  </TableCell>
                   <TableCell>{room.durationMinutes} 分钟</TableCell>
                   <TableCell>{room.likeCount}</TableCell>
                   <TableCell>{room.createdAt?.replace('T', ' ')}</TableCell>
@@ -163,17 +159,6 @@ export default function RoomsPage() {
             value={form.maxMembers}
             onChange={(e) => setForm({ ...form, maxMembers: e.target.value })}
           />
-          <TextField
-            select
-            label="初始投放内容(可选)"
-            value={form.contentId}
-            onChange={(e) => setForm({ ...form, contentId: e.target.value })}
-          >
-            <MenuItem value="">暂不投放</MenuItem>
-            {contents.map((content) => (
-              <MenuItem key={content.id} value={content.id}>{content.name}</MenuItem>
-            ))}
-          </TextField>
           <FormControlLabel
             control={
               <Switch

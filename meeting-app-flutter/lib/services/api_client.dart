@@ -54,25 +54,6 @@ class ApiClient {
         data: {'identity': identity, 'memberToken': memberToken});
   }
 
-  /// 播放控制: PLAY / PAUSE / SEEK 为共享指令(序号由服务端权威分配)
-  Future<Map<String, dynamic>> controlPlayback({
-    required String roomCode,
-    required String identity,
-    required String memberToken,
-    required String action,
-    double? positionSeconds,
-    double? value,
-  }) async {
-    final response = await _dio.post('/api/mobile/rooms/$roomCode/playback', data: {
-      'identity': identity,
-      'memberToken': memberToken,
-      'action': action,
-      'positionSeconds': positionSeconds,
-      'value': value,
-    });
-    return _unwrap(response);
-  }
-
   Future<int> sendLike(
       String roomCode, String identity, String memberToken) async {
     final response = await _dio.post('/api/mobile/rooms/$roomCode/like',
@@ -88,74 +69,6 @@ class ApiClient {
       'detail': detail
     });
   }
-
-  /// 会中文字聊天/表情: 发送
-  Future<void> sendChat({
-    required String roomCode,
-    required String identity,
-    required String memberToken,
-    required String content,
-  }) async {
-    final response = await _dio.post('/api/mobile/rooms/$roomCode/chat', data: {
-      'identity': identity,
-      'memberToken': memberToken,
-      'content': content,
-    });
-    _unwrap(response);
-  }
-
-  /// 聊天历史(最近 100 条)
-  Future<List<Map<String, dynamic>>> chatHistory({
-    required String roomCode,
-    required String identity,
-    required String memberToken,
-  }) async {
-    final response =
-        await _dio.get('/api/mobile/rooms/$roomCode/chat', queryParameters: {
-      'identity': identity,
-      'memberToken': memberToken,
-    });
-    final body = response.data as Map<String, dynamic>;
-    if (body['code'] != 0) {
-      throw ApiException(
-          (body['message'] as String?) ?? '请求失败', body['code'] as int? ?? -1);
-    }
-    return ((body['data'] as List<dynamic>?) ?? const [])
-        .whereType<Map<String, dynamic>>()
-        .toList();
-  }
-
-  /// 手机端上传真实文件并直接投放到本房间(服务器保存, 会议结束后自动删除);
-  /// 已有投放时需 replace=true 确认替换
-  Future<Map<String, dynamic>> uploadAndCastFile({
-    required String roomCode,
-    required String identity,
-    required String memberToken,
-    String? nickname,
-    required String filePath,
-    bool replace = false,
-  }) async {
-    final formData = FormData.fromMap({
-      'file': await MultipartFile.fromFile(filePath),
-      'identity': identity,
-      'memberToken': memberToken,
-      if (nickname != null) 'nickname': nickname,
-      'replace': replace,
-    });
-    final response = await _dio.post(
-      '/api/mobile/rooms/$roomCode/contents/upload',
-      data: formData,
-      options: Options(
-        sendTimeout: const Duration(minutes: 30),
-        receiveTimeout: const Duration(minutes: 30),
-      ),
-    );
-    return _unwrap(response);
-  }
-
-  /// 服务器文件下载/打开地址(fileUrl 为服务端下发的带签名 token 的相对地址)
-  String fileDownloadUrl(String fileUrl) =>
-      fileUrl.startsWith('http') ? fileUrl : '${AppConfig.apiBaseUrl}$fileUrl';
 
   /// App 版本检查(APK 私发分发)
   Future<Map<String, dynamic>> checkAppVersion(int currentVersionCode) async {

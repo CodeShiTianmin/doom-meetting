@@ -1,8 +1,6 @@
 import 'dart:async';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -15,14 +13,13 @@ import '../models/room_state.dart';
 import '../services/api_client.dart';
 import '../services/recording_guard.dart';
 import '../services/ws_service.dart';
-import '../widgets/content_viewer.dart';
 import '../widgets/floating_hearts.dart';
 import '../widgets/watermark.dart';
 import 'join_page.dart';
 
 /// 会议房间页:
-/// - PC 隐藏推流为主画面, 两客户互看小窗(受 PC 端开关控制)
-/// - 开始播放/暂停/拖拉进度条(两端共享, 带序号防冲突), 明暗/音量本地调节
+/// - PC 隐藏推流(屏幕/本地视频/摄像头)为主画面, 两客户互看小窗(受 PC 端开关控制)
+/// - 明暗/音量本地调节
 /// - 会议已进行时长 + 剩余倒计时, 点赞飘心, 心跳保活
 /// - 允许截屏, 禁止录制: 检测 -> 遮挡 -> 上报, 全屏水印
 class RoomPage extends StatefulWidget {
@@ -52,18 +49,14 @@ class _RoomPageState extends State<RoomPage> {
   lk.ConnectionQuality _networkQuality = lk.ConnectionQuality.unknown;
   double _brightness = 0.7;
   double _volume = 0.8;
-  double? _draggingPosition;
   int? _elapsedSeconds;
   int? _remainingSeconds;
   bool _recordingBlocked = false;
   String? _closedReason;
   bool _mutedByHost = false;
   bool _cameraDisabledByHost = false;
-  bool _screenSharing = false;
   int _heartId = 0;
   final List<HeartItem> _hearts = [];
-  final List<Map<String, dynamic>> _chatMessages = [];
-  int _unreadChat = 0;
 
   Timer? _heartbeatTimer;
   Timer? _stateTimer;
@@ -80,7 +73,6 @@ class _RoomPageState extends State<RoomPage> {
     _connectLiveKit();
     _ws.connect(session.roomCode, session.identity, session.memberToken,
         _onRoomEvent);
-    _loadChatHistory();
     _heartbeatTimer = Timer.periodic(AppConfig.heartbeatInterval, (_) {
       ApiClient.instance
           .heartbeat(session.roomCode, session.identity, session.memberToken)
@@ -105,22 +97,6 @@ class _RoomPageState extends State<RoomPage> {
       _volume = current;
     } catch (_) {}
     if (mounted) setState(() {});
-  }
-
-  Future<void> _loadChatHistory() async {
-    try {
-      final history = await ApiClient.instance.chatHistory(
-        roomCode: session.roomCode,
-        identity: session.identity,
-        memberToken: session.memberToken,
-      );
-      if (!mounted) return;
-      setState(() {
-        _chatMessages
-          ..clear()
-          ..addAll(history);
-      });
-    } catch (_) {}
   }
 
   Future<void> _refreshState() async {
@@ -327,21 +303,6 @@ class _RoomPageState extends State<RoomPage> {
     setState(() => _speakerOn = next);
   }
 
-  /// 手机端屏幕共享给对端(LiveKit 双向媒体)
-  Future<void> _toggleScreenShare() async {
-    final participant = _lkRoom?.localParticipant;
-    if (participant == null) return;
-    final next = !_screenSharing;
-    try {
-      await participant.setScreenShareEnabled(next);
-      if (!mounted) return;
-      setState(() => _screenSharing = next);
-      _showToast(next ? '已开始屏幕共享' : '已停止屏幕共享');
-    } catch (error) {
-      _showToast('屏幕共享失败: $error');
-    }
-  }
-
   Future<void> _switchCamera() async {
     final track = _selfVideoTrack;
     if (track == null) return;
@@ -359,23 +320,9 @@ class _RoomPageState extends State<RoomPage> {
     final type = event['type'] as String?;
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
-      case 'PLAYBACK_CONTROL':
-        setState(() {
-          _state = _state?.copyWith(
-            playbackState: data['playbackState'] as String? ??
-                _state?.playbackState,
-            playbackPositionSeconds:
-                (data['positionSeconds'] as num?)?.toDouble(),
-          );
-        });
-        // PC 端下发的明暗/音量指令在手机本地执行
-        if (data['source'] == 'PC') {
-          _applyRemoteAdjustment(data);
-        }
-        break;
       case 'CAST_STOPPED':
         _refreshState();
-        _showToast('公司已停止投放');
+        _showToast('公司已停止推流');
         break;
       case 'SETTINGS_CHANGED':
         _refreshState();
@@ -385,9 +332,9 @@ class _RoomPageState extends State<RoomPage> {
         _refreshState();
         _showToast('全部客户已就位, 会议开始');
         break;
-      case 'CONTENT_CAST':
+      case 'CAST_STARTED':
         _refreshState();
-        _showToast('公司已投放: ${data['contentName'] ?? '新内容'}');
+        _showToast('公司已开始推流: ${data['castLabel'] ?? ''}');
         break;
       case 'COUNTDOWN_REMINDER':
         final minutes = data['remainingMinutes'];
@@ -401,12 +348,6 @@ class _RoomPageState extends State<RoomPage> {
           if (data['identity'] != session.identity) {
             _pushHeart();
           }
-        });
-        break;
-      case 'CHAT_MESSAGE':
-        setState(() {
-          _chatMessages.add(data);
-          if (data['identity'] != session.identity) _unreadChat++;
         });
         break;
       case 'MEMBER_KICKED':
@@ -475,61 +416,13 @@ class _RoomPageState extends State<RoomPage> {
     _lkRoom?.disconnect();
   }
 
-  // ---------------- 播放/本地控制 ----------------
-
-  Future<void> _sendPlayback(String action,
-      {double? positionSeconds, double? value}) async {
-    try {
-      final result = await ApiClient.instance.controlPlayback(
-        roomCode: session.roomCode,
-        identity: session.identity,
-        memberToken: session.memberToken,
-        action: action,
-        positionSeconds: positionSeconds,
-        value: value,
-      );
-      final playbackState = result['playbackState'] as String?;
-      if (playbackState != null && mounted) {
-        setState(() {
-          _state = _state?.copyWith(
-            playbackState: playbackState,
-            playbackPositionSeconds:
-                (result['positionSeconds'] as num?)?.toDouble(),
-          );
-        });
-      }
-    } catch (error) {
-      _showToast(error.toString());
-    }
-  }
-
-  /// PC 端远程调节明暗/音量: 在本机直接执行
-  Future<void> _applyRemoteAdjustment(Map<String, dynamic> data) async {
-    final action = data['action'] as String?;
-    var value = (data['value'] as num?)?.toDouble();
-    if (value == null) return;
-    if (value > 1) value = value / 100;
-    value = value.clamp(0.0, 1.0);
-    if (!mounted) return;
-    if (action == 'BRIGHTNESS') {
-      setState(() => _brightness = value!);
-      try {
-        await ScreenBrightness().setScreenBrightness(value);
-      } catch (_) {}
-    } else if (action == 'VOLUME') {
-      setState(() => _volume = value!);
-      try {
-        VolumeController().setVolume(value);
-      } catch (_) {}
-    }
-  }
+  // ---------------- 本地控制 ----------------
 
   Future<void> _setBrightness(double value) async {
     setState(() => _brightness = value);
     try {
       await ScreenBrightness().setScreenBrightness(value);
     } catch (_) {}
-    _sendPlayback('BRIGHTNESS', value: value * 100);
   }
 
   Future<void> _setVolume(double value) async {
@@ -537,7 +430,6 @@ class _RoomPageState extends State<RoomPage> {
     try {
       VolumeController().setVolume(value);
     } catch (_) {}
-    _sendPlayback('VOLUME', value: value * 100);
   }
 
   Future<void> _like() async {
@@ -546,210 +438,6 @@ class _RoomPageState extends State<RoomPage> {
       await ApiClient.instance
           .sendLike(session.roomCode, session.identity, session.memberToken);
     } catch (_) {}
-  }
-
-  // ---------------- 聊天 ----------------
-
-  static const List<String> _quickEmojis = [
-    '👍', '👏', '😂', '❤️', '🎉', '🙏', '💪', '😎', '🤔', '👌'
-  ];
-
-  Future<void> _sendChatMessage(String content) async {
-    final text = content.trim();
-    if (text.isEmpty) return;
-    try {
-      await ApiClient.instance.sendChat(
-        roomCode: session.roomCode,
-        identity: session.identity,
-        memberToken: session.memberToken,
-        content: text,
-      );
-    } catch (error) {
-      _showToast('发送失败: $error');
-    }
-  }
-
-  void _openChatSheet() {
-    setState(() => _unreadChat = 0);
-    final controller = TextEditingController();
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF0B1030),
-      builder: (sheetContext) {
-        return StatefulBuilder(builder: (context, setSheetState) {
-          return Padding(
-            padding: EdgeInsets.only(
-                bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
-            child: SizedBox(
-              height: 420,
-              child: Column(
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.all(10),
-                    child: Text('会中聊天',
-                        style: TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w700)),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      itemCount: _chatMessages.length,
-                      itemBuilder: (context, index) {
-                        final message = _chatMessages[index];
-                        final mine =
-                            message['identity'] == session.identity;
-                        return Align(
-                          alignment: mine
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 3),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: mine
-                                  ? const Color(0xFF2E4A9E)
-                                  : Colors.white10,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('${message['nickname'] ?? ''}',
-                                    style: const TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.white54)),
-                                Text('${message['content'] ?? ''}',
-                                    style: const TextStyle(fontSize: 14)),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  SizedBox(
-                    height: 40,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      children: _quickEmojis
-                          .map((emoji) => TextButton(
-                                onPressed: () => _sendChatMessage(emoji),
-                                child: Text(emoji,
-                                    style: const TextStyle(fontSize: 20)),
-                              ))
-                          .toList(),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: controller,
-                            maxLength: 500,
-                            decoration: const InputDecoration(
-                              hintText: '输入消息…',
-                              counterText: '',
-                              isDense: true,
-                              border: OutlineInputBorder(),
-                            ),
-                            onSubmitted: (value) {
-                              _sendChatMessage(value);
-                              controller.clear();
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton.filled(
-                          onPressed: () {
-                            _sendChatMessage(controller.text);
-                            controller.clear();
-                          },
-                          icon: const Icon(Icons.send),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        });
-      },
-    );
-  }
-
-  // ---------------- 文件投放 ----------------
-
-  bool _uploading = false;
-
-  /// 手机端选择真实文件上传服务器并投放到本房间(会议结束后自动删除);
-  /// 投放前检查已有投放, 提示先停止当前投放
-  Future<void> _uploadAndCastFile() async {
-    if (_uploading) return;
-    var replace = false;
-    if (_state?.contentId != null || _state?.screenSharing == true) {
-      final currentDesc = _state?.screenSharing == true
-          ? '屏幕共享'
-          : '「${_state?.contentName ?? '内容'}」';
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
-          title: const Text('房间已有投放'),
-          content: Text(
-              '当前正在投放$currentDesc。\n需要先停止当前投放, 才能投放新内容。'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('取消')),
-            FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('停止并投放新文件')),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-      replace = true;
-    }
-    final result = await FilePicker.platform.pickFiles(type: FileType.any);
-    final path = result?.files.single.path;
-    if (path == null || !mounted) return;
-    setState(() => _uploading = true);
-    _showToast('正在上传文件...');
-    try {
-      final content = await ApiClient.instance.uploadAndCastFile(
-        roomCode: session.roomCode,
-        identity: session.identity,
-        memberToken: session.memberToken,
-        filePath: path,
-        replace: replace,
-      );
-      _showToast('已投放文件: ${content['name']}');
-    } on ApiException catch (error) {
-      _showToast(error.code == 409
-          ? '投放冲突: ${error.message}'
-          : '文件上传失败: ${error.message}');
-    } catch (error) {
-      _showToast('文件上传失败: $error');
-    } finally {
-      if (mounted) setState(() => _uploading = false);
-    }
-  }
-
-  /// 打开服务器上存储的当前投放文件(使用服务端下发的带签名 token 的地址)
-  Future<void> _openServerFile() async {
-    final fileUrl = _state?.contentFileUrl;
-    if (fileUrl == null) {
-      _showToast('当前没有投放内容');
-      return;
-    }
-    final url = ApiClient.instance.fileDownloadUrl(fileUrl);
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
   void _pushHeart() {
@@ -827,29 +515,14 @@ class _RoomPageState extends State<RoomPage> {
           body: Center(child: CircularProgressIndicator()));
     }
 
-    final contentDuration =
-        (state.contentDurationSeconds ?? 3600).toDouble();
-    final position = _draggingPosition ??
-        state.playbackPositionSeconds.clamp(0, contentDuration).toDouble();
-
     return Scaffold(
       body: Stack(
         children: [
-          // 主画面: PC 投放流 > 投放文件直接展示 > 等待画面
+          // 主画面: PC 实时推流 > 等待画面
           Positioned.fill(
             child: _castVideoTrack != null
                 ? lk.VideoTrackRenderer(_castVideoTrack!)
-                : state.contentFileUrl != null
-                    ? ContentViewer(
-                        key: ValueKey('content-${state.contentId}'),
-                        url: ApiClient.instance
-                            .fileDownloadUrl(state.contentFileUrl!),
-                        name: state.contentName ?? '投放文件',
-                        mimeType: state.contentMimeType,
-                        playing: state.playing,
-                        positionSeconds: state.playbackPositionSeconds,
-                      )
-                    : _buildWaitingPlaceholder(state),
+                : _buildWaitingPlaceholder(state),
           ),
           // 对方客户小窗
           if (state.camAllowed && _peerVideoTrack != null)
@@ -894,7 +567,7 @@ class _RoomPageState extends State<RoomPage> {
             ),
           _buildTopBar(state),
           FloatingHearts(hearts: _hearts),
-          _buildBottomControls(state, position, contentDuration),
+          _buildBottomControls(state),
           Positioned.fill(
               child: Watermark(
                   identityText:
@@ -916,9 +589,9 @@ class _RoomPageState extends State<RoomPage> {
               size: 44, color: Color(0xFF5B8DEF)),
           const SizedBox(height: 8),
           Text(
-            state.contentName != null
-                ? '待投放: ${state.contentName}'
-                : '等待公司投放内容…',
+            state.castLabel != null
+                ? '推流接入中: ${state.castLabel}'
+                : '等待公司推流…',
             style: const TextStyle(color: Colors.white60),
           ),
           if (!state.running)
@@ -1045,9 +718,7 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  Widget _buildBottomControls(
-      RoomState state, double position, double contentDuration) {
-    final canControl = state.running && state.contentId != null;
+  Widget _buildBottomControls(RoomState state) {
     return Positioned(
       left: 0,
       right: 0,
@@ -1064,37 +735,6 @@ class _RoomPageState extends State<RoomPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 播放/暂停 + 进度条(两端同步)
-            Row(
-              children: [
-                IconButton.filledTonal(
-                  onPressed: canControl
-                      ? () => _sendPlayback(
-                          state.playing ? 'PAUSE' : 'PLAY',
-                          positionSeconds: position)
-                      : null,
-                  icon: Icon(state.playing ? Icons.pause : Icons.play_arrow),
-                ),
-                Expanded(
-                  child: Slider(
-                    value: position.clamp(0, contentDuration),
-                    max: contentDuration,
-                    onChanged: canControl
-                        ? (value) => setState(() => _draggingPosition = value)
-                        : null,
-                    onChangeEnd: canControl
-                        ? (value) {
-                            setState(() => _draggingPosition = null);
-                            _sendPlayback('SEEK', positionSeconds: value);
-                          }
-                        : null,
-                  ),
-                ),
-                Text(_formatClock(position.toInt()),
-                    style:
-                        const TextStyle(fontSize: 11, color: Colors.white70)),
-              ],
-            ),
             // 明暗 / 音量(本地调节)
             Row(
               children: [
@@ -1139,43 +779,8 @@ class _RoomPageState extends State<RoomPage> {
                   icon: const Icon(Icons.cameraswitch),
                 ),
                 IconButton.filledTonal(
-                  onPressed: _toggleScreenShare,
-                  icon: Icon(_screenSharing
-                      ? Icons.stop_screen_share
-                      : Icons.screen_share),
-                ),
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    IconButton.filledTonal(
-                      onPressed: _openChatSheet,
-                      icon: const Icon(Icons.chat_bubble_outline),
-                    ),
-                    if (_unreadChat > 0)
-                      Positioned(
-                        top: -2,
-                        right: -2,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                              color: Colors.red, shape: BoxShape.circle),
-                          child: Text('$_unreadChat',
-                              style: const TextStyle(fontSize: 9)),
-                        ),
-                      ),
-                  ],
-                ),
-                IconButton.filledTonal(
                   onPressed: _toggleSpeaker,
                   icon: Icon(_speakerOn ? Icons.volume_up : Icons.hearing),
-                ),
-                IconButton.filledTonal(
-                  onPressed: _uploading ? null : _uploadAndCastFile,
-                  icon: const Icon(Icons.upload_file),
-                ),
-                IconButton.filledTonal(
-                  onPressed: _openServerFile,
-                  icon: const Icon(Icons.file_open),
                 ),
                 IconButton.filled(
                   style: IconButton.styleFrom(

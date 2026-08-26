@@ -6,7 +6,6 @@ import com.doommeeting.server.enums.CloseReason;
 import com.doommeeting.server.enums.RoomEventType;
 import com.doommeeting.server.enums.RoomStatus;
 import com.doommeeting.server.repository.RoomRepository;
-import com.doommeeting.server.service.CastScheduleService;
 import com.doommeeting.server.service.EventLogService;
 import com.doommeeting.server.service.MemberService;
 import com.doommeeting.server.service.NotificationService;
@@ -27,7 +26,6 @@ import java.util.Map;
  * 1. 缺人红灯预警: 创建房间(或成员离会)后缺人状态超过 3 分钟, 后台亮红灯
  * 2. 会议倒计时提醒: 剩余 5 分钟 / 1 分钟推送提醒
  * 3. 会议到期自动关闭
- * 4. 定时投放计划执行
  */
 @Slf4j
 @Component
@@ -37,7 +35,6 @@ public class RoomLifecycleScheduler {
     private final RoomRepository roomRepository;
     private final RoomService roomService;
     private final MemberService memberService;
-    private final CastScheduleService castScheduleService;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
     private final AppProperties properties;
@@ -54,7 +51,6 @@ public class RoomLifecycleScheduler {
         runStep("缺人预警", () -> checkUnderstaffedAlerts(now));
         runStep("倒计时提醒", () -> checkCountdownReminders(now));
         runStep("到期关房", () -> autoCloseExpiredRooms(now));
-        runStep("定时投放", castScheduleService::executeDueSchedules);
     }
 
     private void runStep(String name, Runnable step) {

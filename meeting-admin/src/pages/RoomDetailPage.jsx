@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Alert, Box, Button, Card, CardContent, Chip, Divider, FormControlLabel,
@@ -6,13 +6,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip,
   Typography,
 } from '@mui/material'
-import CastIcon from '@mui/icons-material/Cast'
 import CloseIcon from '@mui/icons-material/Close'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import FavoriteIcon from '@mui/icons-material/Favorite'
 import SmartphoneIcon from '@mui/icons-material/Smartphone'
-import PlayArrowIcon from '@mui/icons-material/PlayArrow'
-import PauseIcon from '@mui/icons-material/Pause'
 import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
 import MicIcon from '@mui/icons-material/Mic'
 import MicOffIcon from '@mui/icons-material/MicOff'
@@ -20,13 +17,12 @@ import VideocamIcon from '@mui/icons-material/Videocam'
 import VideocamOffIcon from '@mui/icons-material/VideocamOff'
 import PersonRemoveIcon from '@mui/icons-material/PersonRemove'
 import CheckIcon from '@mui/icons-material/Check'
-import SendIcon from '@mui/icons-material/Send'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  approveMember, castContent, closeRoom, controlRoomPlayback, deleteContent,
-  getAttendance, getRoom, getRoomChat, kickMember, listRoomEvents, muteAllMembers,
-  muteMember, regenerateInvite, sendRoomChat, setMemberCamera, stopCast,
-  updateRoomSettings, uploadContentFile,
+  approveMember, closeRoom,
+  getAttendance, getRoom, kickMember, listRoomEvents, muteAllMembers,
+  muteMember, regenerateInvite, setMemberCamera, stopCast,
+  updateRoomSettings,
 } from '../api'
 import { subscribeRoom } from '../api/ws'
 import RoomStatusChip from '../components/RoomStatusChip.jsx'
@@ -46,13 +42,9 @@ export default function RoomDetailPage() {
   const { id } = useParams()
   const [room, setRoom] = useState(null)
   const [events, setEvents] = useState([])
-  const [casting, setCasting] = useState(false)
   const [error, setError] = useState('')
   const [remaining, setRemaining] = useState(null)
-  const [chatMessages, setChatMessages] = useState([])
-  const [chatInput, setChatInput] = useState('')
   const [attendance, setAttendance] = useState(null)
-  const fileInputRef = useRef(null)
 
   const refresh = useCallback(async () => {
     const [r, e] = await Promise.all([getRoom(id), listRoomEvents(id)])
@@ -63,15 +55,11 @@ export default function RoomDetailPage() {
 
   useEffect(() => {
     refresh().catch((err) => setError(err.message))
-    getRoomChat(id).then(setChatMessages).catch(() => {})
   }, [refresh, id])
 
   useEffect(() => {
     if (!room?.roomCode) return undefined
-    const unsubscribe = subscribeRoom(room.roomCode, (event) => {
-      if (event?.type === 'CHAT_MESSAGE' && event.payload) {
-        setChatMessages((prev) => [...prev, event.payload])
-      }
+    const unsubscribe = subscribeRoom(room.roomCode, () => {
       refresh().catch(() => {})
     })
     return unsubscribe
@@ -101,54 +89,9 @@ export default function RoomDetailPage() {
     }
   }
 
-  const onFileSelected = async (e) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    // 投放前冲突检查: 已有投放时提示先停止当前投放
-    if (room?.contentId != null || room?.screenSharing) {
-      const currentDesc = room?.contentId != null
-        ? `「${room.contentName || '当前内容'}」`
-        : '屏幕共享'
-      const ok = window.confirm(
-        `该房间正在投放${currentDesc}。\n需要先停止当前投放, 才能投放新内容。\n\n确认停止当前投放并投放新文件?`,
-      )
-      if (!ok) return
-    }
-    setCasting(true)
-    let content = null
-    try {
-      // 真实文件上传到服务器, 会议结束后自动删除
-      content = await uploadContentFile(file, id)
-      await castContent(id, content.id, true)
-      await refresh()
-    } catch (err) {
-      // 上传成功但投放失败时删除刚上传的内容, 避免孤儿文件
-      if (content?.id) {
-        try {
-          await deleteContent(content.id)
-        } catch {
-          // 清理失败不影响错误提示
-        }
-      }
-      setError(err.code === 409 ? `投放冲突: ${err.message}` : err.message)
-    } finally {
-      setCasting(false)
-    }
-  }
-
   const doStopCast = async () => {
     try {
       await stopCast(id)
-      await refresh()
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  const doPlayback = async (action, positionSeconds, value) => {
-    try {
-      await controlRoomPlayback(id, action, positionSeconds, value)
       await refresh()
     } catch (err) {
       setError(err.message)
@@ -182,17 +125,6 @@ export default function RoomDetailPage() {
     }
   }
 
-  const doSendChat = async () => {
-    const content = chatInput.trim()
-    if (!content) return
-    try {
-      await sendRoomChat(id, content)
-      setChatInput('')
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
   const loadAttendance = async () => {
     try {
       setAttendance(await getAttendance(id))
@@ -218,21 +150,6 @@ export default function RoomDetailPage() {
         <Chip label={`房号 ${room.roomCode}`} />
         <RoomStatusChip status={room.status} />
         <Box sx={{ flexGrow: 1 }} />
-        <input
-          ref={fileInputRef}
-          type="file"
-          hidden
-          accept="video/*,audio/*,image/*,.pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.txt,.zip"
-          onChange={onFileSelected}
-        />
-        <Button
-          variant="contained"
-          startIcon={<CastIcon />}
-          onClick={() => fileInputRef.current?.click()}
-          disabled={closed || casting}
-        >
-          {casting ? '投放中…' : '选择文件投放'}
-        </Button>
         <Button variant="outlined" color="error" startIcon={<CloseIcon />} onClick={doClose} disabled={closed}>
           关闭房间
         </Button>
@@ -274,41 +191,30 @@ export default function RoomDetailPage() {
         <Grid item xs={12} sm={6} md={3}>
           <Card sx={{ height: '100%' }}>
             <CardContent>
-              <Typography variant="overline" color="text.secondary">当前投放 / 播放状态</Typography>
+              <Typography variant="overline" color="text.secondary">当前推流</Typography>
               <Typography variant="h6" noWrap sx={{ mb: 1 }}>
-                {room.contentName || '未投放'}
+                {room.castType
+                  ? ({ SCREEN: '屏幕共享', VIDEO: '视频推流', CAMERA: '摄像头推流' }[room.castType] || room.castType)
+                  : '未推流'}
               </Typography>
               <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
-                <Chip
-                  size="small"
-                  label={{ IDLE: '空闲', PLAYING: '播放中', PAUSED: '已暂停' }[room.playbackState] || room.playbackState}
-                  color={room.playbackState === 'PLAYING' ? 'success' : 'default'}
-                />
-                <Chip size="small" label={`进度 ${formatSeconds(room.playbackPositionSeconds)}`} />
+                {room.castLabel && <Chip size="small" label={room.castLabel} />}
+                {room.castBy && <Chip size="small" label={`由 ${room.castBy} 发起`} />}
               </Box>
               <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={room.playbackState === 'PLAYING' ? <PauseIcon /> : <PlayArrowIcon />}
-                  disabled={closed || room.status !== 'RUNNING' || room.contentId == null}
-                  onClick={() => doPlayback(room.playbackState === 'PLAYING' ? 'PAUSE' : 'PLAY')}
-                >
-                  {room.playbackState === 'PLAYING' ? '暂停' : '播放'}
-                </Button>
                 <Button
                   size="small"
                   variant="outlined"
                   color="warning"
                   startIcon={<StopScreenShareIcon />}
-                  disabled={closed || room.contentId == null}
+                  disabled={closed || room.castType == null}
                   onClick={doStopCast}
                 >
-                  停止投放
+                  停止推流
                 </Button>
               </Box>
               <Typography variant="caption" color="text.secondary">
-                可由 PC/管理端与手机端共同控制, 状态实时同步
+                推流由 PC 端发起(屏幕/本地视频/摄像头, 均走 LiveKit 实时流)
               </Typography>
             </CardContent>
           </Card>
@@ -482,36 +388,6 @@ export default function RoomDetailPage() {
                   </Table>
                 </Box>
               )}
-            </CardContent>
-          </Card>
-
-          <Card sx={{ mb: 2.5 }}>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 1.5 }}>会中聊天</Typography>
-              <Box sx={{ maxHeight: 220, overflow: 'auto', mb: 1.5 }}>
-                {chatMessages.map((message, index) => (
-                  <Typography key={message.id ?? index} variant="body2" sx={{ mb: 0.5 }}>
-                    <b>{message.nickname}: </b>{message.content}
-                  </Typography>
-                ))}
-                {chatMessages.length === 0 && (
-                  <Typography color="text.secondary" variant="body2">暂无消息</Typography>
-                )}
-              </Box>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="发送消息…"
-                  value={chatInput}
-                  disabled={closed}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') doSendChat() }}
-                />
-                <IconButton color="primary" disabled={closed} onClick={doSendChat}>
-                  <SendIcon />
-                </IconButton>
-              </Box>
             </CardContent>
           </Card>
 

@@ -1,7 +1,7 @@
 package com.doommeeting.server.entity;
 
+import com.doommeeting.server.enums.CastType;
 import com.doommeeting.server.enums.CloseReason;
-import com.doommeeting.server.enums.PlaybackState;
 import com.doommeeting.server.enums.RoomStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -85,37 +85,18 @@ public class Room {
     /** 会议自动关闭时间 = meetingStartAt + durationMinutes */
     private LocalDateTime meetingEndAt;
 
-    /** 当前投放内容 */
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "current_content_id")
-    private ContentItem currentContent;
-
-    /** 播放状态(手机端控制, 后端串行转发权威状态) */
+    /** 当前推流投放类型(为空表示无投放) */
     @Enumerated(EnumType.STRING)
-    @ColumnDefault("'IDLE'")
-    @Column(nullable = false, length = 16)
-    private PlaybackState playbackState = PlaybackState.IDLE;
+    @Column(length = 16)
+    private CastType castType;
 
-    /** 播放进度(秒) */
-    @ColumnDefault("0")
-    @Column(nullable = false)
-    private Double playbackPositionSeconds = 0.0;
+    /** 当前推流内容说明(视频文件名/摄像头/屏幕源名称) */
+    @Column(length = 128)
+    private String castLabel;
 
-    /** 最后一条播放控制指令序号(解决两客户端同时操作冲突) */
-    @ColumnDefault("0")
-    @Column(nullable = false)
-    private Long lastCommandSeq = 0L;
-
-    private LocalDateTime playbackUpdatedAt;
-
-    /** PC 端屏幕/窗口共享中(跨端冲突检查用) */
-    @ColumnDefault("0")
-    @Column(nullable = false)
-    private Boolean screenSharing = false;
-
-    /** 屏幕共享发起人 */
+    /** 推流发起人 */
     @Column(length = 64)
-    private String screenShareBy;
+    private String castBy;
 
     /** 点赞总数 */
     @ColumnDefault("0")

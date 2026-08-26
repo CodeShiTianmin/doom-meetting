@@ -84,7 +84,6 @@ class ApiClient {
     int? maxMembers,
     required bool videoCallEnabled,
     required bool cameraEnabled,
-    int? contentId,
     String? scheduledStartAt,
     bool approvalRequired = false,
   }) async {
@@ -94,7 +93,6 @@ class ApiClient {
       'maxMembers': maxMembers,
       'videoCallEnabled': videoCallEnabled,
       'cameraEnabled': cameraEnabled,
-      'contentId': contentId,
       'scheduledStartAt': scheduledStartAt,
       'approvalRequired': approvalRequired,
     });
@@ -115,49 +113,19 @@ class ApiClient {
     return RoomModel.fromJson(_unwrap(response));
   }
 
-  /// 选择内容投给房间(不同时间投不同内容给不同房间); 已有投放时需 replace=true 确认替换
-  Future<RoomModel> castContent(int roomId, int contentId,
-      {bool replace = false}) async {
-    final response = await _dio.post('/api/admin/rooms/$roomId/cast',
-        data: {'contentId': contentId, 'replace': replace});
+  /// 开始推流登记(屏幕/本地视频/摄像头, 均走 LiveKit 实时流);
+  /// type: SCREEN / VIDEO / CAMERA, label 为推流源名称
+  Future<RoomModel> startCast(int roomId, String type,
+      {String? label, bool replace = false}) async {
+    final response = await _dio.post('/api/admin/rooms/$roomId/cast/start',
+        data: {'type': type, 'label': label, 'replace': replace});
     return RoomModel.fromJson(_unwrap(response));
   }
 
-  /// 停止当前投放(清除房间当前内容并重置播放状态)
-  Future<RoomModel> stopCastContent(int roomId) async {
+  /// 停止当前推流登记
+  Future<RoomModel> stopCast(int roomId) async {
     final response = await _dio.post('/api/admin/rooms/$roomId/cast/stop');
     return RoomModel.fromJson(_unwrap(response));
-  }
-
-  /// 屏幕/窗口共享开始登记(服务端状态, 跨端冲突检查可感知)
-  Future<RoomModel> startScreenShare(int roomId, {bool replace = false}) async {
-    final response = await _dio.post(
-        '/api/admin/rooms/$roomId/screen-share/start',
-        queryParameters: {'replace': replace});
-    return RoomModel.fromJson(_unwrap(response));
-  }
-
-  /// 屏幕/窗口共享停止登记
-  Future<RoomModel> stopScreenShare(int roomId) async {
-    final response =
-        await _dio.post('/api/admin/rooms/$roomId/screen-share/stop');
-    return RoomModel.fromJson(_unwrap(response));
-  }
-
-  /// 删除内容(上传成功但投放失败时清理孤儿文件)
-  Future<void> deleteContent(int contentId) async {
-    await _dio.delete('/api/admin/contents/$contentId');
-  }
-
-  /// PC 端播放控制: PLAY/PAUSE/SEEK/BRIGHTNESS/VOLUME, 实时下发到房间内全部手机端
-  Future<Map<String, dynamic>> controlPlayback(int roomId, String action,
-      {double? positionSeconds, double? value}) async {
-    final response = await _dio.post('/api/admin/rooms/$roomId/playback', data: {
-      'action': action,
-      'positionSeconds': positionSeconds,
-      'value': value,
-    });
-    return _unwrap(response);
   }
 
   Future<void> closeRoom(int id) async {
@@ -222,50 +190,6 @@ class ApiClient {
     final response = await _dio.get('/api/admin/rooms/$roomId/attendance');
     return _unwrapList(response);
   }
-
-  // ---------- 聊天 ----------
-
-  Future<void> sendChat(int roomId, String content) async {
-    final response = await _dio
-        .post('/api/admin/rooms/$roomId/chat', data: {'content': content});
-    _unwrap(response);
-  }
-
-  Future<List<dynamic>> chatHistory(int roomId) async {
-    final response = await _dio.get('/api/admin/rooms/$roomId/chat');
-    return _unwrapList(response);
-  }
-
-  // ---------- 内容库 ----------
-
-  Future<List<ContentModel>> listContents() async {
-    final response = await _dio.get('/api/admin/contents');
-    return _unwrapList(response)
-        .map((item) => ContentModel.fromJson(item as Map<String, dynamic>))
-        .toList();
-  }
-
-  /// 真实文件上传到服务器存储(所有类型), 关联房间后会议结束自动删除
-  Future<ContentModel> uploadContentFile(String filePath,
-      {int? roomId}) async {
-    final formData = FormData.fromMap({
-      'file': await MultipartFile.fromFile(filePath),
-      if (roomId != null) 'roomId': roomId,
-    });
-    final response = await _dio.post(
-      '/api/admin/contents/upload',
-      data: formData,
-      options: Options(
-        sendTimeout: const Duration(minutes: 30),
-        receiveTimeout: const Duration(minutes: 30),
-      ),
-    );
-    return ContentModel.fromJson(_unwrap(response));
-  }
-
-  /// 服务器文件下载地址(fileUrl 为服务端下发的带签名 token 的相对地址)
-  String fileDownloadUrl(String fileUrl) =>
-      fileUrl.startsWith('http') ? fileUrl : '${AppConfig.apiBaseUrl}$fileUrl';
 }
 
 class ApiException implements Exception {

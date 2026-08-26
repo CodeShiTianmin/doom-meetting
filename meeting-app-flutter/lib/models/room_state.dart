@@ -13,18 +13,14 @@ class RoomState {
   final String? meetingStartAt;
   final String? meetingEndAt;
   final int? remainingSeconds;
-  final String playbackState;
-  final double playbackPositionSeconds;
-  final int? playbackSeq;
-  final bool screenSharing;
   final bool allMuted;
   final int likeCount;
-  final int? contentId;
-  final String? contentName;
-  final int? contentDurationSeconds;
-  final String? contentType;
-  final String? contentFileUrl;
-  final String? contentMimeType;
+
+  /// PC 端当前推流类型: SCREEN/VIDEO/CAMERA, null 表示无推流
+  final String? castType;
+
+  /// 推流内容说明(视频文件名/摄像头/屏幕源名称)
+  final String? castLabel;
 
   RoomState({
     required this.roomCode,
@@ -38,23 +34,15 @@ class RoomState {
     this.meetingStartAt,
     this.meetingEndAt,
     this.remainingSeconds,
-    required this.playbackState,
-    required this.playbackPositionSeconds,
-    this.playbackSeq,
-    this.screenSharing = false,
     this.allMuted = false,
     required this.likeCount,
-    this.contentId,
-    this.contentName,
-    this.contentDurationSeconds,
-    this.contentType,
-    this.contentFileUrl,
-    this.contentMimeType,
+    this.castType,
+    this.castLabel,
   });
 
   bool get running => status == 'RUNNING';
   bool get closed => status == 'CLOSED';
-  bool get playing => playbackState == 'PLAYING';
+  bool get casting => castType != null;
   bool get camAllowed => videoCallEnabled && cameraEnabled;
 
   factory RoomState.fromJson(Map<String, dynamic> json) => RoomState(
@@ -69,40 +57,22 @@ class RoomState {
         meetingStartAt: json['meetingStartAt'] as String?,
         meetingEndAt: json['meetingEndAt'] as String?,
         remainingSeconds: (json['remainingSeconds'] as num?)?.toInt(),
-        playbackState: (json['playbackState'] as String?) ?? 'IDLE',
-        playbackPositionSeconds:
-            (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
-        playbackSeq: (json['playbackSeq'] as num?)?.toInt(),
-        screenSharing: json['screenSharing'] == true,
         allMuted: json['allMuted'] == true,
         likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
-        contentId: (json['contentId'] as num?)?.toInt(),
-        contentName: json['contentName'] as String?,
-        contentDurationSeconds:
-            (json['contentDurationSeconds'] as num?)?.toInt(),
-        contentType: json['contentType'] as String?,
-        contentFileUrl: json['contentFileUrl'] as String?,
-        contentMimeType: json['contentMimeType'] as String?,
+        castType: json['castType'] as String?,
+        castLabel: json['castLabel'] as String?,
       );
 
-  /// 可空字段(content* 等)使用哨兵默认值, 支持显式传 null 清空
+  /// 可空字段(cast* 等)使用哨兵默认值, 支持显式传 null 清空
   RoomState copyWith({
     String? status,
     bool? videoCallEnabled,
     bool? cameraEnabled,
     Object? remainingSeconds = _unset,
-    String? playbackState,
-    double? playbackPositionSeconds,
-    int? playbackSeq,
-    bool? screenSharing,
     bool? allMuted,
     int? likeCount,
-    Object? contentId = _unset,
-    Object? contentName = _unset,
-    Object? contentDurationSeconds = _unset,
-    Object? contentType = _unset,
-    Object? contentFileUrl = _unset,
-    Object? contentMimeType = _unset,
+    Object? castType = _unset,
+    Object? castLabel = _unset,
     String? meetingStartAt,
     String? meetingEndAt,
   }) =>
@@ -120,26 +90,9 @@ class RoomState {
         remainingSeconds: remainingSeconds == _unset
             ? this.remainingSeconds
             : remainingSeconds as int?,
-        playbackState: playbackState ?? this.playbackState,
-        playbackPositionSeconds:
-            playbackPositionSeconds ?? this.playbackPositionSeconds,
-        playbackSeq: playbackSeq ?? this.playbackSeq,
-        screenSharing: screenSharing ?? this.screenSharing,
         allMuted: allMuted ?? this.allMuted,
         likeCount: likeCount ?? this.likeCount,
-        contentId: contentId == _unset ? this.contentId : contentId as int?,
-        contentName:
-            contentName == _unset ? this.contentName : contentName as String?,
-        contentDurationSeconds: contentDurationSeconds == _unset
-            ? this.contentDurationSeconds
-            : contentDurationSeconds as int?,
-        contentType:
-            contentType == _unset ? this.contentType : contentType as String?,
-        contentFileUrl: contentFileUrl == _unset
-            ? this.contentFileUrl
-            : contentFileUrl as String?,
-        contentMimeType: contentMimeType == _unset
-            ? this.contentMimeType
-            : contentMimeType as String?,
+        castType: castType == _unset ? this.castType : castType as String?,
+        castLabel: castLabel == _unset ? this.castLabel : castLabel as String?,
       );
 }

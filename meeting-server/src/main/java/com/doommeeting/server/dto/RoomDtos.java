@@ -1,7 +1,6 @@
 package com.doommeeting.server.dto;
 
-import jakarta.validation.constraints.DecimalMax;
-import jakarta.validation.constraints.DecimalMin;
+import com.doommeeting.server.enums.CastType;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -22,7 +21,6 @@ public class RoomDtos {
             @Max(value = 50, message = "成员数最多50人") Integer maxMembers,
             Boolean videoCallEnabled,
             Boolean cameraEnabled,
-            Long contentId,
             LocalDateTime scheduledStartAt,
             Boolean approvalRequired) {
     }
@@ -50,16 +48,9 @@ public class RoomDtos {
             LocalDateTime meetingStartAt,
             LocalDateTime meetingEndAt,
             Long remainingSeconds,
-            Long contentId,
-            String contentName,
-            String contentType,
-            String contentFileUrl,
-            String contentMimeType,
-            Integer contentDurationSeconds,
-            String playbackState,
-            Double playbackPositionSeconds,
-            Boolean screenSharing,
-            String screenShareBy,
+            String castType,
+            String castLabel,
+            String castBy,
             Long likeCount,
             Boolean understaffedAlert,
             LocalDateTime understaffedSince,
@@ -117,21 +108,11 @@ public class RoomDtos {
             Long likeCount) {
     }
 
-    public record AdminChatRequest(
-            @NotBlank(message = "消息内容不能为空")
-            @Size(max = 500, message = "消息最长 500 字") String content) {
-    }
-
-    public record CastRequest(
-            @NotNull(message = "内容不能为空") Long contentId,
+    /** PC 端开始推流登记(屏幕/本地视频/摄像头) */
+    public record CastStartRequest(
+            @NotNull(message = "推流类型不能为空") CastType type,
+            @Size(max = 128, message = "推流内容说明最长 128 字") String label,
             Boolean replace) {
-    }
-
-    public record AdminPlaybackRequest(
-            @NotBlank(message = "操作类型不能为空") String action,
-            @DecimalMin(value = "0", message = "播放进度不能为负") Double positionSeconds,
-            @DecimalMin(value = "0", message = "调节值范围 0~100")
-            @DecimalMax(value = "100", message = "调节值范围 0~100") Double value) {
     }
 
     public record RoomEventResponse(Long id, String type, String detail, LocalDateTime createdAt) {

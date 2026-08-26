@@ -10,7 +10,6 @@ import DoorFrontIcon from '@mui/icons-material/DoorFront'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import FavoriteIcon from '@mui/icons-material/Favorite'
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder'
-import ScheduleIcon from '@mui/icons-material/Schedule'
 import { getDashboardSummary, getDashboardTrends } from '../api'
 import { subscribeAdminDashboard } from '../api/ws'
 
@@ -114,7 +113,6 @@ export default function DashboardPage() {
     { icon: <WarningAmberIcon />, label: '红灯预警', value: summary?.alertRooms, color: '#e53935' },
     { icon: <FavoriteIcon />, label: '今日点赞', value: summary?.todayLikes, color: '#ec407a' },
     { icon: <FavoriteBorderIcon />, label: '累计点赞', value: summary?.totalLikes, color: '#ab47bc' },
-    { icon: <ScheduleIcon />, label: '待执行计划', value: summary?.pendingSchedules, color: '#8e24aa' },
   ]
 
   return (

@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../models/room.dart';
 import '../services/api_client.dart';
@@ -13,10 +11,10 @@ import '../services/cast_manager.dart';
 import '../services/cast_session.dart';
 import '../services/ws_service.dart';
 
-/// 单房间投放控制:
-/// - PC 屏幕/窗口共享(LiveKit 推流) 或 上传文件投放(存服务器, 会议结束后删除)
-/// - 投放前检查已有投放, 提示先停止当前投放
-/// - PC 可控制房间内全部手机端: 播放/暂停/拖动进度/明暗/音量
+/// 单房间推流控制:
+/// - 每个房间可独立选择推流源: 屏幕/窗口共享、本地视频推流、摄像头推流(均走 LiveKit 实时流)
+/// - 推流前检查已有推流, 提示先停止当前推流
+/// - 本地视频推流时 PC 本地控制播放/暂停/进度
 /// - 房间设置开关(视频通话/摄像头)、会议时长、成员就位、点赞实时展示、关闭房间
 class RoomCastPage extends StatefulWidget {
   final int roomId;
@@ -32,12 +30,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
   RoomModel? _room;
   CastSession? _session;
   Timer? _refreshTimer;
-  // 最近一次直接投放的本地文件路径(用于图片等非媒体文件的本地预览)
-  String? _lastCastPath;
   int _likeFlash = 0;
   double? _seekPreview;
-  double _remoteBrightness = 0.5;
-  double _remoteVolume = 0.5;
 
   @override
   void initState() {
@@ -53,7 +47,6 @@ class _RoomCastPageState extends State<RoomCastPage> {
     if (room == null) return;
     _ws.connect(onDashboardEvent: (_) {});
     _ws.subscribeRoom(room.roomCode, _onRoomEvent);
-    _loadChatHistory();
     try {
       final session = await CastManager.instance.ensureSession(widget.roomId);
       session.addListener(_onSessionChanged);
@@ -79,11 +72,6 @@ class _RoomCastPageState extends State<RoomCastPage> {
     final type = event['type'] as String?;
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
-      case 'PLAYBACK_CONTROL':
-        // 播放控制指令(手机端或 PC 端发起) -> 本房间独立播放器执行
-        _session?.applyPlaybackCommand(data);
-        _refreshRoom();
-        break;
       case 'LIKE':
         setState(() => _likeFlash++);
         _refreshRoom();
@@ -95,22 +83,13 @@ class _RoomCastPageState extends State<RoomCastPage> {
       case 'MEMBER_JOINED':
       case 'MEMBER_LEFT':
       case 'SETTINGS_CHANGED':
-      case 'CONTENT_CAST':
+      case 'CAST_STARTED':
       case 'CAST_STOPPED':
       case 'COUNTDOWN_REMINDER':
         _refreshRoom();
         break;
       case 'RECORDING_DETECTED':
         _showToast('警告: 手机端检测到录屏行为!');
-        break;
-      case 'SCREEN_SHARE_STOPPED':
-        // 服务端已登记停止屏幕共享(如被新投放替换), 同步停止本地推流
-        _session?.stopCast();
-        _refreshRoom();
-        _showToast('屏幕共享已停止');
-        break;
-      case 'CHAT_MESSAGE':
-        setState(() => _chatMessages.add(data));
         break;
       case 'JOIN_REQUEST':
         _showToast('新入会申请: ${data['nickname'] ?? ''}, 请审批');
@@ -134,33 +113,29 @@ class _RoomCastPageState extends State<RoomCastPage> {
     }
   }
 
-  // ---------- 投放操作 ----------
+  // ---------- 推流操作 ----------
 
   bool get _hasActiveCast =>
-      _room?.contentId != null ||
-      _room?.screenSharing == true ||
-      _session?.publishing == true;
+      _room?.casting == true || _session?.publishing == true;
 
-  /// 投放前冲突检查: 已有投放时提示先停止, 用户确认后停止旧投放再继续
+  /// 推流前冲突检查: 已有推流时提示先停止, 用户确认后停止旧推流再继续
   Future<bool> _confirmReplaceCast() async {
     if (!_hasActiveCast) return true;
-    final currentName = _room?.contentName ??
-        (_room?.screenSharing == true || _session?.mode == CastMode.screen
-            ? '屏幕/窗口投屏'
-            : '当前投放');
+    final currentName =
+        _room?.castDescription ?? _session?.sourceLabel ?? '当前推流';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
-        title: const Text('房间已有投放'),
-        content: Text('该房间正在投放「$currentName」。\n需要先停止当前投放, 才能投放新内容。'),
+        title: const Text('房间正在推流'),
+        content: Text('该房间正在推流「$currentName」。\n需要先停止当前推流, 才能开始新推流。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(context).pop(false),
               child: const Text('取消')),
           FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('停止当前投放并继续')),
+              child: const Text('停止当前推流并继续')),
         ],
       ),
     );
@@ -176,13 +151,13 @@ class _RoomCastPageState extends State<RoomCastPage> {
     final sources = await session.listCaptureSources();
     if (!mounted) return;
     if (sources.isEmpty) {
-      _showToast('未枚举到可投屏的屏幕/窗口, 请检查系统屏幕录制权限');
+      _showToast('未枚举到可推流的屏幕/窗口, 请检查系统屏幕录制权限');
       return;
     }
     final selected = await showDialog<webrtc.DesktopCapturerSource>(
       context: context,
       builder: (_) => SimpleDialog(
-        title: const Text('选择投屏源(整屏或指定窗口)'),
+        title: const Text('选择推流源(整屏或指定窗口)'),
         children: [
           for (final source in sources)
             SimpleDialogOption(
@@ -205,172 +180,92 @@ class _RoomCastPageState extends State<RoomCastPage> {
     if (selected != null) {
       try {
         await session.startScreenCast(selected);
-        // 服务端登记屏幕共享状态, 其他端冲突检查可感知
-        await ApiClient.instance
-            .startScreenShare(widget.roomId, replace: true);
+        // 服务端登记推流状态, 其他端冲突检查可感知
+        await ApiClient.instance.startCast(widget.roomId, 'SCREEN',
+            label: selected.name, replace: true);
       } catch (error) {
         await session.stopCast();
-        _showToast('投屏启动失败: $error');
+        _showToast('推流启动失败: $error');
         return;
       }
       await _refreshRoom();
-      _showToast('已开始投屏: ${selected.name}');
+      _showToast('已开始推流: ${selected.name}');
     }
   }
 
-  static const _mediaExtensions = {
+  static const _videoExtensions = [
     'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts',
-    'mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma',
-  };
+  ];
 
-  static const _imageExtensions = {
-    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
-  };
-
-  static String _extensionOf(String name) =>
-      name.contains('.') ? name.split('.').last.toLowerCase() : '';
-
-  Future<void> _pickLocalFile() async {
+  /// 本地视频推流: 选择本地视频文件, 本地解码播放后经窗口捕获以实时流推给房间
+  Future<void> _pickLocalVideo() async {
     final session = _session;
     if (session == null) return;
     if (!await _confirmReplaceCast()) return;
-    // 所有类型文件均可投放
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-      dialogTitle: '选择投放文件(所有类型, 上传服务器保存, 会议结束后删除)',
+      type: FileType.custom,
+      allowedExtensions: _videoExtensions,
+      dialogTitle: '选择本地视频文件(实时推流, 不上传服务器)',
     );
     final path = result?.files.single.path;
     if (path == null || !mounted) return;
     final name = path.split(RegExp(r'[\\/]')).last;
-    final extension = _extensionOf(name);
 
-    // 1) 真实文件上传到服务器存储并投放(手机端/管理网页可直接打开, 会议结束后自动删除)
-    _showToast('正在上传: $name ...');
-    late final ContentModel content;
     try {
-      content = await ApiClient.instance
-          .uploadContentFile(path, roomId: widget.roomId);
-    } on ApiException catch (error) {
-      _showToast('文件上传失败: ${error.message}');
-      return;
-    } catch (error) {
-      _showToast('文件上传失败: $error');
-      return;
-    }
-    try {
-      await ApiClient.instance
-          .castContent(widget.roomId, content.id, replace: true);
-    } catch (error) {
-      // 投放失败时删除刚上传的内容, 避免孤儿文件
-      try {
-        await ApiClient.instance.deleteContent(content.id);
-      } catch (_) {}
-      _showToast(error is ApiException && error.castConflict
-          ? '投放冲突: ${error.message}'
-          : '投放失败: $error');
-      return;
-    }
-
-    // 2) 媒体文件: 本地播放器解码并捕获推流;
-    //    其他类型(图片/文档等): 手机端通过服务器文件直接展示, 无需本地推流
-    try {
-      if (_mediaExtensions.contains(extension)) {
-        final sources = await session.listCaptureSources();
-        final appWindow = sources
-            .where((source) => source.type == webrtc.SourceType.Window)
-            .where((source) => source.name.contains('投屏会议'))
-            .firstOrNull;
-        if (appWindow == null && sources.isEmpty) {
-          throw Exception('未枚举到可捕获的窗口');
-        }
-        await session.startFileCast(path,
-            playerWindowSource: appWindow ?? sources.first);
+      final sources = await session.listCaptureSources();
+      final appWindow = sources
+          .where((source) => source.type == webrtc.SourceType.Window)
+          .where((source) => source.name.contains('投屏会议'))
+          .firstOrNull;
+      if (appWindow == null && sources.isEmpty) {
+        throw Exception('未枚举到可捕获的窗口');
       }
+      await session.startVideoCast(path,
+          playerWindowSource: appWindow ?? sources.first);
+      await ApiClient.instance.startCast(widget.roomId, 'VIDEO',
+          label: name, replace: true);
     } catch (error) {
-      // 本地推流失败时回滚服务器投放状态, 避免假的"已投放"
-      try {
-        await ApiClient.instance.stopCastContent(widget.roomId);
-      } catch (_) {}
-      _showToast('本地推流启动失败: $error');
+      await session.stopCast();
+      _showToast('视频推流启动失败: $error');
       await _refreshRoom();
       return;
     }
-    if (mounted) setState(() => _lastCastPath = path);
     await _refreshRoom();
-    _showToast(_mediaExtensions.contains(extension)
-        ? '已投放文件: $name'
-        : '已投放文件: $name (手机端直接展示)');
+    _showToast('已开始视频推流: $name');
   }
 
-  /// 打开服务器上存储的当前投放文件(使用服务端下发的带签名 token 的地址)
-  Future<void> _openServerFile() async {
-    final fileUrl = _room?.contentFileUrl;
-    if (fileUrl == null) {
-      _showToast('当前房间没有投放内容');
+  /// 摄像头推流: 采集本机摄像头推给房间
+  Future<void> _castCamera() async {
+    final session = _session;
+    if (session == null) return;
+    if (!await _confirmReplaceCast()) return;
+    try {
+      await session.startCameraCast();
+      await ApiClient.instance
+          .startCast(widget.roomId, 'CAMERA', label: '摄像头', replace: true);
+    } catch (error) {
+      await session.stopCast();
+      _showToast('摄像头推流启动失败: $error');
+      await _refreshRoom();
       return;
     }
-    final url = ApiClient.instance.fileDownloadUrl(fileUrl);
-    await launchUrl(Uri.parse(url));
+    await _refreshRoom();
+    _showToast('已开始摄像头推流');
   }
 
-  /// 停止投放: 同时停止本地推流与服务器投放状态
-  /// (无条件调用服务端停止, 不依赖本地轮询快照, 后端容忍无投放时的停止)
+  /// 停止推流: 同时停止本地推流与服务器推流登记
   Future<void> _stopCast({bool silent = false}) async {
     await _session?.stopCast();
-    if (mounted) setState(() => _lastCastPath = null);
     try {
-      await ApiClient.instance.stopCastContent(widget.roomId);
+      await ApiClient.instance.stopCast(widget.roomId);
     } on ApiException catch (error) {
-      if (!silent) _showToast('停止服务器投放失败: ${error.message}');
+      if (!silent) _showToast('停止推流登记失败: ${error.message}');
     }
-    try {
-      await ApiClient.instance.stopScreenShare(widget.roomId);
-    } on ApiException catch (_) {}
     await _refreshRoom();
-    if (!silent) _showToast('已停止投放');
+    if (!silent) _showToast('已停止推流');
   }
 
-  // ---------- PC 端播放控制(下发到房间内全部手机端) ----------
-
-  Future<void> _sendPlayback(String action,
-      {double? positionSeconds, double? value}) async {
-    try {
-      await ApiClient.instance.controlPlayback(widget.roomId, action,
-          positionSeconds: positionSeconds, value: value);
-      await _refreshRoom();
-    } on ApiException catch (error) {
-      _showToast('控制失败: ${error.message}');
-    } catch (error) {
-      _showToast('控制失败: $error');
-    }
-  }
-
-  // ---------- 成员管理 / 聊天 ----------
-
-  final List<Map<String, dynamic>> _chatMessages = [];
-  final TextEditingController _chatController = TextEditingController();
-
-  Future<void> _loadChatHistory() async {
-    try {
-      final history = await ApiClient.instance.chatHistory(widget.roomId);
-      if (mounted) {
-        setState(() => _chatMessages
-          ..clear()
-          ..addAll(history.whereType<Map<String, dynamic>>()));
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _sendChat() async {
-    final text = _chatController.text.trim();
-    if (text.isEmpty) return;
-    try {
-      await ApiClient.instance.sendChat(widget.roomId, text);
-      _chatController.clear();
-    } on ApiException catch (error) {
-      _showToast('发送失败: ${error.message}');
-    }
-  }
+  // ---------- 成员管理 ----------
 
   Future<void> _memberAction(Future<void> Function() action) async {
     try {
@@ -484,7 +379,6 @@ class _RoomCastPageState extends State<RoomCastPage> {
     _refreshTimer?.cancel();
     _session?.removeListener(_onSessionChanged);
     _ws.disconnect();
-    _chatController.dispose();
     super.dispose();
   }
 
@@ -561,8 +455,10 @@ class _RoomCastPageState extends State<RoomCastPage> {
                   Expanded(child: _buildPreview(session, scheme)),
                   const SizedBox(height: 12),
                   _buildCastButtons(room, session),
-                  const SizedBox(height: 12),
-                  _buildPlaybackControls(room, scheme),
+                  if (session?.mode == CastMode.video) ...[
+                    const SizedBox(height: 12),
+                    _buildLocalPlayerControls(session!, scheme),
+                  ],
                 ],
               ),
             ),
@@ -758,62 +654,6 @@ class _RoomCastPageState extends State<RoomCastPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // 会中聊天(主持人可发言)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.chat_bubble_outline, size: 18),
-                            SizedBox(width: 6),
-                            Text('会中聊天',
-                                style:
-                                    TextStyle(fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          height: 160,
-                          child: ListView(
-                            reverse: true,
-                            children: [
-                              for (final message
-                                  in _chatMessages.reversed)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 2),
-                                  child: Text(
-                                      '${message['nickname'] ?? ''}: ${message['content'] ?? ''}',
-                                      style:
-                                          const TextStyle(fontSize: 12)),
-                                ),
-                            ],
-                          ),
-                        ),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _chatController,
-                                decoration: const InputDecoration(
-                                    hintText: '发送消息…',
-                                    isDense: true),
-                                onSubmitted: (_) => _sendChat(),
-                              ),
-                            ),
-                            IconButton(
-                                onPressed: _sendChat,
-                                icon: const Icon(Icons.send, size: 18)),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
                 Card(
                   child: ListTile(
                     leading: Icon(Icons.favorite,
@@ -832,7 +672,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                     leading:
                         const Icon(Icons.meeting_room, color: Colors.redAccent),
                     title: const Text('结束会议'),
-                    subtitle: const Text('全部成员移出, 上传文件删除',
+                    subtitle: const Text('全部成员移出, 推流停止',
                         style: TextStyle(fontSize: 11)),
                     enabled: !room.closed,
                     onTap: room.closed ? null : _closeRoom,
@@ -865,48 +705,18 @@ class _RoomCastPageState extends State<RoomCastPage> {
   }
 
   Widget _buildPreviewPlaceholder(CastSession? session, ColorScheme scheme) {
-    final room = _room;
-    // 非媒体文件直接投放: 图片本地预览, 其他类型展示文件卡片
-    final path = _lastCastPath;
-    if (room?.contentId != null && path != null) {
-      final name = path.split(RegExp(r'[\\/]')).last;
-      if (_imageExtensions.contains(_extensionOf(name))) {
-        return Image.file(File(path), fit: BoxFit.contain);
-      }
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.insert_drive_file, size: 48, color: scheme.primary),
-            const SizedBox(height: 12),
-            Text(name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            const Text('文件已投放, 手机端直接展示',
-                style: TextStyle(color: Colors.white38, fontSize: 12)),
-          ],
-        ),
-      );
-    }
+    final (icon, text) = switch (session?.mode) {
+      CastMode.screen => (Icons.screen_share, '屏幕/窗口推流中'),
+      CastMode.camera => (Icons.videocam, '摄像头推流中'),
+      _ => (Icons.cast, '未推流 — 选择屏幕共享、本地视频或摄像头开始推流'),
+    };
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-              session?.mode == CastMode.screen
-                  ? Icons.screen_share
-                  : Icons.cast,
-              size: 48,
-              color: Colors.white24),
+          Icon(icon, size: 48, color: Colors.white24),
           const SizedBox(height: 12),
-          Text(
-            session?.mode == CastMode.screen
-                ? '屏幕/窗口投屏中'
-                : '未投放 — 选择屏幕共享或上传文件投放',
-            style: const TextStyle(color: Colors.white38),
-          ),
+          Text(text, style: const TextStyle(color: Colors.white38)),
         ],
       ),
     );
@@ -924,138 +734,111 @@ class _RoomCastPageState extends State<RoomCastPage> {
           label: const Text('屏幕/窗口共享'),
         ),
         FilledButton.tonalIcon(
-          onPressed: session == null ? null : _pickLocalFile,
-          icon: const Icon(Icons.upload_file),
-          label: const Text('上传文件投放'),
+          onPressed: session == null ? null : _pickLocalVideo,
+          icon: const Icon(Icons.movie_outlined),
+          label: const Text('本地视频推流'),
         ),
         FilledButton.tonalIcon(
-          onPressed: _openServerFile,
-          icon: const Icon(Icons.file_open),
-          label: const Text('打开服务器文件'),
+          onPressed: session == null ? null : _castCamera,
+          icon: const Icon(Icons.videocam_outlined),
+          label: const Text('摄像头推流'),
         ),
         OutlinedButton.icon(
           onPressed: _hasActiveCast ? _stopCast : null,
           icon: const Icon(Icons.stop_screen_share),
-          label: const Text('停止投放'),
+          label: const Text('停止推流'),
         ),
       ],
     );
   }
 
-  /// PC 端播放控制区: 播放/暂停/进度 + 手机端明暗/音量远程调节
-  Widget _buildPlaybackControls(RoomModel room, ColorScheme scheme) {
-    final playing = room.playbackState == 'PLAYING';
-    final duration = (room.contentDurationSeconds ?? 0).toDouble();
-    final maxSeconds = duration > 0 ? duration : 3600.0;
-    final position =
-        (_seekPreview ?? room.playbackPositionSeconds).clamp(0.0, maxSeconds);
-    final controlsEnabled = room.running && room.contentId != null;
+  /// 本地视频推流控制区: PC 本地播放/暂停/进度(画面实时推给房间内手机端)
+  Widget _buildLocalPlayerControls(CastSession session, ColorScheme scheme) {
+    final player = session.player;
+    if (player == null) return const SizedBox.shrink();
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
+        child: StreamBuilder<Duration>(
+          stream: player.stream.position,
+          builder: (context, snapshot) {
+            final playing = player.state.playing;
+            final duration = player.state.duration.inSeconds.toDouble();
+            final maxSeconds = duration > 0 ? duration : 1.0;
+            final position = (_seekPreview ??
+                    (snapshot.data ?? player.state.position)
+                        .inSeconds
+                        .toDouble())
+                .clamp(0.0, maxSeconds);
+            return Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.settings_remote, size: 18, color: scheme.primary),
-                const SizedBox(width: 8),
-                const Text('播放控制(下发到全部手机端)',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-                const Spacer(),
-                Text(
-                  '状态: ${room.playbackState}',
-                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                Row(
+                  children: [
+                    Icon(Icons.movie_outlined, size: 18, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(session.sourceLabel ?? '本地视频',
+                          overflow: TextOverflow.ellipsis,
+                          style:
+                              const TextStyle(fontWeight: FontWeight.w700)),
+                    ),
+                    const Text('实时推流中',
+                        style:
+                            TextStyle(fontSize: 12, color: Colors.white54)),
+                  ],
+                ),
+                Row(
+                  children: [
+                    IconButton.filledTonal(
+                      onPressed: () async {
+                        await player.playOrPause();
+                        if (mounted) setState(() {});
+                      },
+                      icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(_formatClock(position.toInt()),
+                        style: const TextStyle(fontSize: 12)),
+                    Expanded(
+                      child: Slider(
+                        value: position,
+                        max: maxSeconds,
+                        onChanged: (value) =>
+                            setState(() => _seekPreview = value),
+                        onChangeEnd: (value) {
+                          setState(() => _seekPreview = null);
+                          player.seek(
+                              Duration(milliseconds: (value * 1000).round()));
+                        },
+                      ),
+                    ),
+                    Text(_formatClock(duration.toInt()),
+                        style: const TextStyle(fontSize: 12)),
+                  ],
                 ),
               ],
-            ),
-            Row(
-              children: [
-                IconButton.filledTonal(
-                  onPressed: !controlsEnabled
-                      ? null
-                      : () => _sendPlayback(playing ? 'PAUSE' : 'PLAY'),
-                  icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                ),
-                const SizedBox(width: 8),
-                Text(_formatClock(position.toInt()),
-                    style: const TextStyle(fontSize: 12)),
-                Expanded(
-                  child: Slider(
-                    value: position,
-                    max: maxSeconds,
-                    onChanged: !controlsEnabled
-                        ? null
-                        : (value) => setState(() => _seekPreview = value),
-                    onChangeEnd: !controlsEnabled
-                        ? null
-                        : (value) {
-                            setState(() => _seekPreview = null);
-                            _sendPlayback('SEEK', positionSeconds: value);
-                          },
-                  ),
-                ),
-                Text(
-                    duration > 0
-                        ? _formatClock(duration.toInt())
-                        : _formatClock(room.playbackPositionSeconds.toInt()),
-                    style: const TextStyle(fontSize: 12)),
-              ],
-            ),
-            Row(
-              children: [
-                const Icon(Icons.brightness_6, size: 16),
-                Expanded(
-                  child: Slider(
-                    value: _remoteBrightness,
-                    onChanged: !room.running
-                        ? null
-                        : (value) => setState(() => _remoteBrightness = value),
-                    onChangeEnd: !room.running
-                        ? null
-                        // 后端统一 0~100
-                        : (value) =>
-                            _sendPlayback('BRIGHTNESS', value: value * 100),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                const Icon(Icons.volume_up, size: 16),
-                Expanded(
-                  child: Slider(
-                    value: _remoteVolume,
-                    onChanged: !room.running
-                        ? null
-                        : (value) => setState(() => _remoteVolume = value),
-                    onChangeEnd: !room.running
-                        ? null
-                        : (value) =>
-                            _sendPlayback('VOLUME', value: value * 100),
-                  ),
-                ),
-              ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
   }
 
   Widget _buildCurrentCastCard(RoomModel room, ColorScheme scheme) {
-    final casting = room.contentId != null || room.screenSharing;
+    final casting = room.casting || _session?.publishing == true;
+    final description =
+        room.castDescription ?? _session?.sourceLabel ?? '推流中';
     return Card(
       color: casting ? scheme.primary.withValues(alpha: 0.10) : null,
       child: ListTile(
         leading: Icon(casting ? Icons.cast_connected : Icons.cast,
             color: casting ? scheme.primary : Colors.white38),
-        title: Text(room.contentId != null
-            ? (room.contentName ?? '投放中')
-            : room.screenSharing
-                ? '屏幕/窗口共享中'
-                : '暂无投放内容'),
+        title: Text(casting ? description : '暂无推流'),
         subtitle: Text(
           casting
-              ? '播放 ${room.playbackState} @ ${_formatClock(room.playbackPositionSeconds.toInt())}'
-              : '选择屏幕共享或上传文件开始投放',
+              ? (room.castBy == null ? '实时推流中' : '由 ${room.castBy} 发起')
+              : '选择屏幕共享、本地视频或摄像头开始推流',
           style: const TextStyle(fontSize: 11),
         ),
       ),

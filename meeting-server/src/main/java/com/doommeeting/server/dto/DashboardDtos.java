@@ -9,9 +9,7 @@ public class DashboardDtos {
             long closedRooms,
             long alertRooms,
             long totalLikes,
-            long todayLikes,
-            long totalContents,
-            long pendingSchedules) {
+            long todayLikes) {
     }
 
     public record TrendPoint(
