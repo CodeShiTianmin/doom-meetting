@@ -255,7 +255,11 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
   /// 停止推流: 同时停止本地推流与服务器推流登记
   Future<void> _stopCast({bool silent = false}) async {
-    await _session?.stopCast();
+    try {
+      await _session?.stopCast();
+    } catch (error) {
+      if (!silent) _showToast('停止本地推流异常: $error');
+    }
     try {
       await ApiClient.instance.stopCast(widget.roomId);
     } on ApiException catch (error) {

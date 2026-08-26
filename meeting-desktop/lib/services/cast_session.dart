@@ -175,14 +175,21 @@ class CastSession extends ChangeNotifier {
 
 
 
+  /// 停止推流: 任一环节失败/超时不阻塞后续清理, 保证本地状态一定复位
   Future<void> stopCast() async {
     final participant = _lkRoom?.localParticipant;
     if (participant != null) {
       for (final publication in participant.trackPublications.values.toList()) {
-        await participant.removePublishedTrack(publication.sid);
+        try {
+          await participant
+              .removePublishedTrack(publication.sid)
+              .timeout(const Duration(seconds: 5));
+        } catch (_) {}
       }
     }
-    await _player?.dispose();
+    try {
+      await _player?.dispose();
+    } catch (_) {}
     _player = null;
     _videoController = null;
     filePath = null;
