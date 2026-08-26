@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
-import 'package:media_kit_video/media_kit_video.dart';
 
 import '../models/room.dart';
 import '../services/api_client.dart';
@@ -14,7 +13,8 @@ import '../services/ws_service.dart';
 /// 单房间推流控制:
 /// - 每个房间可独立选择推流源: 屏幕/窗口共享、本地视频推流、摄像头推流(均走 LiveKit 实时流)
 /// - 推流前检查已有推流, 提示先停止当前推流
-/// - 本地视频推流时 PC 本地控制播放/暂停/进度
+/// - 本地视频在独立播放窗口后台播放推流, 退出本页/切到其他房间不中断;
+///   本页提供播放/暂停/进度控制(转发给播放窗口)
 /// - 房间设置开关(视频通话/摄像头)、会议时长、成员就位、点赞实时展示、关闭房间
 class RoomCastPage extends StatefulWidget {
   final int roomId;
@@ -212,16 +212,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     final name = path.split(RegExp(r'[\\/]')).last;
 
     try {
-      final sources = await session.listCaptureSources();
-      final appWindow = sources
-          .where((source) => source.type == webrtc.SourceType.Window)
-          .where((source) => source.name.contains('投屏会议'))
-          .firstOrNull;
-      if (appWindow == null && sources.isEmpty) {
-        throw Exception('未枚举到可捕获的窗口');
-      }
-      await session.startVideoCast(path,
-          playerWindowSource: appWindow ?? sources.first);
+      await session.startVideoCast(path);
       await ApiClient.instance.startCast(widget.roomId, 'VIDEO',
           label: name, replace: true);
     } catch (error) {
@@ -702,15 +693,17 @@ class _RoomCastPageState extends State<RoomCastPage> {
         ),
       ),
       clipBehavior: Clip.antiAlias,
-      child: session?.videoController != null
-          ? Video(controller: session!.videoController!)
-          : _buildPreviewPlaceholder(session, scheme),
+      child: _buildPreviewPlaceholder(session, scheme),
     );
   }
 
   Widget _buildPreviewPlaceholder(CastSession? session, ColorScheme scheme) {
     final (icon, text) = switch (session?.mode) {
       CastMode.screen => (Icons.screen_share, '屏幕/窗口推流中'),
+      CastMode.video => (
+        Icons.movie_outlined,
+        '本地视频推流中 — 独立播放窗口后台播放, 切换房间不中断'
+      ),
       CastMode.camera => (Icons.videocam, '摄像头推流中'),
       _ => (Icons.cast, '未推流 — 选择屏幕共享、本地视频或摄像头开始推流'),
     };
@@ -756,74 +749,58 @@ class _RoomCastPageState extends State<RoomCastPage> {
     );
   }
 
-  /// 本地视频推流控制区: PC 本地播放/暂停/进度(画面实时推给房间内手机端)
+  /// 本地视频推流控制区: 播放/暂停/进度指令转发给独立播放窗口
   Widget _buildLocalPlayerControls(CastSession session, ColorScheme scheme) {
-    final player = session.player;
-    if (player == null) return const SizedBox.shrink();
+    final playing = session.playerPlaying;
+    final duration = session.playerDurationMs / 1000.0;
+    final maxSeconds = duration > 0 ? duration : 1.0;
+    final position = (_seekPreview ?? session.playerPositionMs / 1000.0)
+        .clamp(0.0, maxSeconds);
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: StreamBuilder<Duration>(
-          stream: player.stream.position,
-          builder: (context, snapshot) {
-            final playing = player.state.playing;
-            final duration = player.state.duration.inSeconds.toDouble();
-            final maxSeconds = duration > 0 ? duration : 1.0;
-            final position = (_seekPreview ??
-                    (snapshot.data ?? player.state.position)
-                        .inSeconds
-                        .toDouble())
-                .clamp(0.0, maxSeconds);
-            return Column(
-              mainAxisSize: MainAxisSize.min,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.movie_outlined, size: 18, color: scheme.primary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(session.sourceLabel ?? '本地视频',
-                          overflow: TextOverflow.ellipsis,
-                          style:
-                              const TextStyle(fontWeight: FontWeight.w700)),
-                    ),
-                    const Text('实时推流中',
-                        style:
-                            TextStyle(fontSize: 12, color: Colors.white54)),
-                  ],
+                Icon(Icons.movie_outlined, size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(session.sourceLabel ?? '本地视频',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
                 ),
-                Row(
-                  children: [
-                    IconButton.filledTonal(
-                      onPressed: () async {
-                        await player.playOrPause();
-                        if (mounted) setState(() {});
-                      },
-                      icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(_formatClock(position.toInt()),
-                        style: const TextStyle(fontSize: 12)),
-                    Expanded(
-                      child: Slider(
-                        value: position,
-                        max: maxSeconds,
-                        onChanged: (value) =>
-                            setState(() => _seekPreview = value),
-                        onChangeEnd: (value) {
-                          setState(() => _seekPreview = null);
-                          player.seek(
-                              Duration(milliseconds: (value * 1000).round()));
-                        },
-                      ),
-                    ),
-                    Text(_formatClock(duration.toInt()),
-                        style: const TextStyle(fontSize: 12)),
-                  ],
-                ),
+                const Text('后台推流中',
+                    style: TextStyle(fontSize: 12, color: Colors.white54)),
               ],
-            );
-          },
+            ),
+            Row(
+              children: [
+                IconButton.filledTonal(
+                  onPressed: session.playerPlayPause,
+                  icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                ),
+                const SizedBox(width: 8),
+                Text(_formatClock(position.toInt()),
+                    style: const TextStyle(fontSize: 12)),
+                Expanded(
+                  child: Slider(
+                    value: position,
+                    max: maxSeconds,
+                    onChanged: (value) =>
+                        setState(() => _seekPreview = value),
+                    onChangeEnd: (value) {
+                      setState(() => _seekPreview = null);
+                      session.playerSeek((value * 1000).round());
+                    },
+                  ),
+                ),
+                Text(_formatClock(duration.toInt()),
+                    style: const TextStyle(fontSize: 12)),
+              ],
+            ),
+          ],
         ),
       ),
     );
