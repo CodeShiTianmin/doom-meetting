@@ -10,6 +10,7 @@ import com.doommeeting.server.enums.RoomStatus;
 import com.doommeeting.server.repository.RoomLikeRepository;
 import com.doommeeting.server.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,12 +38,20 @@ public class LikeService {
             throw new BusinessException("房间已关闭, 无法点赞");
         }
         RoomMember member = memberService.requireOnlineMember(room, identity, memberToken);
+        if (likeRepository.countByRoomAndMemberIdentity(room, member.getIdentity()) > 0) {
+            throw new BusinessException(409, "每人仅可点赞一次");
+        }
 
         RoomLike like = new RoomLike();
         like.setRoom(room);
         like.setMemberIdentity(member.getIdentity());
         like.setNickname(member.getNickname());
-        likeRepository.save(like);
+        try {
+            likeRepository.saveAndFlush(like);
+        } catch (DataIntegrityViolationException e) {
+            // 并发重复点赞由唯一约束兑底
+            throw new BusinessException(409, "每人仅可点赞一次");
+        }
 
         room.setLikeCount(room.getLikeCount() + 1);
         roomRepository.save(room);

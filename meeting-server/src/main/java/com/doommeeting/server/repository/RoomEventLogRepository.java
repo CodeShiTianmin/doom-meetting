@@ -9,4 +9,6 @@ import java.util.List;
 public interface RoomEventLogRepository extends JpaRepository<RoomEventLog, Long> {
 
     List<RoomEventLog> findTop200ByRoomOrderByCreatedAtDesc(Room room);
+
+    void deleteByRoom(Room room);
 }

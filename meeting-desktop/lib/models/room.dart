@@ -173,4 +173,3 @@ class SeatInviteModel {
         revoked: json['revoked'] == true,
       );
 }
-

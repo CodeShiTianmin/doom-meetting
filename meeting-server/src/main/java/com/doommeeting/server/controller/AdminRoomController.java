@@ -1,8 +1,11 @@
 package com.doommeeting.server.controller;
 
 import com.doommeeting.server.common.ApiResponse;
+import com.doommeeting.server.dto.ChatDtos.AdminChatRequest;
+import com.doommeeting.server.dto.ChatDtos.ChatMessageResponse;
 import com.doommeeting.server.dto.LikeDtos.LikeRecordResponse;
 import com.doommeeting.server.dto.RoomDtos.*;
+import com.doommeeting.server.service.ChatService;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.LiveKitTokenService;
 import com.doommeeting.server.service.MemberManagementService;
@@ -25,6 +28,7 @@ public class AdminRoomController {
 
     private final RoomService roomService;
     private final LikeService likeService;
+    private final ChatService chatService;
     private final LiveKitTokenService liveKitTokenService;
     private final MemberManagementService memberManagementService;
 
@@ -120,6 +124,27 @@ public class AdminRoomController {
     public ApiResponse<Void> closeRoom(@PathVariable Long id) {
         roomService.closeRoom(id);
         return ApiResponse.ok();
+    }
+
+    /** 删除房间(先关闭会议, 再删除房间及关联记录) */
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> deleteRoom(@PathVariable Long id, Authentication authentication) {
+        roomService.deleteRoom(id, authentication.getName());
+        return ApiResponse.ok();
+    }
+
+    /** PC 端发送文字聊天消息 */
+    @PostMapping("/{id}/chat")
+    public ApiResponse<ChatMessageResponse> sendChat(@PathVariable Long id,
+                                                     @Valid @RequestBody AdminChatRequest request,
+                                                     Authentication authentication) {
+        return ApiResponse.ok(chatService.sendFromAdmin(id, authentication.getName(), request.content()));
+    }
+
+    /** 近期聊天记录(时间正序) */
+    @GetMapping("/{id}/chat")
+    public ApiResponse<List<ChatMessageResponse>> chatHistory(@PathVariable Long id) {
+        return ApiResponse.ok(chatService.recentByRoomId(id));
     }
 
     @PostMapping("/{id}/invite/regenerate")

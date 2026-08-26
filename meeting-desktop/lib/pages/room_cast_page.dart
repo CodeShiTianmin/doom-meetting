@@ -9,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/cast_manager.dart';
 import '../services/cast_session.dart';
 import '../services/ws_service.dart';
+import '../widgets/chat_overlay.dart';
 
 /// 单房间推流控制:
 /// - 每个房间可独立选择推流源: 屏幕/窗口共享、本地视频推流、摄像头推流(均走 LiveKit 实时流)
@@ -32,6 +33,10 @@ class _RoomCastPageState extends State<RoomCastPage> {
   Timer? _refreshTimer;
   int _likeFlash = 0;
   double? _seekPreview;
+  int _chatId = 0;
+  final List<ChatMessageItem> _chatMessages = [];
+  final TextEditingController _chatController = TextEditingController();
+  List<Map<String, dynamic>> _likeRecords = [];
 
   @override
   void initState() {
@@ -47,6 +52,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
     if (room == null) return;
     _ws.connect(onDashboardEvent: (_) {});
     _ws.subscribeRoom(room.roomCode, _onRoomEvent);
+    _loadChatHistory();
+    _loadLikeRecords();
     try {
       final session = await CastManager.instance.ensureSession(widget.roomId);
       session.addListener(_onSessionChanged);
@@ -75,6 +82,20 @@ class _RoomCastPageState extends State<RoomCastPage> {
       case 'LIKE':
         setState(() => _likeFlash++);
         _refreshRoom();
+        _loadLikeRecords();
+        break;
+      case 'CHAT':
+        setState(() {
+          _chatMessages.add(ChatMessageItem(
+            id: ++_chatId,
+            sender: (data['sender'] as String?) ?? '匿名',
+            content: (data['content'] as String?) ?? '',
+            fromAdmin: data['fromAdmin'] == true,
+          ));
+          if (_chatMessages.length > 100) {
+            _chatMessages.removeRange(0, _chatMessages.length - 100);
+          }
+        });
         break;
       case 'ROOM_RUNNING':
         _showToast('全部客户已就位, 该房间已运行');
@@ -110,6 +131,47 @@ class _RoomCastPageState extends State<RoomCastPage> {
         break;
       default:
         break;
+    }
+  }
+
+  Future<void> _loadChatHistory() async {
+    try {
+      final records = await ApiClient.instance.chatHistory(widget.roomId);
+      if (!mounted) return;
+      setState(() {
+        _chatMessages
+          ..clear()
+          ..addAll(records
+              .whereType<Map<String, dynamic>>()
+              .map((item) => ChatMessageItem(
+                    id: ++_chatId,
+                    sender: (item['sender'] as String?) ?? '匿名',
+                    content: (item['content'] as String?) ?? '',
+                    fromAdmin: item['fromAdmin'] == true,
+                  )));
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadLikeRecords() async {
+    try {
+      final records = await ApiClient.instance.listLikes(widget.roomId);
+      if (!mounted) return;
+      setState(() =>
+          _likeRecords = records.whereType<Map<String, dynamic>>().toList());
+    } catch (_) {}
+  }
+
+  Future<void> _sendChat() async {
+    final content = _chatController.text.trim();
+    if (content.isEmpty) return;
+    _chatController.clear();
+    try {
+      await ApiClient.instance.sendChat(widget.roomId, content);
+    } on ApiException catch (error) {
+      _showToast('发送失败: ${error.message}');
+    } catch (error) {
+      _showToast('发送失败: $error');
     }
   }
 
@@ -194,7 +256,15 @@ class _RoomCastPageState extends State<RoomCastPage> {
   }
 
   static const _videoExtensions = [
-    'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts',
+    'mp4',
+    'mkv',
+    'avi',
+    'mov',
+    'wmv',
+    'flv',
+    'webm',
+    'm4v',
+    'ts',
   ];
 
   /// 本地视频推流: 选择本地视频文件, 本地解码播放后经窗口捕获以实时流推给房间
@@ -213,8 +283,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
     try {
       await session.startVideoCast(path);
-      await ApiClient.instance.startCast(widget.roomId, 'VIDEO',
-          label: name, replace: true);
+      await ApiClient.instance
+          .startCast(widget.roomId, 'VIDEO', label: name, replace: true);
     } catch (error) {
       await session.stopCast();
       _showToast('视频推流启动失败: $error');
@@ -299,17 +369,15 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 DataColumn(label: Text('状态')),
               ],
               rows: [
-                for (final row
-                    in rows.whereType<Map<String, dynamic>>())
+                for (final row in rows.whereType<Map<String, dynamic>>())
                   DataRow(cells: [
                     DataCell(Text('${row['nickname'] ?? ''}')),
                     DataCell(Text('${row['seatNo'] ?? '-'}')),
-                    DataCell(Text(_formatClock(
-                        (row['onlineSeconds'] as num?)?.toInt()))),
+                    DataCell(Text(
+                        _formatClock((row['onlineSeconds'] as num?)?.toInt()))),
                     DataCell(Text('${row['joinCount'] ?? 0}')),
                     DataCell(Text('${row['likeCount'] ?? 0}')),
-                    DataCell(Text(
-                        row['online'] == true ? '在线' : '离线')),
+                    DataCell(Text(row['online'] == true ? '在线' : '离线')),
                   ]),
               ],
             ),
@@ -353,6 +421,44 @@ class _RoomCastPageState extends State<RoomCastPage> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  Future<void> _deleteRoom() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('删除房间'),
+        content: const Text('删除后会议将结束, 房间及其成员/点赞/事件记录将全部删除, 不可恢复。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ApiClient.instance.deleteRoom(widget.roomId);
+    } catch (error) {
+      _showToast('删除房间失败: $error');
+      return;
+    }
+    await CastManager.instance.closeSession(widget.roomId);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  String _formatLikeTime(String? raw) {
+    if (raw == null) return '';
+    final time = DateTime.tryParse(raw);
+    if (time == null) return '';
+    final hh = time.hour.toString().padLeft(2, '0');
+    final mm = time.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
   void _showToast(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -372,6 +478,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _chatController.dispose();
     _session?.removeListener(_onSessionChanged);
     _ws.disconnect();
     super.dispose();
@@ -449,6 +556,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 children: [
                   Expanded(child: _buildPreview(session, scheme)),
                   const SizedBox(height: 12),
+                  _buildChatInput(scheme),
+                  const SizedBox(height: 12),
                   _buildCastButtons(room, session),
                   if (session?.mode == CastMode.video) ...[
                     const SizedBox(height: 12),
@@ -475,8 +584,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
                         title: const Text('开放视频通话'),
                         value: room.videoCallEnabled,
                         onChanged: (value) async {
-                          await ApiClient.instance.updateSettings(room.id,
-                              videoCallEnabled: value);
+                          await ApiClient.instance
+                              .updateSettings(room.id, videoCallEnabled: value);
                           _refreshRoom();
                         },
                       ),
@@ -506,11 +615,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
                             const Icon(Icons.group_outlined, size: 18),
                             const SizedBox(width: 6),
                             const Text('成员就位',
-                                style:
-                                    TextStyle(fontWeight: FontWeight.w700)),
+                                style: TextStyle(fontWeight: FontWeight.w700)),
                             const Spacer(),
-                            Text(
-                                '${room.onlineMemberCount}/${room.maxMembers}',
+                            Text('${room.onlineMemberCount}/${room.maxMembers}',
                                 style: TextStyle(
                                     color: room.onlineMemberCount >=
                                             room.maxMembers
@@ -527,12 +634,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
                                   .instance
                                   .muteAll(room.id, !room.allMuted)),
                               icon: Icon(
-                                  room.allMuted
-                                      ? Icons.mic
-                                      : Icons.mic_off,
+                                  room.allMuted ? Icons.mic : Icons.mic_off,
                                   size: 15),
-                              label: Text(
-                                  room.allMuted ? '解除全员静音' : '全员静音'),
+                              label: Text(room.allMuted ? '解除全员静音' : '全员静音'),
                             ),
                             const Spacer(),
                             TextButton.icon(
@@ -568,20 +672,22 @@ class _RoomCastPageState extends State<RoomCastPage> {
                                           iconSize: 17,
                                           icon: const Icon(Icons.check,
                                               color: Colors.greenAccent),
-                                          onPressed: () => _memberAction(
-                                              () => ApiClient.instance
-                                                  .approveMember(room.id,
-                                                      member.identity, true)),
+                                          onPressed: () => _memberAction(() =>
+                                              ApiClient.instance.approveMember(
+                                                  room.id,
+                                                  member.identity,
+                                                  true)),
                                         ),
                                         IconButton(
                                           tooltip: '拒绝入会',
                                           iconSize: 17,
                                           icon: const Icon(Icons.close,
                                               color: Colors.redAccent),
-                                          onPressed: () => _memberAction(
-                                              () => ApiClient.instance
-                                                  .approveMember(room.id,
-                                                      member.identity, false)),
+                                          onPressed: () => _memberAction(() =>
+                                              ApiClient.instance.approveMember(
+                                                  room.id,
+                                                  member.identity,
+                                                  false)),
                                         ),
                                       ],
                                     )
@@ -589,9 +695,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         IconButton(
-                                          tooltip: member.muted
-                                              ? '取消静音'
-                                              : '静音',
+                                          tooltip: member.muted ? '取消静音' : '静音',
                                           iconSize: 17,
                                           icon: Icon(
                                               member.muted
@@ -600,12 +704,11 @@ class _RoomCastPageState extends State<RoomCastPage> {
                                               color: member.muted
                                                   ? Colors.orange
                                                   : Colors.white54),
-                                          onPressed: () => _memberAction(
-                                              () => ApiClient.instance
-                                                  .muteMember(
-                                                      room.id,
-                                                      member.identity,
-                                                      !member.muted)),
+                                          onPressed: () => _memberAction(() =>
+                                              ApiClient.instance.muteMember(
+                                                  room.id,
+                                                  member.identity,
+                                                  !member.muted)),
                                         ),
                                         IconButton(
                                           tooltip: member.cameraDisabled
@@ -619,24 +722,21 @@ class _RoomCastPageState extends State<RoomCastPage> {
                                               color: member.cameraDisabled
                                                   ? Colors.orange
                                                   : Colors.white54),
-                                          onPressed: () => _memberAction(
-                                              () => ApiClient.instance
+                                          onPressed: () => _memberAction(() =>
+                                              ApiClient.instance
                                                   .setMemberCamera(
                                                       room.id,
                                                       member.identity,
-                                                      !member
-                                                          .cameraDisabled)),
+                                                      !member.cameraDisabled)),
                                         ),
                                         IconButton(
                                           tooltip: '移出会议',
                                           iconSize: 17,
-                                          icon: const Icon(
-                                              Icons.person_remove,
+                                          icon: const Icon(Icons.person_remove,
                                               color: Colors.redAccent),
-                                          onPressed: () => _memberAction(
-                                              () => ApiClient.instance
-                                                  .kickMember(room.id,
-                                                      member.identity)),
+                                          onPressed: () => _memberAction(() =>
+                                              ApiClient.instance.kickMember(
+                                                  room.id, member.identity)),
                                         ),
                                       ],
                                     ),
@@ -650,14 +750,57 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 ),
                 const SizedBox(height: 12),
                 Card(
-                  child: ListTile(
-                    leading: Icon(Icons.favorite,
-                        color: _likeFlash.isEven
-                            ? Colors.pinkAccent
-                            : Colors.pink.shade200),
-                    title: Text('点赞 ${room.likeCount}'),
-                    subtitle: const Text('手机端点赞实时同步并入库记录',
-                        style: TextStyle(fontSize: 11)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.favorite,
+                                size: 18,
+                                color: _likeFlash.isEven
+                                    ? Colors.pinkAccent
+                                    : Colors.pink.shade200),
+                            const SizedBox(width: 6),
+                            Text('点赞记录 (${room.likeCount})',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        if (_likeRecords.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 6),
+                            child: Text('暂无点赞, 每人限点赞一次',
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.white38)),
+                          )
+                        else
+                          for (final record in _likeRecords)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.favorite,
+                                      size: 12, color: Colors.pinkAccent),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                        '${record['nickname'] ?? record['memberIdentity'] ?? '匿名'}',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 12)),
+                                  ),
+                                  Text(
+                                      _formatLikeTime(
+                                          record['likedAt'] as String?),
+                                      style: const TextStyle(
+                                          fontSize: 10, color: Colors.white38)),
+                                ],
+                              ),
+                            ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -671,6 +814,18 @@ class _RoomCastPageState extends State<RoomCastPage> {
                         style: TextStyle(fontSize: 11)),
                     enabled: !room.closed,
                     onTap: room.closed ? null : _closeRoom,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  color: Colors.red.withValues(alpha: 0.08),
+                  child: ListTile(
+                    leading: const Icon(Icons.delete_forever,
+                        color: Colors.redAccent),
+                    title: const Text('删除房间'),
+                    subtitle: const Text('删除房间及全部关联记录, 不可恢复',
+                        style: TextStyle(fontSize: 11)),
+                    onTap: _deleteRoom,
                   ),
                 ),
               ],
@@ -693,18 +848,64 @@ class _RoomCastPageState extends State<RoomCastPage> {
         ),
       ),
       clipBehavior: Clip.antiAlias,
-      child: _buildPreviewPlaceholder(session, scheme),
+      child: Stack(
+        children: [
+          Positioned.fill(child: _buildPreviewPlaceholder(session, scheme)),
+          // 左下角聊天气泡(最多 6 条, 新消息从下往上滑入)
+          Positioned(
+            left: 12,
+            bottom: 12,
+            width: 360,
+            child: ChatOverlay(messages: _chatMessages),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 聊天输入栏: PC 端与手机端实时文字聊天
+  Widget _buildChatInput(ColorScheme scheme) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.chat_bubble_outline, size: 16, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _chatController,
+              maxLength: 200,
+              style: const TextStyle(fontSize: 13),
+              decoration: const InputDecoration(
+                hintText: '发送消息到房间…',
+                hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                border: InputBorder.none,
+                counterText: '',
+                isDense: true,
+              ),
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _sendChat(),
+            ),
+          ),
+          IconButton(
+            onPressed: _sendChat,
+            icon: Icon(Icons.send, size: 18, color: scheme.primary),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildPreviewPlaceholder(CastSession? session, ColorScheme scheme) {
     final (icon, text) = switch (session?.mode) {
-      CastMode.screen => (Icons.screen_share, '屏幕/窗口推流中'),
-      CastMode.video => (
-        Icons.movie_outlined,
-        '本地视频推流中 — 独立播放窗口后台播放, 切换房间不中断'
-      ),
-      CastMode.camera => (Icons.videocam, '摄像头推流中'),
+      CastMode.screen => (Icons.screen_share, '屏幕/窗口推流中 — 后台持续推流, 切换房间/页面不中断'),
+      CastMode.video => (Icons.movie_outlined, '本地视频推流中 — 独立播放窗口后台播放, 切换房间不中断'),
+      CastMode.camera => (Icons.videocam, '摄像头推流中 — 后台持续推流, 切换房间/页面不中断'),
       _ => (Icons.cast, '未推流 — 选择屏幕共享、本地视频或摄像头开始推流'),
     };
     return Center(
@@ -788,8 +989,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                   child: Slider(
                     value: position,
                     max: maxSeconds,
-                    onChanged: (value) =>
-                        setState(() => _seekPreview = value),
+                    onChanged: (value) => setState(() => _seekPreview = value),
                     onChangeEnd: (value) {
                       setState(() => _seekPreview = null);
                       session.playerSeek((value * 1000).round());
@@ -808,8 +1008,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
   Widget _buildCurrentCastCard(RoomModel room, ColorScheme scheme) {
     final casting = room.casting || _session?.publishing == true;
-    final description =
-        room.castDescription ?? _session?.sourceLabel ?? '推流中';
+    final description = room.castDescription ?? _session?.sourceLabel ?? '推流中';
     return Card(
       color: casting ? scheme.primary.withValues(alpha: 0.10) : null,
       child: ListTile(

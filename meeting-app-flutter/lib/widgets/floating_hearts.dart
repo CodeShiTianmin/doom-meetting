@@ -74,7 +74,8 @@ class _FloatingHeartState extends State<_FloatingHeart>
             opacity: (1 - t).clamp(0.0, 0.9),
             child: Transform.scale(
               scale: 0.6 + t * 0.65,
-              child: const Icon(Icons.favorite, color: Colors.pinkAccent, size: 28),
+              child: const Icon(Icons.favorite,
+                  color: Colors.pinkAccent, size: 28),
             ),
           ),
         );

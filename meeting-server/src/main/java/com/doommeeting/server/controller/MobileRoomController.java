@@ -1,7 +1,10 @@
 package com.doommeeting.server.controller;
 
 import com.doommeeting.server.common.ApiResponse;
+import com.doommeeting.server.dto.ChatDtos.ChatMessageResponse;
+import com.doommeeting.server.dto.ChatDtos.MobileChatRequest;
 import com.doommeeting.server.dto.MobileDtos.*;
+import com.doommeeting.server.service.ChatService;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.MemberService;
 import com.doommeeting.server.service.RoomService;
@@ -9,6 +12,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,6 +26,7 @@ public class MobileRoomController {
     private final MemberService memberService;
     private final LikeService likeService;
     private final RoomService roomService;
+    private final ChatService chatService;
 
     /** 扫码入会: 校验一次性凭证 -> 签发 LiveKit 入会 JWT */
     @PostMapping("/join")
@@ -49,6 +54,20 @@ public class MobileRoomController {
                                                  @Valid @RequestBody LikeRequest request) {
         long likeCount = likeService.like(roomCode, request.identity(), request.memberToken());
         return ApiResponse.ok(Map.of("likeCount", likeCount));
+    }
+
+    /** 发送文字聊天消息(实时广播到房间内所有端) */
+    @PostMapping("/{roomCode}/chat")
+    public ApiResponse<ChatMessageResponse> sendChat(@PathVariable String roomCode,
+                                                     @Valid @RequestBody MobileChatRequest request) {
+        return ApiResponse.ok(chatService.sendFromMember(
+                roomCode, request.identity(), request.memberToken(), request.content()));
+    }
+
+    /** 近期聊天记录(时间正序) */
+    @GetMapping("/{roomCode}/chat")
+    public ApiResponse<List<ChatMessageResponse>> chatHistory(@PathVariable String roomCode) {
+        return ApiResponse.ok(chatService.recent(roomCode));
     }
 
     /** 录屏检测上报(允许截屏, 禁止录制) */

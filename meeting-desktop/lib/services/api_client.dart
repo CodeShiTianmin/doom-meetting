@@ -132,6 +132,29 @@ class ApiClient {
     await _dio.post('/api/admin/rooms/$id/close');
   }
 
+  /// 删除房间(先结束会议, 再删除房间及关联记录)
+  Future<void> deleteRoom(int id) async {
+    final response = await _dio.delete('/api/admin/rooms/$id');
+    final body = response.data as Map<String, dynamic>;
+    if (body['code'] != 0) {
+      throw ApiException((body['message'] as String?) ?? '删除失败',
+          code: (body['code'] as num?)?.toInt() ?? -1);
+    }
+  }
+
+  /// PC 端发送文字聊天消息
+  Future<void> sendChat(int roomId, String content) async {
+    final response = await _dio
+        .post('/api/admin/rooms/$roomId/chat', data: {'content': content});
+    _unwrap(response);
+  }
+
+  /// 近期聊天记录(时间正序)
+  Future<List<dynamic>> chatHistory(int roomId) async {
+    final response = await _dio.get('/api/admin/rooms/$roomId/chat');
+    return _unwrapList(response);
+  }
+
   Future<RoomModel> regenerateInvite(int id) async {
     final response = await _dio.post('/api/admin/rooms/$id/invite/regenerate');
     return RoomModel.fromJson(_unwrap(response));
@@ -164,7 +187,8 @@ class ApiClient {
   }
 
   Future<void> muteAll(int roomId, bool muted) async {
-    final response = await _dio.post('/api/admin/rooms/$roomId/members/mute-all',
+    final response = await _dio.post(
+        '/api/admin/rooms/$roomId/members/mute-all',
         queryParameters: {'muted': muted});
     _unwrap(response);
   }
@@ -177,8 +201,7 @@ class ApiClient {
     _unwrap(response);
   }
 
-  Future<void> approveMember(
-      int roomId, String identity, bool approved) async {
+  Future<void> approveMember(int roomId, String identity, bool approved) async {
     final response = await _dio.post(
         '/api/admin/rooms/$roomId/members/$identity/approve',
         queryParameters: {'approved': approved});

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -26,6 +27,7 @@ class _JoinPageState extends State<JoinPage> {
   final _nicknameController = TextEditingController();
   bool _joining = false;
   bool _scanning = false;
+  final MobileScannerController _scannerController = MobileScannerController();
 
   @override
   void initState() {
@@ -63,6 +65,7 @@ class _JoinPageState extends State<JoinPage> {
 
   @override
   void dispose() {
+    _scannerController.dispose();
     _roomCodeController.dispose();
     _tokenController.dispose();
     _nicknameController.dispose();
@@ -89,6 +92,28 @@ class _JoinPageState extends State<JoinPage> {
       return;
     }
     setState(() => _scanning = true);
+  }
+
+  /// 从图库选择图片并识别其中的邀请二维码
+  Future<void> _pickImageAndScan() async {
+    final XFile? image =
+        await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (image == null) return;
+    try {
+      final capture = await _scannerController.analyzeImage(image.path);
+      final barcodes = capture?.barcodes ?? const <Barcode>[];
+      for (final barcode in barcodes) {
+        final raw = barcode.rawValue;
+        if (raw != null && _applyInviteLink(raw)) {
+          if (mounted) setState(() => _scanning = false);
+          _showError('已识别邀请二维码, 请填写昵称后入会');
+          return;
+        }
+      }
+      _showError('图片中未识别到有效的邀请二维码');
+    } catch (_) {
+      _showError('图片识别失败, 请换一张更清晰的二维码图片');
+    }
   }
 
   Future<void> _join() async {
@@ -140,6 +165,13 @@ class _JoinPageState extends State<JoinPage> {
             icon: const Icon(Icons.close),
             onPressed: () => setState(() => _scanning = false),
           ),
+          actions: [
+            IconButton(
+              tooltip: '从图库选图识别',
+              icon: const Icon(Icons.photo_library_outlined),
+              onPressed: _pickImageAndScan,
+            ),
+          ],
         ),
         body: MobileScanner(
           onDetect: (capture) {
@@ -185,7 +217,8 @@ class _JoinPageState extends State<JoinPage> {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF5B8DEF).withValues(alpha: 0.35),
+                            color:
+                                const Color(0xFF5B8DEF).withValues(alpha: 0.35),
                             blurRadius: 28,
                           ),
                         ],
@@ -214,6 +247,17 @@ class _JoinPageState extends State<JoinPage> {
                       icon: const Icon(Icons.qr_code_scanner),
                       label: const Text('扫描二维码'),
                       onPressed: _joining ? null : _openScanner,
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: const Text('从图库选图识别二维码'),
+                      onPressed: _joining ? null : _pickImageAndScan,
                     ),
                     const SizedBox(height: 20),
                     const Row(children: [
@@ -274,8 +318,7 @@ class _JoinPageState extends State<JoinPage> {
                           ? const SizedBox(
                               width: 20,
                               height: 20,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('进入房间'),
                     ),
                   ],
@@ -318,8 +361,7 @@ class _WaitingApprovalPageState extends State<WaitingApprovalPage> {
     _ws.connect(widget.session.roomCode, widget.session.identity,
         widget.session.memberToken, _onRoomEvent);
     // 兼容 WS 断开时的兼底轮询
-    _pollTimer =
-        Timer.periodic(const Duration(seconds: 8), (_) => _tryEnter());
+    _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _tryEnter());
   }
 
   void _onRoomEvent(Map<String, dynamic> event) {

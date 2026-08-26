@@ -46,8 +46,7 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
           await _player.playOrPause();
           break;
         case 'seekMs':
-          await _player
-              .seek(Duration(milliseconds: call.arguments as int));
+          await _player.seek(Duration(milliseconds: call.arguments as int));
           break;
         case 'closePlayer':
           await WindowController.fromWindowId(widget.windowId).close();

@@ -61,6 +61,28 @@ class ApiClient {
     return ((_unwrap(response))['likeCount'] as num?)?.toInt() ?? 0;
   }
 
+  Future<void> sendChat(String roomCode, String identity, String memberToken,
+      String content) async {
+    final response = await _dio.post('/api/mobile/rooms/$roomCode/chat', data: {
+      'identity': identity,
+      'memberToken': memberToken,
+      'content': content,
+    });
+    _unwrap(response);
+  }
+
+  Future<List<Map<String, dynamic>>> fetchChat(String roomCode) async {
+    final response = await _dio.get('/api/mobile/rooms/$roomCode/chat');
+    final body = response.data as Map<String, dynamic>;
+    if (body['code'] != 0) {
+      throw ApiException(
+          (body['message'] as String?) ?? '请求失败', body['code'] as int? ?? -1);
+    }
+    return ((body['data'] as List<dynamic>?) ?? const [])
+        .map((item) => item as Map<String, dynamic>)
+        .toList();
+  }
+
   Future<void> reportRecording(String roomCode, String identity,
       String memberToken, String detail) async {
     await _dio.post('/api/mobile/rooms/$roomCode/report-recording', data: {

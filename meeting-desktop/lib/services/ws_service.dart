@@ -15,7 +15,8 @@ class DesktopWsService {
   void Function(Map<String, dynamic>)? _dashboardHandler;
   bool _connected = false;
 
-  void connect({required void Function(Map<String, dynamic>) onDashboardEvent}) {
+  void connect(
+      {required void Function(Map<String, dynamic>) onDashboardEvent}) {
     _dashboardHandler = onDashboardEvent;
     _client = StompClient(
       config: StompConfig(
