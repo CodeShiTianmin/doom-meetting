@@ -13,6 +13,7 @@ import '../models/room_state.dart';
 import '../services/api_client.dart';
 import '../services/recording_guard.dart';
 import '../services/ws_service.dart';
+import '../widgets/chat_overlay.dart';
 import '../widgets/floating_hearts.dart';
 import '../widgets/watermark.dart';
 import 'join_page.dart';
@@ -57,6 +58,13 @@ class _RoomPageState extends State<RoomPage> {
   bool _cameraDisabledByHost = false;
   int _heartId = 0;
   final List<HeartItem> _hearts = [];
+  bool _liked = false;
+  bool _uiHidden = false;
+  int _chatId = 0;
+  final List<ChatMessageItem> _chatMessages = [];
+  bool _chatInputVisible = false;
+  final TextEditingController _chatController = TextEditingController();
+  final FocusNode _chatFocus = FocusNode();
 
   Timer? _heartbeatTimer;
   Timer? _stateTimer;
@@ -73,16 +81,17 @@ class _RoomPageState extends State<RoomPage> {
     _cameraDisabledByHost = session.cameraDisabledByHost;
     _initLocalControls();
     _refreshState();
+    _loadChatHistory();
     _connectLiveKit();
-    _ws.connect(session.roomCode, session.identity, session.memberToken,
-        _onRoomEvent);
+    _ws.connect(
+        session.roomCode, session.identity, session.memberToken, _onRoomEvent);
     _heartbeatTimer = Timer.periodic(AppConfig.heartbeatInterval, (_) {
       ApiClient.instance
           .heartbeat(session.roomCode, session.identity, session.memberToken)
           .catchError((_) {});
     });
-    _stateTimer = Timer.periodic(
-        AppConfig.stateRefreshInterval, (_) => _refreshState());
+    _stateTimer =
+        Timer.periodic(AppConfig.stateRefreshInterval, (_) => _refreshState());
     _clockTimer =
         Timer.periodic(const Duration(seconds: 1), (_) => _tickClock());
     if (session.recordingForbidden) {
@@ -179,8 +188,8 @@ class _RoomPageState extends State<RoomPage> {
     );
     _lkRoom = room;
     _lkListener = room.createListener()
-      ..on<lk.TrackSubscribedEvent>((event) => _attachRemoteTrack(
-          event.participant, event.track))
+      ..on<lk.TrackSubscribedEvent>(
+          (event) => _attachRemoteTrack(event.participant, event.track))
       ..on<lk.TrackUnsubscribedEvent>(
           (event) => _detachRemoteTrack(event.participant, event.track))
       ..on<lk.ParticipantDisconnectedEvent>((event) {
@@ -331,6 +340,19 @@ class _RoomPageState extends State<RoomPage> {
     final type = event['type'] as String?;
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
+      case 'CHAT':
+        setState(() {
+          _chatMessages.add(ChatMessageItem(
+            id: ++_chatId,
+            sender: (data['sender'] as String?) ?? '匿名',
+            content: (data['content'] as String?) ?? '',
+            fromAdmin: data['fromAdmin'] == true,
+          ));
+          if (_chatMessages.length > 50) {
+            _chatMessages.removeRange(0, _chatMessages.length - 50);
+          }
+        });
+        break;
       case 'CAST_STOPPED':
         _refreshState();
         _showToast('公司已停止推流');
@@ -353,11 +375,13 @@ class _RoomPageState extends State<RoomPage> {
         break;
       case 'LIKE':
         setState(() {
-          _state = _state?.copyWith(
-              likeCount: (data['likeCount'] as num?)?.toInt());
+          _state =
+              _state?.copyWith(likeCount: (data['likeCount'] as num?)?.toInt());
           // 本机点赞已在点击时弹过爱心, 广播回声不重复动画
           if (data['identity'] != session.identity) {
             _pushHeart();
+          } else {
+            _liked = true;
           }
         });
         break;
@@ -448,11 +472,56 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   Future<void> _like() async {
-    setState(_pushHeart);
+    if (_liked) {
+      _showToast('每人仅可点赞一次');
+      return;
+    }
+    setState(() {
+      _liked = true;
+      _pushHeart();
+    });
     try {
       await ApiClient.instance
           .sendLike(session.roomCode, session.identity, session.memberToken);
+    } on ApiException catch (e) {
+      if (e.code != 409) {
+        if (mounted) setState(() => _liked = false);
+      }
+      _showToast(e.message);
+    } catch (_) {
+      if (mounted) setState(() => _liked = false);
+    }
+  }
+
+  Future<void> _loadChatHistory() async {
+    try {
+      final records = await ApiClient.instance.fetchChat(session.roomCode);
+      if (!mounted) return;
+      setState(() {
+        _chatMessages
+          ..clear()
+          ..addAll(records.map((item) => ChatMessageItem(
+                id: ++_chatId,
+                sender: (item['sender'] as String?) ?? '匿名',
+                content: (item['content'] as String?) ?? '',
+                fromAdmin: item['fromAdmin'] == true,
+              )));
+      });
     } catch (_) {}
+  }
+
+  Future<void> _sendChat() async {
+    final content = _chatController.text.trim();
+    if (content.isEmpty) return;
+    _chatController.clear();
+    try {
+      await ApiClient.instance.sendChat(
+          session.roomCode, session.identity, session.memberToken, content);
+    } on ApiException catch (e) {
+      _showToast(e.message);
+    } catch (_) {
+      _showToast('消息发送失败');
+    }
   }
 
   void _pushHeart() {
@@ -479,13 +548,13 @@ class _RoomPageState extends State<RoomPage> {
 
   Future<void> _leave() async {
     try {
-      await ApiClient.instance.leaveRoom(
-          session.roomCode, session.identity, session.memberToken);
+      await ApiClient.instance
+          .leaveRoom(session.roomCode, session.identity, session.memberToken);
     } catch (_) {}
     await _lkRoom?.disconnect();
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const JoinPage()));
+    Navigator.of(context)
+        .pushReplacement(MaterialPageRoute(builder: (_) => const JoinPage()));
   }
 
   @override
@@ -498,6 +567,8 @@ class _RoomPageState extends State<RoomPage> {
     try {
       VolumeController().removeListener();
     } catch (_) {}
+    _chatController.dispose();
+    _chatFocus.dispose();
     _lkListener?.dispose();
     _lkRoom?.dispose();
     WakelockPlus.disable();
@@ -526,8 +597,7 @@ class _RoomPageState extends State<RoomPage> {
   Widget build(BuildContext context) {
     final state = _state;
     if (state == null) {
-      return const Scaffold(
-          body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
@@ -580,9 +650,49 @@ class _RoomPageState extends State<RoomPage> {
                 ),
               ),
             ),
+          // 上下菜单可隐藏, 专注观看投屏与聊天
           _buildTopBar(state),
           FloatingHearts(hearts: _hearts),
+          // 左下角聊天气泡(最多 6 条, 新消息从下往上滑入)
+          Positioned(
+            left: 10,
+            bottom: _uiHidden ? 28 : (_chatInputVisible ? 210 : 160),
+            width: MediaQuery.of(context).size.width * 0.68,
+            child: ChatOverlay(messages: _chatMessages),
+          ),
+          if (!_uiHidden && _chatInputVisible) _buildChatInput(),
           _buildBottomControls(state),
+          // 左侧垂直居中: 隐藏/显示上下菜单按钮
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.4),
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => setState(() {
+                    _uiHidden = !_uiHidden;
+                    if (_uiHidden) {
+                      _chatInputVisible = false;
+                      _chatFocus.unfocus();
+                    }
+                  }),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      _uiHidden
+                          ? Icons.keyboard_arrow_right
+                          : Icons.keyboard_arrow_left,
+                      color: Colors.white70,
+                      size: 22,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           Positioned.fill(
               child: Watermark(
                   identityText:
@@ -604,15 +714,13 @@ class _RoomPageState extends State<RoomPage> {
               size: 44, color: Color(0xFF5B8DEF)),
           const SizedBox(height: 8),
           Text(
-            state.castLabel != null
-                ? '推流接入中: ${state.castLabel}'
-                : '等待公司推流…',
+            state.castLabel != null ? '推流接入中: ${state.castLabel}' : '等待公司推流…',
             style: const TextStyle(color: Colors.white60),
           ),
-          if (!state.running)
+          if (state.meetingStartAt == null)
             const Padding(
               padding: EdgeInsets.only(top: 4),
-              child: Text('全部客户就位后会议开始计时',
+              child: Text('公司首次推流后会议开始计时',
                   style: TextStyle(color: Colors.white38, fontSize: 12)),
             ),
         ],
@@ -625,61 +733,65 @@ class _RoomPageState extends State<RoomPage> {
       top: 0,
       left: 0,
       right: 0,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 40, 12, 12),
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xD905071C), Colors.transparent],
+      child: AnimatedSlide(
+        offset: _uiHidden ? const Offset(0, -1) : Offset.zero,
+        duration: const Duration(milliseconds: 220),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 40, 12, 12),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xD905071C), Colors.transparent],
+            ),
           ),
-        ),
-        // 两行布局: 第一行为会议状态+房间名, 第二行为时长/倒计时/点赞/网络
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Chip(
-                  visualDensity: VisualDensity.compact,
-                  backgroundColor:
-                      state.running ? Colors.green.shade700 : Colors.blueGrey,
-                  label: Text(
-                    state.running
-                        ? '会议进行中'
-                        : state.closed
-                            ? '已结束'
-                            : '等待就位',
-                    style: const TextStyle(fontSize: 11, color: Colors.white),
+          // 两行布局: 第一行为会议状态+房间名, 第二行为时长/倒计时/点赞/网络
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor:
+                        state.running ? Colors.green.shade700 : Colors.blueGrey,
+                    label: Text(
+                      state.running
+                          ? '会议进行中'
+                          : state.closed
+                              ? '已结束'
+                              : '等待就位',
+                      style: const TextStyle(fontSize: 11, color: Colors.white),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '${state.name} · ${state.roomCode}',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${state.name} · ${state.roomCode}',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w700),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _infoChip(Icons.access_time, _formatClock(_elapsedSeconds)),
-                const SizedBox(width: 6),
-                _infoChip(Icons.hourglass_bottom,
-                    '剩 ${_formatClock(_remainingSeconds)}',
-                    warning: _remainingSeconds != null &&
-                        _remainingSeconds! <= 300),
-                const SizedBox(width: 6),
-                _infoChip(Icons.favorite, '${state.likeCount}'),
-                const Spacer(),
-                _networkChip(),
-              ],
-            ),
-          ],
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _infoChip(Icons.access_time, _formatClock(_elapsedSeconds)),
+                  const SizedBox(width: 6),
+                  _infoChip(Icons.hourglass_bottom,
+                      '剩 ${_formatClock(_remainingSeconds)}',
+                      warning: _remainingSeconds != null &&
+                          _remainingSeconds! <= 300),
+                  const SizedBox(width: 6),
+                  _infoChip(Icons.favorite, '${state.likeCount}'),
+                  const Spacer(),
+                  _networkChip(),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -738,78 +850,137 @@ class _RoomPageState extends State<RoomPage> {
       left: 0,
       right: 0,
       bottom: 0,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [Color(0xEB05071C), Colors.transparent],
+      child: AnimatedSlide(
+        offset: _uiHidden ? const Offset(0, 1) : Offset.zero,
+        duration: const Duration(milliseconds: 220),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [Color(0xEB05071C), Colors.transparent],
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 明暗 / 音量(本地调节)
+              Row(
+                children: [
+                  const Icon(Icons.brightness_6,
+                      size: 16, color: Colors.white54),
+                  Expanded(
+                    child: Slider(
+                      value: _brightness.clamp(0.05, 1.0),
+                      min: 0.05,
+                      max: 1.0,
+                      onChanged: _setBrightness,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.volume_up, size: 16, color: Colors.white54),
+                  Expanded(
+                    child: Slider(
+                      value: _volume.clamp(0.0, 1.0),
+                      max: 1.0,
+                      onChanged: _setVolume,
+                    ),
+                  ),
+                ],
+              ),
+              // 麦克风 / 摄像头 / 切换镜头 / 点赞 / 离开
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton.filledTonal(
+                    onPressed: _toggleMic,
+                    icon: Icon(_micOn && state.videoCallEnabled
+                        ? Icons.mic
+                        : Icons.mic_off),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: _toggleCamera,
+                    icon: Icon(_camOn && state.camAllowed
+                        ? Icons.videocam
+                        : Icons.videocam_off),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: _camOn ? _switchCamera : null,
+                    icon: const Icon(Icons.cameraswitch),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: _toggleSpeaker,
+                    icon: Icon(_speakerOn ? Icons.volume_up : Icons.hearing),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: () {
+                      setState(() {
+                        _chatInputVisible = !_chatInputVisible;
+                      });
+                      if (_chatInputVisible) {
+                        _chatFocus.requestFocus();
+                      }
+                    },
+                    icon: const Icon(Icons.chat_bubble_outline),
+                  ),
+                  IconButton.filled(
+                    style: IconButton.styleFrom(
+                        backgroundColor: _liked
+                            ? Colors.grey.shade700
+                            : Colors.pink.shade400),
+                    onPressed: _like,
+                    icon: Icon(_liked ? Icons.favorite : Icons.favorite_border),
+                  ),
+                  IconButton.filled(
+                    style: IconButton.styleFrom(
+                        backgroundColor: Colors.red.shade700),
+                    onPressed: _leave,
+                    icon: const Icon(Icons.call_end),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      ),
+    );
+  }
+
+  /// 底部控制栏上方的聊天输入栏
+  Widget _buildChatInput() {
+    return Positioned(
+      left: 10,
+      right: 10,
+      bottom: 160,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Row(
           children: [
-            // 明暗 / 音量(本地调节)
-            Row(
-              children: [
-                const Icon(Icons.brightness_6, size: 16, color: Colors.white54),
-                Expanded(
-                  child: Slider(
-                    value: _brightness.clamp(0.05, 1.0),
-                    min: 0.05,
-                    max: 1.0,
-                    onChanged: _setBrightness,
-                  ),
+            Expanded(
+              child: TextField(
+                controller: _chatController,
+                focusNode: _chatFocus,
+                maxLength: 200,
+                style: const TextStyle(fontSize: 13),
+                decoration: const InputDecoration(
+                  hintText: '说点什么…',
+                  hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                  border: InputBorder.none,
+                  counterText: '',
+                  isDense: true,
                 ),
-                const SizedBox(width: 8),
-                const Icon(Icons.volume_up, size: 16, color: Colors.white54),
-                Expanded(
-                  child: Slider(
-                    value: _volume.clamp(0.0, 1.0),
-                    max: 1.0,
-                    onChanged: _setVolume,
-                  ),
-                ),
-              ],
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _sendChat(),
+              ),
             ),
-            // 麦克风 / 摄像头 / 切换镜头 / 点赞 / 离开
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                IconButton.filledTonal(
-                  onPressed: _toggleMic,
-                  icon: Icon(_micOn && state.videoCallEnabled
-                      ? Icons.mic
-                      : Icons.mic_off),
-                ),
-                IconButton.filledTonal(
-                  onPressed: _toggleCamera,
-                  icon: Icon(_camOn && state.camAllowed
-                      ? Icons.videocam
-                      : Icons.videocam_off),
-                ),
-                IconButton.filledTonal(
-                  onPressed: _camOn ? _switchCamera : null,
-                  icon: const Icon(Icons.cameraswitch),
-                ),
-                IconButton.filledTonal(
-                  onPressed: _toggleSpeaker,
-                  icon: Icon(_speakerOn ? Icons.volume_up : Icons.hearing),
-                ),
-                IconButton.filled(
-                  style: IconButton.styleFrom(
-                      backgroundColor: Colors.pink.shade400),
-                  onPressed: _like,
-                  icon: const Icon(Icons.favorite),
-                ),
-                IconButton.filled(
-                  style:
-                      IconButton.styleFrom(backgroundColor: Colors.red.shade700),
-                  onPressed: _leave,
-                  icon: const Icon(Icons.call_end),
-                ),
-              ],
+            IconButton(
+              onPressed: _sendChat,
+              icon: const Icon(Icons.send, size: 18, color: Color(0xFF8AB8FF)),
             ),
           ],
         ),
@@ -853,8 +1024,8 @@ class _RoomPageState extends State<RoomPage> {
             const Icon(Icons.meeting_room, size: 56, color: Color(0xFF5B8DEF)),
             const SizedBox(height: 12),
             Text(_closedReason ?? '会议已结束',
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w700)),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
             const SizedBox(height: 20),
             FilledButton(onPressed: _leave, child: const Text('退出房间')),
           ],

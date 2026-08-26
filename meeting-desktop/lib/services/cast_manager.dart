@@ -57,8 +57,7 @@ class CastManager {
 
     final tokenInfo = await ApiClient.instance.getPublisherToken(roomId);
     final session = existing ??
-        CastSession(
-            roomId: roomId, roomCode: tokenInfo['roomCode'] as String);
+        CastSession(roomId: roomId, roomCode: tokenInfo['roomCode'] as String);
     _sessions[roomId] = session;
     try {
       await session.connect(

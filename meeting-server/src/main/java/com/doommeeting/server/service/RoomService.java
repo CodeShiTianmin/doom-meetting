@@ -171,13 +171,11 @@ public class RoomService {
         return toResponse(room, latestInvite(room));
     }
 
-    /** 成员数上限调整后已满员的等待房间立即进入运行状态 */
+    /** 成员数上限调整后已满员的等待房间立即进入运行状态(计时以 PC 端首次推流为准) */
     private void startMeeting(Room room) {
         room.setStatus(RoomStatus.RUNNING);
-        room.setMeetingStartAt(LocalDateTime.now());
-        room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
         eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                "成员数上限调整后已满员, 会议开始计时");
+                "成员数上限调整后已满员, 等待 PC 端首次推流开始计时");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
                 "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
                 "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
@@ -200,6 +198,15 @@ public class RoomService {
             throw new BusinessException(409,
                     "房间正在推流「" + castDescription(room) + "」, 请先停止当前推流后再开始新推流");
         }
+        // 会议计时以 PC 端首次点击播放/推流为起点
+        boolean firstCast = room.getMeetingStartAt() == null;
+        if (firstCast) {
+            room.setMeetingStartAt(LocalDateTime.now());
+            room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
+            if (room.getStatus() == RoomStatus.WAITING) {
+                room.setStatus(RoomStatus.RUNNING);
+            }
+        }
         room.setCastType(type);
         room.setCastLabel(label);
         room.setCastBy(operator);
@@ -211,6 +218,14 @@ public class RoomService {
         payload.put("castLabel", label);
         payload.put("operator", operator);
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CAST_STARTED", payload);
+        if (firstCast) {
+            eventLogService.log(room, RoomEventType.ROOM_RUNNING,
+                    "PC 端首次推流, 会议开始计时");
+            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
+                    "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
+                    "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
+                    "durationMinutes", room.getDurationMinutes()));
+        }
         return toResponse(room, latestInvite(room));
     }
 
@@ -250,6 +265,22 @@ public class RoomService {
     public void closeRoom(Long id) {
         Room room = getRoomById(id);
         closeRoomInternal(room, CloseReason.MANUAL);
+    }
+
+    /** 删除房间: 先关闭会议, 再删除房间及其成员/邀请/点赞/事件记录 */
+    @Transactional
+    public void deleteRoom(Long id, String operator) {
+        Room room = getRoomById(id);
+        closeRoomInternal(room, CloseReason.MANUAL);
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_DELETED", Map.of(
+                "roomId", room.getId(),
+                "name", room.getName(),
+                "operator", operator));
+        likeRepository.deleteByRoom(room);
+        eventLogRepository.deleteByRoom(room);
+        memberRepository.deleteByRoom(room);
+        inviteTokenRepository.deleteByRoom(room);
+        roomRepository.delete(room);
     }
 
     /** 关闭流程: 销毁房间 -> 全员离线 -> invite token 失效 -> 推送房间关闭事件 */

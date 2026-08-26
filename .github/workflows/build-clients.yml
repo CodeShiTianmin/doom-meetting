@@ -10,6 +10,31 @@ env:
   WS_URL: wss://meet.ja4.club/ws
 
 jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.35.4
+      - name: Build Android APK
+        working-directory: meeting-app-flutter
+        run: |
+          flutter pub get
+          flutter build apk --release \
+            --dart-define=API_BASE_URL=$API_BASE_URL \
+            --dart-define=WS_URL=$WS_URL
+          cp build/app/outputs/flutter-apk/app-release.apk meeting-app-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meeting-app-android
+          path: meeting-app-flutter/meeting-app-android.apk
+
   ios:
     runs-on: macos-latest
     steps:

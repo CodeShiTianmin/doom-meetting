@@ -280,20 +280,18 @@ public class MemberService {
                 "detail", request.detail() == null ? "" : request.detail()));
     }
 
-    /** 全部成员就位 -> 房间运行开始会议计时; 运行中重新满员 -> 解除缺人预警 */
+    /** 全部成员就位 -> 房间进入运行状态(计时以 PC 端首次推流为准); 运行中重新满员 -> 解除缺人预警 */
     private void startOrRecoverIfFull(Room room, long onlineCount) {
         if (onlineCount < maxMembers(room)) {
             return;
         }
         if (room.getStatus() == RoomStatus.WAITING) {
             room.setStatus(RoomStatus.RUNNING);
-            room.setMeetingStartAt(LocalDateTime.now());
-            room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
             room.setUnderstaffedAlert(false);
             room.setUnderstaffedSince(null);
             roomRepository.save(room);
             eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                    maxMembers(room) + " 个手机客户端已就位, 会议开始计时");
+                    maxMembers(room) + " 个手机客户端已就位, 等待 PC 端首次推流开始计时");
             notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
                     "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
                     "meetingEndAt", String.valueOf(room.getMeetingEndAt()),

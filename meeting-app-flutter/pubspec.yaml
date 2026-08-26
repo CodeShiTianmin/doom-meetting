@@ -18,6 +18,8 @@ dependencies:
   dio: ^5.4.3
   # 二维码扫码入会
   mobile_scanner: ^5.1.1
+  # 图库选图识别二维码
+  image_picker: ^1.1.2
   # 麦克风/摄像头权限
   permission_handler: ^11.3.1
   # 会议中屏幕常亮

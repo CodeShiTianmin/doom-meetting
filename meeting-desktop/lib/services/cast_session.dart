@@ -32,6 +32,7 @@ class CastSession extends ChangeNotifier {
   int? _playerWindowId;
 
   CastMode mode = CastMode.none;
+
   /// 当前推流源名称(视频文件名/摄像头/屏幕源)
   String? sourceLabel;
   String? filePath;
@@ -52,12 +53,22 @@ class CastSession extends ChangeNotifier {
         adaptiveStream: false,
         dynacast: true,
         defaultVideoPublishOptions: lk.VideoPublishOptions(
-          // 1080p/30fps, 2-4Mbps 自适应, simulcast 多档分辨率
+          // 高清 1080p/30fps, 最高 6Mbps 自适应, simulcast 多档分辨率
           videoEncoding: lk.VideoEncoding(
-            maxBitrate: 4 * 1000 * 1000,
+            maxBitrate: 6 * 1000 * 1000,
             maxFramerate: 30,
           ),
           simulcast: true,
+        ),
+        defaultScreenShareCaptureOptions: lk.ScreenShareCaptureOptions(
+          maxFrameRate: 30,
+          params: lk.VideoParameters(
+            dimensions: lk.VideoDimensionsPresets.h1080_169,
+            encoding: lk.VideoEncoding(
+              maxBitrate: 6 * 1000 * 1000,
+              maxFramerate: 30,
+            ),
+          ),
         ),
       ),
     );
@@ -92,9 +103,10 @@ class CastSession extends ChangeNotifier {
       lk.CameraCaptureOptions(
         deviceId: deviceId,
         params: const lk.VideoParameters(
-          dimensions: lk.VideoDimensionsPresets.h720_169,
+          // 高清 1080p 摄像头推流
+          dimensions: lk.VideoDimensionsPresets.h1080_169,
           encoding: lk.VideoEncoding(
-            maxBitrate: 2 * 1000 * 1000,
+            maxBitrate: 4 * 1000 * 1000,
             maxFramerate: 30,
           ),
         ),
@@ -130,6 +142,13 @@ class CastSession extends ChangeNotifier {
           sourceId: sourceId,
           captureScreenAudio: true,
           maxFrameRate: 30,
+          params: const lk.VideoParameters(
+            dimensions: lk.VideoDimensionsPresets.h1080_169,
+            encoding: lk.VideoEncoding(
+              maxBitrate: 6 * 1000 * 1000,
+              maxFramerate: 30,
+            ),
+          ),
         ),
       );
     } catch (_) {
@@ -138,6 +157,13 @@ class CastSession extends ChangeNotifier {
           sourceId: sourceId,
           captureScreenAudio: false,
           maxFrameRate: 30,
+          params: const lk.VideoParameters(
+            dimensions: lk.VideoDimensionsPresets.h1080_169,
+            encoding: lk.VideoEncoding(
+              maxBitrate: 6 * 1000 * 1000,
+              maxFramerate: 30,
+            ),
+          ),
         ),
       );
     }
@@ -260,8 +286,6 @@ class CastSession extends ChangeNotifier {
     }
     return participant;
   }
-
-
 
   /// 停止推流: 任一环节失败/超时不阻塞后续清理, 保证本地状态一定复位
   Future<void> stopCast() async {

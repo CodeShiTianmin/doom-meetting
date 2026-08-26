@@ -26,8 +26,8 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _login() async {
     setState(() => _loading = true);
     try {
-      await ApiClient.instance.login(
-          _usernameController.text.trim(), _passwordController.text);
+      await ApiClient.instance
+          .login(_usernameController.text.trim(), _passwordController.text);
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const RoomsPage()));
@@ -78,7 +78,8 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF5B8DEF).withValues(alpha: 0.4),
+                            color:
+                                const Color(0xFF5B8DEF).withValues(alpha: 0.4),
                             blurRadius: 24,
                           ),
                         ],
@@ -124,8 +125,7 @@ class _LoginPageState extends State<LoginPage> {
                           ? const SizedBox(
                               width: 20,
                               height: 20,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('登录'),
                     ),
                   ],
