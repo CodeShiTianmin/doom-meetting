@@ -18,6 +18,8 @@ dependencies:
   media_kit: ^1.1.10
   media_kit_video: ^1.2.5
   media_kit_libs_video: ^1.0.5
+  # 独立本地视频播放窗口: 播放在子窗口进行, 主窗口切房间不影响后台推流
+  desktop_multi_window: 0.2.1
   # 业务信令: STOMP over WebSocket
   stomp_dart_client: ^2.0.0
   dio: ^5.4.3
