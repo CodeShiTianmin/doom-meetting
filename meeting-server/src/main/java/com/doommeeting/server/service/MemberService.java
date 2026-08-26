@@ -137,6 +137,8 @@ public class MemberService {
                 room.getMeetingEndAt(),
                 room.getCastType() == null ? null : room.getCastType().name(),
                 room.getCastLabel(),
+                Boolean.TRUE.equals(member.getMuted()) || Boolean.TRUE.equals(room.getAllMuted()),
+                member.getCameraDisabled(),
                 liveKitTokenService.createClientToken(
                         room.getRoomCode(), member.getIdentity(), member.getNickname()),
                 liveKitTokenService.getWsUrl());
@@ -160,6 +162,8 @@ public class MemberService {
                 room.getDurationMinutes(),
                 room.getMeetingStartAt(),
                 room.getMeetingEndAt(),
+                null,
+                null,
                 null,
                 null,
                 null,

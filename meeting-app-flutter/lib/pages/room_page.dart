@@ -68,6 +68,9 @@ class _RoomPageState extends State<RoomPage> {
   void initState() {
     super.initState();
     WakelockPlus.enable();
+    // 重新入会时恢复主持人管控状态, 避免退出重进后绕过静音/禁摄像头
+    _mutedByHost = session.mutedByHost;
+    _cameraDisabledByHost = session.cameraDisabledByHost;
     _initLocalControls();
     _refreshState();
     _connectLiveKit();
@@ -115,11 +118,12 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   /// PC 端关闭视频通话/摄像头后, 已开启的麦克风/摄像头立即关闭;
-  /// 全员静音状态也按服务端权威状态同步(含初始刷新)
+  /// 全员静音仅在开启时同步压制(解除靠 MEMBER_MUTED/ALL_MUTED 事件,
+  /// 避免单人静音被周期刷新的 allMuted=false 误解除)
   Future<void> _enforceFeatureToggles(RoomState state) async {
-    if (state.allMuted != _mutedByHost) {
-      _mutedByHost = state.allMuted;
-      if (state.allMuted && _micOn) {
+    if (state.allMuted && !_mutedByHost) {
+      _mutedByHost = true;
+      if (_micOn) {
         await _lkRoom?.localParticipant?.setMicrophoneEnabled(false);
         if (mounted) setState(() => _micOn = false);
       }
@@ -212,14 +216,21 @@ class _RoomPageState extends State<RoomPage> {
         await room.disconnect();
         return;
       }
+      // 默认扬声器外放(观看推流场景), 与 UI 初始状态保持一致
+      try {
+        await lk.Hardware.instance.setSpeakerphoneOn(_speakerOn);
+      } catch (_) {}
       if (_micOn &&
           session.videoCallEnabled &&
           !_mutedByHost &&
           _state?.allMuted != true) {
         await room.localParticipant?.setMicrophoneEnabled(true);
+      } else if (mounted && _micOn) {
+        // 未实际开启麦克风时同步 UI 状态, 避免图标显示与实际不符
+        setState(() => _micOn = false);
       }
     } catch (_) {
-      _showToast('媒体服务连接失败, 正在重试…');
+      _showToast('媒体服务连接失败, 请退出房间后重新进入');
     }
   }
 
@@ -251,7 +262,7 @@ class _RoomPageState extends State<RoomPage> {
       _showToast('公司已关闭视频通话功能');
       return;
     }
-    if (_mutedByHost && !_micOn) {
+    if ((_mutedByHost || state.allMuted) && !_micOn) {
       _showToast('已被主持人静音, 无法开启麦克风');
       return;
     }
@@ -402,7 +413,11 @@ class _RoomPageState extends State<RoomPage> {
         _refreshState();
         break;
       case 'ROOM_CLOSED':
-        _onRoomClosed((data['reason'] as String?) ?? '会议已结束');
+        _onRoomClosed(switch (data['reason']) {
+          'TIMEOUT' => '会议时长已到, 会议结束',
+          'MANUAL' => '公司已结束会议',
+          _ => '会议已结束',
+        });
         break;
       default:
         break;
