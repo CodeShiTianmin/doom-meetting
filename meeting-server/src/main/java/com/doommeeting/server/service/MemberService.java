@@ -3,7 +3,6 @@ package com.doommeeting.server.service;
 import com.doommeeting.server.common.BusinessException;
 import com.doommeeting.server.config.AppProperties;
 import com.doommeeting.server.dto.MobileDtos.*;
-import com.doommeeting.server.entity.ContentItem;
 import com.doommeeting.server.entity.InviteToken;
 import com.doommeeting.server.entity.Room;
 import com.doommeeting.server.entity.RoomMember;
@@ -120,7 +119,6 @@ public class MemberService {
 
         startOrRecoverIfFull(room, onlineCount + 1);
 
-        ContentItem content = room.getCurrentContent();
         return new JoinRoomResponse(
                 member.getId(),
                 member.getIdentity(),
@@ -137,10 +135,8 @@ public class MemberService {
                 room.getDurationMinutes(),
                 room.getMeetingStartAt(),
                 room.getMeetingEndAt(),
-                room.getPlaybackState().name(),
-                room.getPlaybackPositionSeconds(),
-                content == null ? null : content.getId(),
-                content == null ? null : content.getName(),
+                room.getCastType() == null ? null : room.getCastType().name(),
+                room.getCastLabel(),
                 liveKitTokenService.createClientToken(
                         room.getRoomCode(), member.getIdentity(), member.getNickname()),
                 liveKitTokenService.getWsUrl());
@@ -164,8 +160,6 @@ public class MemberService {
                 room.getDurationMinutes(),
                 room.getMeetingStartAt(),
                 room.getMeetingEndAt(),
-                room.getPlaybackState().name(),
-                room.getPlaybackPositionSeconds(),
                 null,
                 null,
                 null,

@@ -10,17 +10,10 @@ class RoomModel {
   final String? meetingStartAt;
   final String? meetingEndAt;
   final int? remainingSeconds;
-  final int? contentId;
-  final String? contentName;
-  final String? contentType;
-  final String? contentFileUrl;
-  final String? contentMimeType;
-  final int? contentDurationSeconds;
-  final String playbackState;
-  final double playbackPositionSeconds;
+  final String? castType;
+  final String? castLabel;
+  final String? castBy;
   final int likeCount;
-  final bool screenSharing;
-  final String? screenShareBy;
   final bool understaffedAlert;
   final int maxMembers;
   final int onlineMemberCount;
@@ -44,17 +37,10 @@ class RoomModel {
     this.meetingStartAt,
     this.meetingEndAt,
     this.remainingSeconds,
-    this.contentId,
-    this.contentName,
-    this.contentType,
-    this.contentFileUrl,
-    this.contentMimeType,
-    this.contentDurationSeconds,
-    required this.playbackState,
-    required this.playbackPositionSeconds,
+    this.castType,
+    this.castLabel,
+    this.castBy,
     required this.likeCount,
-    this.screenSharing = false,
-    this.screenShareBy,
     required this.understaffedAlert,
     required this.maxMembers,
     required this.onlineMemberCount,
@@ -71,6 +57,20 @@ class RoomModel {
   bool get running => status == 'RUNNING';
   bool get closed => status == 'CLOSED';
   bool get scheduled => status == 'SCHEDULED';
+  bool get casting => castType != null;
+
+  /// 推流状态描述(类型 + 源名称)
+  String? get castDescription {
+    if (castType == null) return null;
+    final typeName = switch (castType) {
+      'SCREEN' => '屏幕共享',
+      'VIDEO' => '视频推流',
+      'CAMERA' => '摄像头推流',
+      _ => '推流中',
+    };
+    final label = castLabel;
+    return label == null || label.isEmpty ? typeName : '$typeName($label)';
+  }
 
   factory RoomModel.fromJson(Map<String, dynamic> json) => RoomModel(
         id: (json['id'] as num).toInt(),
@@ -83,18 +83,10 @@ class RoomModel {
         meetingStartAt: json['meetingStartAt'] as String?,
         meetingEndAt: json['meetingEndAt'] as String?,
         remainingSeconds: (json['remainingSeconds'] as num?)?.toInt(),
-        contentId: (json['contentId'] as num?)?.toInt(),
-        contentName: json['contentName'] as String?,
-        contentType: json['contentType'] as String?,
-        contentFileUrl: json['contentFileUrl'] as String?,
-        contentMimeType: json['contentMimeType'] as String?,
-        contentDurationSeconds: (json['contentDurationSeconds'] as num?)?.toInt(),
-        playbackState: (json['playbackState'] as String?) ?? 'IDLE',
-        playbackPositionSeconds:
-            (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
+        castType: json['castType'] as String?,
+        castLabel: json['castLabel'] as String?,
+        castBy: json['castBy'] as String?,
         likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
-        screenSharing: json['screenSharing'] == true,
-        screenShareBy: json['screenShareBy'] as String?,
         understaffedAlert: json['understaffedAlert'] == true,
         maxMembers: (json['maxMembers'] as num?)?.toInt() ?? 2,
         onlineMemberCount: (json['onlineMemberCount'] as num?)?.toInt() ?? 0,
@@ -182,39 +174,3 @@ class SeatInviteModel {
       );
 }
 
-/// 投放内容(对应后端 ContentResponse, 仅上传文件模式)
-class ContentModel {
-  final int id;
-  final String name;
-  final String? description;
-  final String type;
-  final int? durationSeconds;
-  final String? fileUrl;
-  final int? fileSize;
-  final String? mimeType;
-  final bool enabled;
-
-  ContentModel({
-    required this.id,
-    required this.name,
-    this.description,
-    required this.type,
-    this.durationSeconds,
-    this.fileUrl,
-    this.fileSize,
-    this.mimeType,
-    required this.enabled,
-  });
-
-  factory ContentModel.fromJson(Map<String, dynamic> json) => ContentModel(
-        id: (json['id'] as num).toInt(),
-        name: json['name'] as String,
-        description: json['description'] as String?,
-        type: (json['type'] as String?) ?? 'UPLOADED_FILE',
-        durationSeconds: (json['durationSeconds'] as num?)?.toInt(),
-        fileUrl: json['fileUrl'] as String?,
-        fileSize: (json['fileSize'] as num?)?.toInt(),
-        mimeType: json['mimeType'] as String?,
-        enabled: json['enabled'] == true,
-      );
-}

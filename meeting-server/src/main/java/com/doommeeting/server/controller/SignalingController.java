@@ -1,11 +1,9 @@
 package com.doommeeting.server.controller;
 
-import com.doommeeting.server.dto.MobileDtos.PlaybackControlRequest;
 import com.doommeeting.server.entity.Room;
 import com.doommeeting.server.entity.RoomMember;
 import com.doommeeting.server.repository.RoomMemberRepository;
 import com.doommeeting.server.service.NotificationService;
-import com.doommeeting.server.service.PlaybackService;
 import com.doommeeting.server.service.RoomService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +16,6 @@ import java.util.Map;
 
 /**
  * STOMP 信令入口:
- * - 播放控制指令(WS 通道, 与 REST 等效)
  * - WebRTC SDP/ICE 转发(自研信令备选方案, LiveKit 场景下由其自带信令处理)
  */
 @Slf4j
@@ -26,21 +23,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class SignalingController {
 
-    private final PlaybackService playbackService;
     private final NotificationService notificationService;
     private final RoomService roomService;
     private final RoomMemberRepository memberRepository;
-
-    /** 手机端经 WS 发送播放控制指令 */
-    @MessageMapping("/rooms/{roomCode}/playback")
-    public void playback(@DestinationVariable String roomCode,
-                         @Payload PlaybackControlRequest request) {
-        try {
-            playbackService.control(roomCode, request);
-        } catch (Exception e) {
-            log.warn("房间 {} 播放控制失败: {}", roomCode, e.getMessage());
-        }
-    }
 
     /** SDP/ICE 信令转发(备选自研信令: 客户端间交换 offer/answer/candidate), 仅限房间在线成员 */
     @MessageMapping("/rooms/{roomCode}/signal")

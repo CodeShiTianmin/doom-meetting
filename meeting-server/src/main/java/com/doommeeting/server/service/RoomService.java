@@ -3,20 +3,17 @@ package com.doommeeting.server.service;
 import com.doommeeting.server.common.BusinessException;
 import com.doommeeting.server.config.AppProperties;
 import com.doommeeting.server.dto.RoomDtos.*;
-import com.doommeeting.server.entity.ContentItem;
 import com.doommeeting.server.entity.InviteToken;
 import com.doommeeting.server.entity.Room;
 import com.doommeeting.server.entity.RoomMember;
+import com.doommeeting.server.enums.CastType;
 import com.doommeeting.server.enums.CloseReason;
-import com.doommeeting.server.enums.PlaybackState;
 import com.doommeeting.server.enums.RoomEventType;
 import com.doommeeting.server.enums.RoomStatus;
 import com.doommeeting.server.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.security.SecureRandom;
 import java.time.Duration;
@@ -44,7 +41,6 @@ public class RoomService {
     private final InviteTokenRepository inviteTokenRepository;
     private final RoomEventLogRepository eventLogRepository;
     private final RoomLikeRepository likeRepository;
-    private final ContentService contentService;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
     private final AppProperties properties;
@@ -68,9 +64,6 @@ public class RoomService {
         } else {
             // 创建即进入缺人等待状态, 超过阈值(默认3分钟)后台亮红灯预警
             room.setUnderstaffedSince(LocalDateTime.now());
-        }
-        if (request.contentId() != null) {
-            room.setCurrentContent(contentService.getCastable(request.contentId()));
         }
         roomRepository.save(room);
 
@@ -192,133 +185,64 @@ public class RoomService {
     }
 
     /**
-     * 立即投放内容到指定房间(不同房间不同内容并行, 不串音不串频)。
+     * PC 端登记开始实时推流(屏幕/本地视频/摄像头, 均走 LiveKit 实时流)。
+     * 不同房间独立推流并行, 不串音不串频。
      * 若房间已有投放且未确认替换(replace=false), 返回 409 提示先停止当前投放。
      */
     @Transactional
-    public synchronized RoomResponse castContent(Long roomId, Long contentId, String operator, boolean replace) {
+    public synchronized RoomResponse startCast(Long roomId, CastType type, String label,
+                                               String operator, boolean replace) {
         Room room = getRoomById(roomId);
         if (room.getStatus() == RoomStatus.CLOSED) {
-            throw new BusinessException("房间已关闭, 无法投放内容");
+            throw new BusinessException("房间已关闭, 无法推流");
         }
-        ContentItem current = room.getCurrentContent();
-        if (current != null && !current.getId().equals(contentId) && !replace) {
+        if (room.getCastType() != null && !replace) {
             throw new BusinessException(409,
-                    "房间已投放「" + current.getName() + "」, 请先停止当前投放后再投放新内容");
+                    "房间正在推流「" + castDescription(room) + "」, 请先停止当前推流后再开始新推流");
         }
-        if (Boolean.TRUE.equals(room.getScreenSharing()) && !replace) {
-            throw new BusinessException(409,
-                    "房间正在屏幕共享, 请先停止屏幕共享后再投放新内容");
-        }
-        ContentItem content = contentService.getCastable(contentId);
-        // 替换屏幕共享时下发停止指令, 保证 PC 端真实推流与服务端状态一致
-        if (Boolean.TRUE.equals(room.getScreenSharing())) {
-            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "SCREEN_SHARE_STOPPED", Map.of(
-                    "operator", operator, "reason", "REPLACED"));
-        }
-        room.setScreenSharing(false);
-        room.setScreenShareBy(null);
-        room.setCurrentContent(content);
-        room.setPlaybackState(PlaybackState.IDLE);
-        room.setPlaybackPositionSeconds(0.0);
-        room.setPlaybackUpdatedAt(LocalDateTime.now());
+        room.setCastType(type);
+        room.setCastLabel(label);
+        room.setCastBy(operator);
         roomRepository.save(room);
-        eventLogService.log(room, RoomEventType.CONTENT_CAST,
-                operator + " 投放内容: " + content.getName());
-        Map<String, Object> castPayload = new HashMap<>();
-        castPayload.put("contentId", content.getId());
-        castPayload.put("contentName", content.getName());
-        castPayload.put("contentType", content.getType());
-        castPayload.put("contentFileUrl", contentService.fileUrlOf(content));
-        castPayload.put("contentMimeType", content.getMimeType());
-        castPayload.put("contentDurationSeconds", content.getDurationSeconds());
-        castPayload.put("playbackState", room.getPlaybackState().name());
-        castPayload.put("playbackPositionSeconds", room.getPlaybackPositionSeconds());
-        castPayload.put("operator", operator);
-        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CONTENT_CAST", castPayload);
+        eventLogService.log(room, RoomEventType.CAST_STARTED,
+                operator + " 开始推流: " + castDescription(room));
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("castType", type.name());
+        payload.put("castLabel", label);
+        payload.put("operator", operator);
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CAST_STARTED", payload);
         return toResponse(room, latestInvite(room));
     }
 
-    /** 投放前冲突检查: 房间已有投放且未确认替换时返回 409 */
-    @Transactional(readOnly = true)
-    public void checkCastConflict(Long roomId, boolean replace) {
-        Room room = getRoomById(roomId);
-        if (room.getStatus() == RoomStatus.CLOSED) {
-            throw new BusinessException("房间已关闭, 无法投放内容");
-        }
-        ContentItem current = room.getCurrentContent();
-        if (current != null && !replace) {
-            throw new BusinessException(409,
-                    "房间已投放「" + current.getName() + "」, 请先停止当前投放后再投放新内容");
-        }
-        if (Boolean.TRUE.equals(room.getScreenSharing()) && !replace) {
-            throw new BusinessException(409,
-                    "房间正在屏幕共享, 请先停止屏幕共享后再投放新内容");
-        }
-    }
-
-    /** PC 端登记屏幕/窗口共享开始(跨端冲突检查可感知) */
+    /** 停止当前推流: 清除房间推流状态 */
     @Transactional
-    public synchronized RoomResponse startScreenShare(Long roomId, String operator, boolean replace) {
-        Room room = getRoomById(roomId);
-        if (room.getStatus() == RoomStatus.CLOSED) {
-            throw new BusinessException("房间已关闭, 无法屏幕共享");
-        }
-        ContentItem current = room.getCurrentContent();
-        if (current != null && !replace) {
-            throw new BusinessException(409,
-                    "房间已投放「" + current.getName() + "」, 请先停止当前投放后再屏幕共享");
-        }
-        room.setCurrentContent(null);
-        room.setScreenSharing(true);
-        room.setScreenShareBy(operator);
-        room.setPlaybackState(PlaybackState.IDLE);
-        room.setPlaybackPositionSeconds(0.0);
-        room.setPlaybackUpdatedAt(LocalDateTime.now());
-        roomRepository.save(room);
-        eventLogService.log(room, RoomEventType.CONTENT_CAST, operator + " 开始屏幕共享");
-        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "SCREEN_SHARE_STARTED",
-                Map.of("operator", operator));
-        return toResponse(room, latestInvite(room));
-    }
-
-    /** PC 端登记屏幕/窗口共享停止 */
-    @Transactional
-    public synchronized RoomResponse stopScreenShare(Long roomId, String operator) {
-        Room room = getRoomById(roomId);
-        if (Boolean.TRUE.equals(room.getScreenSharing())) {
-            room.setScreenSharing(false);
-            room.setScreenShareBy(null);
-            roomRepository.save(room);
-            eventLogService.log(room, RoomEventType.CAST_STOPPED, operator + " 停止屏幕共享");
-            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "SCREEN_SHARE_STOPPED",
-                    Map.of("operator", operator));
-        }
-        return toResponse(room, latestInvite(room));
-    }
-
-    /** 停止当前投放: 清除房间当前内容并重置播放状态 */
-    @Transactional
-    public RoomResponse stopCast(Long roomId, String operator) {
+    public synchronized RoomResponse stopCast(Long roomId, String operator) {
         Room room = getRoomById(roomId);
         if (room.getStatus() == RoomStatus.CLOSED) {
             throw new BusinessException("房间已关闭");
         }
-        ContentItem current = room.getCurrentContent();
-        room.setCurrentContent(null);
-        room.setScreenSharing(false);
-        room.setScreenShareBy(null);
-        room.setPlaybackState(PlaybackState.IDLE);
-        room.setPlaybackPositionSeconds(0.0);
-        room.setPlaybackUpdatedAt(LocalDateTime.now());
+        String previous = room.getCastType() == null ? null : castDescription(room);
+        room.setCastType(null);
+        room.setCastLabel(null);
+        room.setCastBy(null);
         roomRepository.save(room);
         eventLogService.log(room, RoomEventType.CAST_STOPPED,
-                operator + " 停止投放" + (current == null ? "" : ": " + current.getName()));
+                operator + " 停止推流" + (previous == null ? "" : ": " + previous));
         Map<String, Object> payload = new HashMap<>();
         payload.put("operator", operator);
-        payload.put("previousContentName", current == null ? null : current.getName());
+        payload.put("previousCastLabel", previous);
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CAST_STOPPED", payload);
         return toResponse(room, latestInvite(room));
+    }
+
+    private String castDescription(Room room) {
+        String typeName = switch (room.getCastType()) {
+            case SCREEN -> "屏幕共享";
+            case VIDEO -> "视频推流";
+            case CAMERA -> "摄像头推流";
+        };
+        return room.getCastLabel() == null || room.getCastLabel().isBlank()
+                ? typeName : typeName + "(" + room.getCastLabel() + ")";
     }
 
     /** 手动结束会议 */
@@ -339,9 +263,9 @@ public class RoomService {
         room.setClosedAt(LocalDateTime.now());
         room.setUnderstaffedAlert(false);
         room.setUnderstaffedSince(null);
-        room.setPlaybackState(PlaybackState.IDLE);
-        room.setScreenSharing(false);
-        room.setScreenShareBy(null);
+        room.setCastType(null);
+        room.setCastLabel(null);
+        room.setCastBy(null);
         roomRepository.save(room);
 
         LocalDateTime now = LocalDateTime.now();
@@ -359,19 +283,6 @@ public class RoomService {
             token.setRevoked(true);
             inviteTokenRepository.save(token);
         }
-        // 会议结束: 文件删除改到事务提交后执行, 避免事务回滚后文件不可恢复
-        Long roomId = room.getId();
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    contentService.deleteRoomFiles(roomId);
-                }
-            });
-        } else {
-            contentService.deleteRoomFiles(roomId);
-        }
-
         eventLogService.log(room, RoomEventType.ROOM_CLOSED,
                 reason == CloseReason.MANUAL ? "PC 端手动结束会议" : "会议时长到期自动关闭");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_CLOSED",
@@ -434,7 +345,7 @@ public class RoomService {
                 .toList();
     }
 
-    /** 手机端房间实时状态(会议时间/剩余时长/播放状态/功能开关), 事务内读取懒加载内容 */
+    /** 手机端房间实时状态(会议时间/剩余时长/推流状态/功能开关) */
     @Transactional(readOnly = true)
     public Map<String, Object> mobileState(String roomCode) {
         Room room = getRoomByCode(roomCode);
@@ -454,18 +365,9 @@ public class RoomService {
             state.put("remainingSeconds", Math.max(0,
                     Duration.between(LocalDateTime.now(), room.getMeetingEndAt()).getSeconds()));
         }
-        state.put("playbackState", room.getPlaybackState().name());
-        state.put("playbackPositionSeconds", room.getPlaybackPositionSeconds());
-        state.put("playbackSeq", room.getLastCommandSeq());
         state.put("likeCount", room.getLikeCount());
-        ContentItem content = room.getCurrentContent();
-        state.put("contentId", content == null ? null : content.getId());
-        state.put("contentName", content == null ? null : content.getName());
-        state.put("contentDurationSeconds", content == null ? null : content.getDurationSeconds());
-        state.put("contentType", content == null ? null : content.getType());
-        state.put("contentFileUrl", content == null ? null : contentService.fileUrlOf(content));
-        state.put("contentMimeType", content == null ? null : content.getMimeType());
-        state.put("screenSharing", room.getScreenSharing());
+        state.put("castType", room.getCastType() == null ? null : room.getCastType().name());
+        state.put("castLabel", room.getCastLabel());
         state.put("allMuted", room.getAllMuted());
         return state;
     }
@@ -526,7 +428,6 @@ public class RoomService {
             remainingSeconds = Math.max(0,
                     Duration.between(LocalDateTime.now(), room.getMeetingEndAt()).getSeconds());
         }
-        ContentItem content = room.getCurrentContent();
         String inviteUrl = buildInviteUrl(room, invite);
         List<SeatInviteResponse> invites = inviteTokenRepository.findByRoom(room).stream()
                 .filter(t -> !t.getRevoked())
@@ -553,16 +454,9 @@ public class RoomService {
                 room.getMeetingStartAt(),
                 room.getMeetingEndAt(),
                 remainingSeconds,
-                content == null ? null : content.getId(),
-                content == null ? null : content.getName(),
-                content == null ? null : content.getType(),
-                content == null ? null : contentService.fileUrlOf(content),
-                content == null ? null : content.getMimeType(),
-                content == null ? null : content.getDurationSeconds(),
-                room.getPlaybackState().name(),
-                room.getPlaybackPositionSeconds(),
-                room.getScreenSharing(),
-                room.getScreenShareBy(),
+                room.getCastType() == null ? null : room.getCastType().name(),
+                room.getCastLabel(),
+                room.getCastBy(),
                 room.getLikeCount(),
                 room.getUnderstaffedAlert(),
                 room.getUnderstaffedSince(),

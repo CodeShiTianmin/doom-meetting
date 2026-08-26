@@ -6,19 +6,20 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-/// 投放模式
-enum CastMode { none, screen, file }
+/// 推流模式(全部走 LiveKit 实时流)
+enum CastMode { none, screen, video, camera }
 
-/// 单房间投放会话(核心):
+/// 单房间推流会话(核心):
 ///
 /// 每个房间一个独立的 CastSession = 独立 LiveKit RTC 连接(隐藏推流身份,
 /// 只发不收) + 独立 media_kit 播放器实例 + 独立音视频轨。
 /// 多房并发时各会话完全隔离, 天然不串音、不串频。
 ///
-/// - 屏幕/窗口投屏: getDisplayMedia 捕获整屏或指定窗口, 系统伴音走
+/// - 屏幕/窗口推流: getDisplayMedia 捕获整屏或指定窗口, 系统伴音走
 ///   WASAPI loopback (captureScreenAudio)
-/// - 本地文件投放: media_kit 解码播放, 支持响应手机端的
-///   开始播放/暂停/拖拉进度条指令(权威状态由后端广播)
+/// - 本地视频推流: media_kit 本地解码播放, 播放画面经窗口捕获推流,
+///   播放/暂停/进度均为 PC 本地控制
+/// - 摄像头推流: 直接采集本机摄像头推流
 class CastSession extends ChangeNotifier {
   final int roomId;
   final String roomCode;
@@ -30,6 +31,8 @@ class CastSession extends ChangeNotifier {
   VideoController? _videoController;
 
   CastMode mode = CastMode.none;
+  /// 当前推流源名称(视频文件名/摄像头/屏幕源)
+  String? sourceLabel;
   String? filePath;
   String? error;
   bool connected = false;
@@ -67,12 +70,48 @@ class CastSession extends ChangeNotifier {
         types: [webrtc.SourceType.Screen, webrtc.SourceType.Window]);
   }
 
-  /// 屏幕/窗口投屏: 捕获整屏或指定窗口推流, 系统伴音走回环采集
+  /// 屏幕/窗口推流: 捕获整屏或指定窗口推流, 系统伴音走回环采集
   Future<void> startScreenCast(webrtc.DesktopCapturerSource source) async {
     await stopCast();
     final participant = _requireParticipant();
     await _publishCaptureTrack(participant, source.id);
     mode = CastMode.screen;
+    sourceLabel = source.name;
+    publishing = true;
+    notifyListeners();
+  }
+
+  /// 摄像头推流: 采集本机摄像头画面 + 麦克风声音推流
+  Future<void> startCameraCast({String? deviceId, String? label}) async {
+    await stopCast();
+    final participant = _requireParticipant();
+    final videoTrack = await lk.LocalVideoTrack.createCameraTrack(
+      lk.CameraCaptureOptions(
+        deviceId: deviceId,
+        params: const lk.VideoParameters(
+          dimensions: lk.VideoDimensionsPresets.h720_169,
+          encoding: lk.VideoEncoding(
+            maxBitrate: 2 * 1000 * 1000,
+            maxFramerate: 30,
+          ),
+        ),
+      ),
+    );
+    try {
+      await participant.publishVideoTrack(videoTrack);
+    } catch (error) {
+      await videoTrack.stop();
+      rethrow;
+    }
+    try {
+      final audioTrack =
+          await lk.LocalAudioTrack.create(const lk.AudioCaptureOptions());
+      await participant.publishAudioTrack(audioTrack);
+    } catch (_) {
+      // 无麦克风或采集失败时仅推画面
+    }
+    mode = CastMode.camera;
+    sourceLabel = label ?? '摄像头';
     publishing = true;
     notifyListeners();
   }
@@ -107,19 +146,20 @@ class CastSession extends ChangeNotifier {
     }
   }
 
-  /// 媒体文件投放: media_kit 解码播放(文件同时上传服务器保存, 会议结束后删除),
-  /// 播放画面经独立播放器窗口捕获推流; 手机端播放控制指令直接作用于该播放器
-  Future<void> startFileCast(String path,
+  /// 本地视频推流: media_kit 本地解码播放(不上传服务器),
+  /// 播放画面经窗口捕获以 LiveKit 实时流推给房间内手机端
+  Future<void> startVideoCast(String path,
       {required webrtc.DesktopCapturerSource playerWindowSource}) async {
     await stopCast();
     filePath = path;
     _player = Player();
     _videoController = VideoController(_player!);
-    await _player!.open(Media(path), play: false);
+    await _player!.open(Media(path), play: true);
 
     final participant = _requireParticipant();
     await _publishCaptureTrack(participant, playerWindowSource.id);
-    mode = CastMode.file;
+    mode = CastMode.video;
+    sourceLabel = path.split(RegExp(r'[\\/]')).last;
     publishing = true;
     notifyListeners();
   }
@@ -133,26 +173,7 @@ class CastSession extends ChangeNotifier {
     return participant;
   }
 
-  /// 手机端播放控制指令(经后端信令转发, 权威状态由后端广播)
-  Future<void> applyPlaybackCommand(Map<String, dynamic> data) async {
-    if (mode != CastMode.file || _player == null) return;
-    final action = data['action'] as String?;
-    switch (action) {
-      case 'PLAY':
-        await _player!.play();
-        break;
-      case 'PAUSE':
-        await _player!.pause();
-        break;
-      case 'SEEK':
-        final position = (data['positionSeconds'] as num?)?.toDouble() ?? 0;
-        await _player!
-            .seek(Duration(milliseconds: (position * 1000).round()));
-        break;
-      default:
-        break;
-    }
-  }
+
 
   Future<void> stopCast() async {
     final participant = _lkRoom?.localParticipant;
@@ -165,6 +186,7 @@ class CastSession extends ChangeNotifier {
     _player = null;
     _videoController = null;
     filePath = null;
+    sourceLabel = null;
     mode = CastMode.none;
     publishing = false;
     notifyListeners();

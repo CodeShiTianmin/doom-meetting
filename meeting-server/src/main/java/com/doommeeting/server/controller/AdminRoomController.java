@@ -3,12 +3,9 @@ package com.doommeeting.server.controller;
 import com.doommeeting.server.common.ApiResponse;
 import com.doommeeting.server.dto.LikeDtos.LikeRecordResponse;
 import com.doommeeting.server.dto.RoomDtos.*;
-import com.doommeeting.server.dto.MobileDtos.ChatMessageResponse;
-import com.doommeeting.server.service.ChatService;
 import com.doommeeting.server.service.LikeService;
 import com.doommeeting.server.service.LiveKitTokenService;
 import com.doommeeting.server.service.MemberManagementService;
-import com.doommeeting.server.service.PlaybackService;
 import com.doommeeting.server.service.RoomService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -19,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * PC 管理端房间接口: 创建/列表/详情/设置/投放/关闭/成员/点赞/事件
+ * PC 管理端房间接口: 创建/列表/详情/设置/推流登记/关闭/成员/点赞/事件
  */
 @RestController
 @RequestMapping("/api/admin/rooms")
@@ -29,9 +26,7 @@ public class AdminRoomController {
     private final RoomService roomService;
     private final LikeService likeService;
     private final LiveKitTokenService liveKitTokenService;
-    private final PlaybackService playbackService;
     private final MemberManagementService memberManagementService;
-    private final ChatService chatService;
 
     /** 踢出成员(同时从 LiveKit 服务端断开其媒体连接) */
     @PostMapping("/{id}/members/{identity}/kick")
@@ -83,20 +78,6 @@ public class AdminRoomController {
         return ApiResponse.ok(roomService.attendance(id));
     }
 
-    /** 主持人发送聊天消息 */
-    @PostMapping("/{id}/chat")
-    public ApiResponse<ChatMessageResponse> sendChat(@PathVariable Long id,
-                                                     @Valid @RequestBody AdminChatRequest request,
-                                                     Authentication authentication) {
-        return ApiResponse.ok(chatService.sendAsAdmin(id, authentication.getName(), request.content()));
-    }
-
-    /** 聊天历史(最近 100 条) */
-    @GetMapping("/{id}/chat")
-    public ApiResponse<List<ChatMessageResponse>> chatHistory(@PathVariable Long id) {
-        return ApiResponse.ok(chatService.historyByRoomId(id));
-    }
-
     @PostMapping
     public ApiResponse<RoomResponse> createRoom(@Valid @RequestBody CreateRoomRequest request,
                                                 Authentication authentication) {
@@ -119,42 +100,20 @@ public class AdminRoomController {
         return ApiResponse.ok(roomService.updateSettings(id, request));
     }
 
-    @PostMapping("/{id}/cast")
-    public ApiResponse<RoomResponse> castContent(@PathVariable Long id,
-                                                 @Valid @RequestBody CastRequest request,
-                                                 Authentication authentication) {
-        return ApiResponse.ok(roomService.castContent(id, request.contentId(),
+    /** PC 端开始推流登记(屏幕/本地视频/摄像头, 均走 LiveKit 实时流) */
+    @PostMapping("/{id}/cast/start")
+    public ApiResponse<RoomResponse> startCast(@PathVariable Long id,
+                                               @Valid @RequestBody CastStartRequest request,
+                                               Authentication authentication) {
+        return ApiResponse.ok(roomService.startCast(id, request.type(), request.label(),
                 authentication.getName(), Boolean.TRUE.equals(request.replace())));
     }
 
-    /** PC 端屏幕/窗口共享开始登记(跨端冲突检查可感知) */
-    @PostMapping("/{id}/screen-share/start")
-    public ApiResponse<RoomResponse> startScreenShare(@PathVariable Long id,
-                                                      @RequestParam(defaultValue = "false") boolean replace,
-                                                      Authentication authentication) {
-        return ApiResponse.ok(roomService.startScreenShare(id, authentication.getName(), replace));
-    }
-
-    /** PC 端屏幕/窗口共享停止登记 */
-    @PostMapping("/{id}/screen-share/stop")
-    public ApiResponse<RoomResponse> stopScreenShare(@PathVariable Long id,
-                                                     Authentication authentication) {
-        return ApiResponse.ok(roomService.stopScreenShare(id, authentication.getName()));
-    }
-
-    /** 停止当前投放: 清除房间当前内容并重置播放状态 */
+    /** 停止当前推流 */
     @PostMapping("/{id}/cast/stop")
     public ApiResponse<RoomResponse> stopCast(@PathVariable Long id,
                                               Authentication authentication) {
         return ApiResponse.ok(roomService.stopCast(id, authentication.getName()));
-    }
-
-    /** PC 端播放控制: 播放/暂停/拖动进度/明暗/音量, 实时下发到房间内全部手机端 */
-    @PostMapping("/{id}/playback")
-    public ApiResponse<Map<String, Object>> playback(@PathVariable Long id,
-                                                     @Valid @RequestBody AdminPlaybackRequest request,
-                                                     Authentication authentication) {
-        return ApiResponse.ok(playbackService.adminControl(id, request, authentication.getName()));
     }
 
     @PostMapping("/{id}/close")

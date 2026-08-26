@@ -1,4 +1,4 @@
--- 多房并发投屏会议软件 - MySQL 8 初始化脚本(上传文件存服务器磁盘, 会议结束后自动删除)
+-- 多房并发投屏会议软件 - MySQL 8 初始化脚本(PC 端 LiveKit 实时推流, 无服务器文件存储)
 CREATE DATABASE IF NOT EXISTS doom_meeting DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE doom_meeting;
 
@@ -11,23 +11,6 @@ CREATE TABLE IF NOT EXISTS user_account (
     role          VARCHAR(32)  NOT NULL DEFAULT 'ADMIN',
     created_at    DATETIME     NOT NULL,
     UNIQUE KEY uk_user_account_username (username)
-) ENGINE = InnoDB;
-
--- 投放内容(仅上传文件模式: 文件存服务器磁盘, 会议结束后自动删除)
-CREATE TABLE IF NOT EXISTS content_item (
-    id               BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name             VARCHAR(128) NOT NULL,
-    description      VARCHAR(512),
-    type             VARCHAR(16)  NOT NULL DEFAULT 'UPLOADED_FILE',
-    duration_seconds INT,
-    storage_path     VARCHAR(512),
-    file_size        BIGINT,
-    mime_type        VARCHAR(128),
-    room_id          BIGINT,
-    enabled          TINYINT(1)   NOT NULL DEFAULT 1,
-    created_by       VARCHAR(64)  NOT NULL,
-    created_at       DATETIME     NOT NULL,
-    KEY idx_content_item_room (room_id)
 ) ENGINE = InnoDB;
 
 -- 会议房间(单房间 2 个手机客户端; PC 端为后台隐藏角色)
@@ -43,13 +26,9 @@ CREATE TABLE IF NOT EXISTS room (
     duration_minutes          INT         NOT NULL,
     meeting_start_at          DATETIME,
     meeting_end_at            DATETIME,
-    current_content_id        BIGINT,
-    playback_state            VARCHAR(16) NOT NULL DEFAULT 'IDLE',
-    playback_position_seconds DOUBLE      NOT NULL DEFAULT 0,
-    last_command_seq          BIGINT      NOT NULL DEFAULT 0,
-    playback_updated_at       DATETIME,
-    screen_sharing            TINYINT(1)  NOT NULL DEFAULT 0,
-    screen_share_by           VARCHAR(64),
+    cast_type                 VARCHAR(16),
+    cast_label                VARCHAR(128),
+    cast_by                   VARCHAR(64),
     like_count                BIGINT      NOT NULL DEFAULT 0,
     understaffed_alert        TINYINT(1)  NOT NULL DEFAULT 0,
     understaffed_since        DATETIME,
@@ -60,8 +39,7 @@ CREATE TABLE IF NOT EXISTS room (
     created_by                VARCHAR(64) NOT NULL,
     created_at                DATETIME    NOT NULL,
     UNIQUE KEY uk_room_code (room_code),
-    KEY idx_room_status (status),
-    CONSTRAINT fk_room_content FOREIGN KEY (current_content_id) REFERENCES content_item (id)
+    KEY idx_room_status (status)
 ) ENGINE = InnoDB;
 
 -- 手机客户端入会记录
@@ -91,22 +69,6 @@ CREATE TABLE IF NOT EXISTS invite_token (
     created_at DATETIME    NOT NULL,
     UNIQUE KEY uk_invite_token (token),
     CONSTRAINT fk_invite_room FOREIGN KEY (room_id) REFERENCES room (id)
-) ENGINE = InnoDB;
-
--- 定时投放计划(不同时间不同内容投给不同房间)
-CREATE TABLE IF NOT EXISTS cast_schedule (
-    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
-    room_id     BIGINT      NOT NULL,
-    content_id  BIGINT      NOT NULL,
-    cast_at     DATETIME    NOT NULL,
-    status      VARCHAR(16) NOT NULL DEFAULT 'PENDING',
-    executed_at DATETIME,
-    note        VARCHAR(256),
-    created_by  VARCHAR(64) NOT NULL,
-    created_at  DATETIME    NOT NULL,
-    KEY idx_cast_schedule_cast_at (cast_at),
-    CONSTRAINT fk_schedule_room FOREIGN KEY (room_id) REFERENCES room (id),
-    CONSTRAINT fk_schedule_content FOREIGN KEY (content_id) REFERENCES content_item (id)
 ) ENGINE = InnoDB;
 
 -- 点赞记录(手机端点赞 -> PC 端实时展示 -> 后端记录)

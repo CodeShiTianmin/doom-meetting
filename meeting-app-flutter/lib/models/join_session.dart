@@ -15,10 +15,8 @@ class JoinSession {
   final int? durationMinutes;
   final String? meetingStartAt;
   final String? meetingEndAt;
-  final String playbackState;
-  final double playbackPositionSeconds;
-  final int? contentId;
-  final String? contentName;
+  final String? castType;
+  final String? castLabel;
   final String? livekitToken;
   final String? livekitWsUrl;
 
@@ -38,10 +36,8 @@ class JoinSession {
     this.durationMinutes,
     this.meetingStartAt,
     this.meetingEndAt,
-    required this.playbackState,
-    required this.playbackPositionSeconds,
-    this.contentId,
-    this.contentName,
+    this.castType,
+    this.castLabel,
     this.livekitToken,
     this.livekitWsUrl,
   });
@@ -62,11 +58,8 @@ class JoinSession {
         durationMinutes: (json['durationMinutes'] as num?)?.toInt(),
         meetingStartAt: json['meetingStartAt'] as String?,
         meetingEndAt: json['meetingEndAt'] as String?,
-        playbackState: (json['playbackState'] as String?) ?? 'IDLE',
-        playbackPositionSeconds:
-            (json['playbackPositionSeconds'] as num?)?.toDouble() ?? 0,
-        contentId: (json['contentId'] as num?)?.toInt(),
-        contentName: json['contentName'] as String?,
+        castType: json['castType'] as String?,
+        castLabel: json['castLabel'] as String?,
         livekitToken: json['livekitToken'] as String?,
         livekitWsUrl: json['livekitWsUrl'] as String?,
       );

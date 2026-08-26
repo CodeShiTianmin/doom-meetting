@@ -10,9 +10,9 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 
 /**
  * STOMP 信令通道:
- * /topic/rooms/{roomCode}   房间事件(成员进出/就位/播放控制/点赞/倒计时/关闭)
+ * /topic/rooms/{roomCode}   房间事件(成员进出/就位/推流状态/点赞/倒计时/关闭)
  * /topic/admin/dashboard    管理端(PC)实时看板事件(房间运行/红灯预警/点赞)
- * /app/rooms/{roomCode}/playback   手机端播放控制指令入口
+ * /app/rooms/{roomCode}/signal   WebRTC 兜底信令入口
  * 订阅访问控制见 {@link WsAuthChannelInterceptor}
  */
 @Configuration

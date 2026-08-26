@@ -1,9 +1,6 @@
 package com.doommeeting.server.dto;
 
-import jakarta.validation.constraints.DecimalMax;
-import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
 
@@ -32,10 +29,8 @@ public class MobileDtos {
             Integer durationMinutes,
             LocalDateTime meetingStartAt,
             LocalDateTime meetingEndAt,
-            String playbackState,
-            Double playbackPositionSeconds,
-            Long contentId,
-            String contentName,
+            String castType,
+            String castLabel,
             String livekitToken,
             String livekitWsUrl) {
     }
@@ -55,34 +50,9 @@ public class MobileDtos {
             @NotBlank(message = "成员凭证不能为空") String memberToken) {
     }
 
-    public record PlaybackControlRequest(
-            @NotBlank(message = "身份标识不能为空") String identity,
-            @NotBlank(message = "成员凭证不能为空") String memberToken,
-            @NotBlank(message = "指令不能为空") String action,
-            @DecimalMin(value = "0", message = "播放进度不能为负") Double positionSeconds,
-            @DecimalMin(value = "0", message = "调节值范围 0~100")
-            @DecimalMax(value = "100", message = "调节值范围 0~100") Double value,
-            Long seq) {
-    }
-
     public record RecordingReportRequest(
             @NotBlank(message = "身份标识不能为空") String identity,
             @NotBlank(message = "成员凭证不能为空") String memberToken,
             String detail) {
-    }
-
-    public record ChatSendRequest(
-            @NotBlank(message = "身份标识不能为空") String identity,
-            @NotBlank(message = "成员凭证不能为空") String memberToken,
-            @NotBlank(message = "消息内容不能为空")
-            @Size(max = 500, message = "消息最长 500 字") String content) {
-    }
-
-    public record ChatMessageResponse(
-            Long id,
-            String identity,
-            String nickname,
-            String content,
-            LocalDateTime sentAt) {
     }
 }

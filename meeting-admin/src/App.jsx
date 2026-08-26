@@ -4,7 +4,6 @@ import MainLayout from './layout/MainLayout.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import RoomsPage from './pages/RoomsPage.jsx'
 import RoomDetailPage from './pages/RoomDetailPage.jsx'
-import SchedulesPage from './pages/SchedulesPage.jsx'
 import LikesPage from './pages/LikesPage.jsx'
 import UsersPage from './pages/UsersPage.jsx'
 
@@ -30,7 +29,6 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="rooms" element={<RoomsPage />} />
         <Route path="rooms/:id" element={<RoomDetailPage />} />
-        <Route path="schedules" element={<SchedulesPage />} />
         <Route path="likes" element={<LikesPage />} />
         <Route path="users" element={<UsersPage />} />
       </Route>

@@ -11,11 +11,9 @@ export const listRooms = (status) =>
 export const getRoom = (id) => client.get(`/admin/rooms/${id}`)
 export const updateRoomSettings = (id, data) =>
   client.put(`/admin/rooms/${id}/settings`, data)
-export const castContent = (id, contentId, replace = false) =>
-  client.post(`/admin/rooms/${id}/cast`, { contentId, replace })
+export const startCast = (id, type, label, replace = false) =>
+  client.post(`/admin/rooms/${id}/cast/start`, { type, label, replace })
 export const stopCast = (id) => client.post(`/admin/rooms/${id}/cast/stop`)
-export const controlRoomPlayback = (id, action, positionSeconds, value) =>
-  client.post(`/admin/rooms/${id}/playback`, { action, positionSeconds, value })
 export const closeRoom = (id) => client.post(`/admin/rooms/${id}/close`)
 export const regenerateInvite = (id) =>
   client.post(`/admin/rooms/${id}/invite/regenerate`)
@@ -37,29 +35,6 @@ export const setMemberCamera = (id, identity, disabled) =>
 export const approveMember = (id, identity, approved) =>
   client.post(`/admin/rooms/${id}/members/${identity}/approve`, null, { params: { approved } })
 export const getAttendance = (id) => client.get(`/admin/rooms/${id}/attendance`)
-
-// ---------- 会中聊天 ----------
-export const sendRoomChat = (id, content) =>
-  client.post(`/admin/rooms/${id}/chat`, { content })
-export const getRoomChat = (id) => client.get(`/admin/rooms/${id}/chat`)
-
-// ---------- 内容(仅上传文件) ----------
-export const uploadContentFile = (file, roomId) => {
-  const formData = new FormData()
-  formData.append('file', file)
-  if (roomId) formData.append('roomId', roomId)
-  return client.post('/admin/contents/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
-}
-export const listContents = (includeDisabled) =>
-  client.get('/admin/contents', { params: includeDisabled ? { includeDisabled: true } : {} })
-export const deleteContent = (id) => client.delete(`/admin/contents/${id}`)
-
-// ---------- 投放计划 ----------
-export const createSchedule = (data) => client.post('/admin/cast-schedules', data)
-export const listSchedules = () => client.get('/admin/cast-schedules')
-export const cancelSchedule = (id) => client.post(`/admin/cast-schedules/${id}/cancel`)
 
 // ---------- 仪表盘 / 点赞 ----------
 export const getDashboardSummary = () => client.get('/admin/dashboard/summary')

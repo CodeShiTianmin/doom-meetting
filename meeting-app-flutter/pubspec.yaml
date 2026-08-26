@@ -26,12 +26,6 @@ dependencies:
   volume_controller: ^2.0.7
   # 本地亮度调节
   screen_brightness: ^1.0.1
-  # 投放文件选择(所有类型)
-  file_picker: ^8.0.3
-  # 打开服务器文件
-  url_launcher: ^6.2.6
-  # 投放视频/音频文件内置播放
-  video_player: ^2.9.1
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
