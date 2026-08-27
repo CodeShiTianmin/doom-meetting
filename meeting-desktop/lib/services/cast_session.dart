@@ -185,7 +185,19 @@ class CastSession extends ChangeNotifier {
       videoTrack = await lk.LocalVideoTrack.createScreenShareTrack(options);
     }
     try {
-      await participant.publishVideoTrack(videoTrack);
+      // 屏幕/视频内容单层满码率编码: simulcast 会把码率拆到多档低分辨率
+      // 层, 造成块状阴影; 带宽/性能不足时优先保帧率(降分辨率), 避免卡顿
+      await participant.publishVideoTrack(
+        videoTrack,
+        publishOptions: const lk.VideoPublishOptions(
+          simulcast: false,
+          videoEncoding: lk.VideoEncoding(
+            maxBitrate: 10 * 1000 * 1000,
+            maxFramerate: 30,
+          ),
+          degradationPreference: lk.DegradationPreference.maintainFramerate,
+        ),
+      );
     } catch (error) {
       await videoTrack.stop();
       await audioTrack?.stop();
