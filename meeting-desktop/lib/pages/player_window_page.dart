@@ -17,6 +17,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 ///
 /// 与主进程的通信(标准输入/输出, 每行一条 JSON):
 /// - stdin 接收指令: {"cmd":"playOrPause"} / {"cmd":"seekMs","value":..} /
+///   {"cmd":"audioRoute","keywords":[..]}(把播放声音路由到指定虚拟声卡) /
 ///   {"cmd":"close"}
 /// - stdout 上报: `@@player {"event":"ready"}`(窗口标题已就绪, 可捕获),
 ///   以及每 500ms 一条 `@@player {"event":"state",...}` 播放状态
@@ -125,9 +126,51 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
       case 'seekMs':
         _player.seek(Duration(milliseconds: command['value'] as int));
         break;
+      case 'audioRoute':
+        final keywords = (command['keywords'] as List<dynamic>? ?? const [])
+            .map((keyword) => keyword.toString().toLowerCase())
+            .toList();
+        unawaited(_routeAudio(keywords));
+        break;
       case 'close':
         unawaited(_exit());
         break;
+    }
+  }
+
+  /// 把播放器音频输出切到匹配关键字的设备(虚拟声卡输入端),
+  /// 使主进程能从虚拟声卡输出端采集到本视频的伴音
+  Future<void> _routeAudio(List<String> keywords) async {
+    List<AudioDevice> devices = _player.state.audioDevices;
+    if (devices.length <= 1) {
+      try {
+        devices = await _player.stream.audioDevices
+            .firstWhere((list) => list.length > 1)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {
+        devices = _player.state.audioDevices;
+      }
+    }
+    AudioDevice? target;
+    for (final keyword in keywords) {
+      for (final device in devices) {
+        final label = '${device.description} ${device.name}'.toLowerCase();
+        if (label.contains(keyword)) {
+          target = device;
+          break;
+        }
+      }
+      if (target != null) break;
+    }
+    if (target == null) {
+      _emit({'event': 'audioRoute', 'ok': false});
+      return;
+    }
+    try {
+      await _player.setAudioDevice(target);
+      _emit({'event': 'audioRoute', 'ok': true, 'device': target.description});
+    } catch (_) {
+      _emit({'event': 'audioRoute', 'ok': false});
     }
   }
 
