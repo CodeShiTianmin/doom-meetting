@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:livekit_pip/livekit_pip.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -115,14 +116,38 @@ class _RoomPageState extends State<RoomPage> {
     if (!Platform.isAndroid) return;
     final floating = Floating();
     try {
-      if (await floating.isPipAvailable) {
-        _floating = floating;
-        await floating
-            .enable(const OnLeavePiP(aspectRatio: Rational.landscape()));
-      }
+      if (!await floating.isPipAvailable) return;
     } catch (_) {
-      // 设备不支持画中画时忽略
+      return;
     }
+    _floating = floating;
+    if (mounted) setState(() {});
+    try {
+      // Android 12+ (API 31): 系统自动在返回桌面/切后台时进入画中画
+      await floating
+          .enable(const OnLeavePiP(aspectRatio: Rational.landscape()));
+    } catch (_) {
+      // Android 8~11 不支持 OnLeavePiP(setAutoEnterEnabled),
+      // 由原生 onUserLeaveHint 在返回桌面时手动进入画中画
+    }
+    try {
+      await _pipChannel.invokeMethod('setAutoPipOnLeave', true);
+    } catch (_) {}
+  }
+
+  static const MethodChannel _pipChannel =
+      MethodChannel('com.doommeeting/pip');
+
+  /// 系统返回键: 进入画中画悬浮窗而非直接退出
+  void _onBackPressed() {
+    final floating = _floating;
+    if (floating != null) {
+      floating
+          .enable(const ImmediatePiP(aspectRatio: Rational.landscape()))
+          .catchError((_) => PiPStatus.unavailable);
+      return;
+    }
+    SystemNavigator.pop();
   }
 
   Future<void> _initIosPip(lk.Room room) async {
@@ -616,6 +641,9 @@ class _RoomPageState extends State<RoomPage> {
     try {
       _floating?.cancelOnLeavePiP();
     } catch (_) {}
+    if (Platform.isAndroid) {
+      _pipChannel.invokeMethod('setAutoPipOnLeave', false).catchError((_) {});
+    }
     _iosPip?.dispose();
     _heartbeatTimer?.cancel();
     _stateTimer?.cancel();
@@ -660,10 +688,23 @@ class _RoomPageState extends State<RoomPage> {
     if (_floating != null) {
       return PiPSwitcher(
         childWhenEnabled: _buildPipView(state),
-        childWhenDisabled: _buildFullView(state),
+        childWhenDisabled: _wrapBackToPip(_buildFullView(state)),
       );
     }
+    if (Platform.isAndroid) return _wrapBackToPip(_buildFullView(state));
     return _buildFullView(state);
+  }
+
+  /// 拦截系统返回键: 返回主界面时进入画中画悬浮窗, 而非直接退出 APP
+  Widget _wrapBackToPip(Widget child) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _onBackPressed();
+      },
+      child: child,
+    );
   }
 
   /// 画中画悬浮窗内容: 有推流画面则播放推流, 否则展示会议号与状态
