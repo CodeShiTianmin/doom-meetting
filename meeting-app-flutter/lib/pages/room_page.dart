@@ -264,7 +264,9 @@ class _RoomPageState extends State<RoomPage> {
     await [Permission.microphone, Permission.camera].request();
     final room = lk.Room(
       roomOptions: const lk.RoomOptions(
-        adaptiveStream: true,
+        // 关闭自适应订阅: 始终订阅最高清晰度档位。开启时会按渲染控件的
+        // 逻辑像素尺寸选档, 高分屏手机常被降到低档, 画面发糊/块状阴影
+        adaptiveStream: false,
         dynacast: true,
       ),
     );
