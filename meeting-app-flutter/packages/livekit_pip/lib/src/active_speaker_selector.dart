@@ -23,6 +23,10 @@ class ActiveSpeakerSelector {
        _onAspectRatioChanged = onAspectRatioChanged {
     _listener = room.createListener()
       ..on<ActiveSpeakersChangedEvent>(_onActiveSpeakersChanged)
+      // Silent publishers (e.g. hidden screen-share casters) never appear in
+      // active speakers, so also reselect on subscription changes.
+      ..on<TrackSubscribedEvent>((_) => _reselectBestTrack())
+      ..on<TrackUnsubscribedEvent>((_) => _reselectBestTrack())
       ..on<TrackMutedEvent>(_onTrackMuted)
       ..on<TrackUnmutedEvent>(_onTrackUnmuted)
       ..on<LocalTrackPublishedEvent>(_onLocalTrackPublished)
@@ -136,6 +140,16 @@ class ActiveSpeakerSelector {
       }
     }
     return null;
+  }
+
+  void _reselectBestTrack() {
+    final best = currentBestTrackId;
+    if (best == null) return;
+    _updateTrack(best);
+    final dim = currentBestDimensions;
+    if (dim != null) {
+      _onAspectRatioChanged?.call(dim.width, dim.height);
+    }
   }
 
   void _updateTrack(String trackId) {
