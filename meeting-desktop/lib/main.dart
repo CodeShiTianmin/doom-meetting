@@ -5,19 +5,17 @@ import 'package:media_kit/media_kit.dart';
 
 import 'pages/login_page.dart';
 import 'pages/player_window_page.dart';
-import 'services/cast_manager.dart';
 
 void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
-  // 子窗口入口: 独立本地视频播放窗口(desktop_multi_window 以相同 main 启动子引擎)
-  if (args.isNotEmpty && args.first == 'multi_window') {
-    final windowId = int.parse(args[1]);
-    final params = jsonDecode(args[2]) as Map<String, dynamic>;
-    runApp(PlayerWindowApp(windowId: windowId, params: params));
+  // 播放进程入口: 独立本地视频播放进程(主进程以 `exe player <参数>` 重启自身)
+  if (args.length >= 2 && args.first == 'player') {
+    final params =
+        jsonDecode(utf8.decode(base64Url.decode(args[1]))) as Map<String, dynamic>;
+    runApp(PlayerWindowApp(params: params));
     return;
   }
-  CastManager.instance.bindPlayerWindowEvents();
   runApp(const MeetingDesktopApp());
 }
 

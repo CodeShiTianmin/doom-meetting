@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui';
+import 'dart:io';
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 import 'package:livekit_client/livekit_client.dart' as lk;
@@ -18,9 +17,10 @@ enum CastMode { none, screen, video, camera }
 ///
 /// - 屏幕/窗口推流: getDisplayMedia 捕获整屏或指定窗口, 系统伴音走
 ///   WASAPI loopback (captureScreenAudio)
-/// - 本地视频推流: 每房间开一个独立播放窗口(子 Flutter 引擎, media_kit
-///   解码), 对该窗口做窗口捕获推流; 播放与主窗口页面解耦, 主窗口切到
-///   其他房间操作时后台持续播放推流
+/// - 本地视频推流: 每房间启动一个独立播放进程(重启自身 exe, media_kit
+///   解码), 对该进程窗口做窗口捕获推流; 播放与主进程页面完全解耦,
+///   主窗口切到其他房间操作时后台持续播放推流。必须用独立进程:
+///   WebRTC 的窗口枚举会过滤本进程自己的窗口, 同进程子窗口无法捕获
 /// - 摄像头推流: 直接采集本机摄像头推流
 class CastSession extends ChangeNotifier {
   final int roomId;
@@ -29,7 +29,11 @@ class CastSession extends ChangeNotifier {
   CastSession({required this.roomId, required this.roomCode});
 
   lk.Room? _lkRoom;
-  int? _playerWindowId;
+  Process? _playerProcess;
+  StreamSubscription<String>? _playerStdoutSub;
+
+  /// 播放窗口被用户手动关闭时的回调(用于同步服务端推流登记)
+  Future<void> Function()? onPlayerClosedExternally;
 
   CastMode mode = CastMode.none;
 
@@ -175,29 +179,39 @@ class CastSession extends ChangeNotifier {
     }
   }
 
-  /// 本地视频推流: 开独立播放窗口本地解码播放(不上传服务器),
-  /// 对该窗口做窗口捕获以 LiveKit 实时流推给房间内手机端。
-  /// 播放窗口独立于主窗口, 切换房间/页面不影响后台推流。
+  /// 本地视频推流: 启动独立播放进程本地解码播放(不上传服务器),
+  /// 对该进程窗口做窗口捕获以 LiveKit 实时流推给房间内手机端。
+  /// 播放进程独立于主窗口, 切换房间/页面不影响后台推流。
   Future<void> startVideoCast(String path) async {
     await stopCast();
     final participant = _requireParticipant();
 
     final title = '投屏播放-$roomCode';
-    final window = await DesktopMultiWindow.createWindow(jsonEncode({
+    final payload = base64Url.encode(utf8.encode(jsonEncode({
       'roomId': roomId,
       'path': path,
       'title': title,
-    }));
-    _playerWindowId = window.windowId;
-    await window.setTitle(title);
-    await window.setFrame(const Rect.fromLTWH(120, 120, 960, 560));
-    await window.show();
+    })));
+    final process = await Process.start(
+        Platform.resolvedExecutable, ['player', payload]);
+    _playerProcess = process;
+    final ready = Completer<void>();
+    _playerStdoutSub = process.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) => _handlePlayerLine(line, ready));
+    process.stderr.drain<void>();
+    unawaited(process.exitCode.then((_) => _onPlayerProcessExited(process)));
 
     try {
+      await ready.future.timeout(const Duration(seconds: 15));
       final source = await _waitPlayerWindowSource(title);
       await _publishCaptureTrack(participant, source.id);
     } catch (error) {
       await _closePlayerWindow();
+      if (error is TimeoutException) {
+        throw StateError('播放窗口未就绪, 无法捕获推流');
+      }
       rethrow;
     }
     filePath = path;
@@ -207,7 +221,7 @@ class CastSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 等待播放窗口出现在可捕获窗口列表中(子引擎启动需要时间)
+  /// 等待播放进程窗口出现在可捕获窗口列表中(独立进程窗口可正常枚举)
   Future<webrtc.DesktopCapturerSource> _waitPlayerWindowSource(
       String title) async {
     for (var attempt = 0; attempt < 30; attempt++) {
@@ -222,30 +236,52 @@ class CastSession extends ChangeNotifier {
     throw StateError('播放窗口未就绪, 无法捕获推流');
   }
 
-  /// 播放/暂停(转发给独立播放窗口)
-  Future<void> playerPlayPause() => _invokePlayerWindow('playOrPause');
-
-  /// 跳转进度(转发给独立播放窗口)
-  Future<void> playerSeek(int positionMs) =>
-      _invokePlayerWindow('seekMs', positionMs);
-
-  Future<void> _invokePlayerWindow(String method, [dynamic arguments]) async {
-    final windowId = _playerWindowId;
-    if (windowId == null) return;
+  void _handlePlayerLine(String line, Completer<void> ready) {
+    if (!line.startsWith('@@player ')) return;
+    Map<String, dynamic> message;
     try {
-      await DesktopMultiWindow.invokeMethod(windowId, method, arguments);
+      message = jsonDecode(line.substring('@@player '.length))
+          as Map<String, dynamic>;
     } catch (_) {
-      // 播放窗口已关闭/未就绪时忽略
+      return;
+    }
+    switch (message['event']) {
+      case 'ready':
+        if (!ready.isCompleted) ready.complete();
+        break;
+      case 'state':
+        _updatePlayerState(
+          playing: message['playing'] as bool,
+          positionMs: message['positionMs'] as int,
+          durationMs: message['durationMs'] as int,
+        );
+        break;
     }
   }
 
-  /// 接收播放窗口周期性上报的播放状态
-  void updatePlayerState(
-      {required int windowId,
-      required bool playing,
+  /// 播放/暂停(转发给独立播放进程)
+  Future<void> playerPlayPause() => _sendPlayerCommand({'cmd': 'playOrPause'});
+
+  /// 跳转进度(转发给独立播放进程)
+  Future<void> playerSeek(int positionMs) =>
+      _sendPlayerCommand({'cmd': 'seekMs', 'value': positionMs});
+
+  Future<void> _sendPlayerCommand(Map<String, dynamic> command) async {
+    final process = _playerProcess;
+    if (process == null) return;
+    try {
+      process.stdin.writeln(jsonEncode(command));
+      await process.stdin.flush();
+    } catch (_) {
+      // 播放进程已退出/未就绪时忽略
+    }
+  }
+
+  /// 接收播放进程周期性上报的播放状态
+  void _updatePlayerState(
+      {required bool playing,
       required int positionMs,
       required int durationMs}) {
-    if (windowId != _playerWindowId) return;
     if (playing == playerPlaying &&
         positionMs == playerPositionMs &&
         durationMs == playerDurationMs) {
@@ -257,24 +293,31 @@ class CastSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 播放窗口被外部关闭(如用户手动关窗): 同步停止本房间推流
-  Future<void> onPlayerWindowClosed(int windowId) async {
-    if (windowId != _playerWindowId) return;
-    _playerWindowId = null;
+  /// 播放进程退出(如用户手动关窗): 同步停止本房间推流并登记服务端
+  Future<void> _onPlayerProcessExited(Process process) async {
+    if (!identical(process, _playerProcess)) return;
+    _playerProcess = null;
+    final wasVideoCast = mode == CastMode.video;
     await stopCast();
+    final callback = onPlayerClosedExternally;
+    if (wasVideoCast && callback != null) await callback();
   }
 
   Future<void> _closePlayerWindow() async {
-    final windowId = _playerWindowId;
-    _playerWindowId = null;
+    final process = _playerProcess;
+    _playerProcess = null;
     playerPlaying = false;
     playerPositionMs = 0;
     playerDurationMs = 0;
-    if (windowId == null) return;
+    await _playerStdoutSub?.cancel();
+    _playerStdoutSub = null;
+    if (process == null) return;
     try {
-      await WindowController.fromWindowId(windowId).close();
+      process.stdin.writeln(jsonEncode({'cmd': 'close'}));
+      await process.stdin.flush();
+      await process.exitCode.timeout(const Duration(seconds: 3));
     } catch (_) {
-      // 窗口已关闭时忽略
+      process.kill();
     }
   }
 
