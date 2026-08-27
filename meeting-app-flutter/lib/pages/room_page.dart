@@ -182,10 +182,14 @@ class _RoomPageState extends State<RoomPage> {
       final current = await ScreenBrightness().current;
       _brightness = current;
     } catch (_) {}
-    try {
-      final current = await VolumeController().getVolume();
-      _volume = current;
-    } catch (_) {}
+    // iOS: volume_controller 的 getVolume 会以默认类别激活 AVAudioSession,
+    // 干扰 WebRTC 音频会话导致播放无声, 仅在 Android 读取系统音量
+    if (!Platform.isIOS) {
+      try {
+        final current = await VolumeController().getVolume();
+        _volume = current;
+      } catch (_) {}
+    }
     if (mounted) setState(() {});
   }
 
@@ -305,9 +309,7 @@ class _RoomPageState extends State<RoomPage> {
       }
       unawaited(_initIosPip(room));
       // 默认扬声器外放(观看推流场景), 与 UI 初始状态保持一致
-      try {
-        await lk.Hardware.instance.setSpeakerphoneOn(_speakerOn);
-      } catch (_) {}
+      await _applySpeakerRoute();
       if (_micOn &&
           session.videoCallEnabled &&
           !_mutedByHost &&
@@ -323,6 +325,12 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   void _attachRemoteTrack(lk.RemoteParticipant participant, lk.Track track) {
+    if (track is lk.AudioTrack) {
+      // iOS: 订阅到远端音频后重申扬声器路由,
+      // 避免音频会话被其他插件/系统改动后停留在听筒或静音类别
+      _applySpeakerRoute();
+      return;
+    }
     if (track is! lk.VideoTrack || !mounted) return;
     setState(() {
       if (participant.identity.startsWith(AppConfig.castIdentityPrefix)) {
@@ -394,12 +402,16 @@ class _RoomPageState extends State<RoomPage> {
 
   /// 扬声器/听筒切换
   Future<void> _toggleSpeaker() async {
-    final next = !_speakerOn;
-    try {
-      await lk.Hardware.instance.setSpeakerphoneOn(next);
-    } catch (_) {}
+    _speakerOn = !_speakerOn;
+    await _applySpeakerRoute();
     if (!mounted) return;
-    setState(() => _speakerOn = next);
+    setState(() {});
+  }
+
+  Future<void> _applySpeakerRoute() async {
+    try {
+      await lk.Hardware.instance.setSpeakerphoneOn(_speakerOn);
+    } catch (_) {}
   }
 
   Future<void> _switchCamera() async {
