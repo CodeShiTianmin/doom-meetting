@@ -93,23 +93,26 @@ class CastSession extends ChangeNotifier {
         types: [webrtc.SourceType.Screen, webrtc.SourceType.Window]);
   }
 
-  /// 屏幕/窗口推流: 捕获整屏或指定窗口推流, 系统伴音走回环采集
+  /// 屏幕/窗口推流: 捕获整屏或指定窗口推流。伴音优先随画面一起用
+  /// Windows 系统回环采集(无需虚拟声卡); 不支持时回退回环设备采集
   Future<void> startScreenCast(webrtc.DesktopCapturerSource source) async {
     await stopCast();
     final participant = _requireParticipant();
-    await _publishCaptureTrack(participant, source.id);
-    final channel =
-        await _publishSystemAudioTrack(participant, preferDedicated: false);
-    if (channel != null && channel.dedicated) {
-      // 虚拟声卡输出端只能采到路由进其输入端的声音;
-      // 屏幕推流无法代为路由, 需系统默认播放设备指向虚拟声卡
-      audioCaptureWarning =
-          '已从虚拟声卡「${channel.device.label}」采集伴音; 若推流无声音, '
-          '请将系统默认播放设备设为该虚拟声卡的输入端(如 CABLE Input)';
-    } else if (channel != null && _sharedWithOthers(channel)) {
-      audioCaptureWarning =
-          '多个房间正在共用同一伴音采集设备, 声音会互相串音。'
-          '建议安装多条 VB-CABLE 虚拟声卡(CABLE A/B)实现每房间独立伴音';
+    final hasCaptureAudio = await _publishCaptureTrack(participant, source.id);
+    if (!hasCaptureAudio) {
+      final channel =
+          await _publishSystemAudioTrack(participant, preferDedicated: false);
+      if (channel != null && channel.dedicated) {
+        // 虚拟声卡输出端只能采到路由进其输入端的声音;
+        // 屏幕推流无法代为路由, 需系统默认播放设备指向虚拟声卡
+        audioCaptureWarning =
+            '已从虚拟声卡「${channel.device.label}」采集伴音; 若推流无声音, '
+            '请将系统默认播放设备设为该虚拟声卡的输入端(如 CABLE Input)';
+      } else if (channel != null && _sharedWithOthers(channel)) {
+        audioCaptureWarning =
+            '多个房间正在共用同一伴音采集设备, 声音会互相串音。'
+            '建议安装多条 VB-CABLE 虚拟声卡(CABLE A/B)实现每房间独立伴音';
+      }
     }
     mode = CastMode.screen;
     sourceLabel = source.name;
@@ -153,47 +156,48 @@ class CastSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 创建并发布屏幕捕获轨: 部分环境不支持系统伴音回环采集,
-  /// 失败时回退为仅画面投屏; 发布失败时停止轨道避免泄漏捕获会话
-  Future<void> _publishCaptureTrack(
+  /// 创建并发布屏幕捕获轨。Windows 上随画面同时用 WASAPI 回环采集
+  /// 伴音: 捕获窗口时只采该窗口所属进程的声音(按进程隔离, 多房间
+  /// 天然不串音, 需 Win10 2004+), 捕获整屏时采全系统声音。
+  /// 返回是否成功发布了伴音轨; 失败时回退为仅画面,
+  /// 由调用方再走回环设备采集。发布失败时停止轨道避免泄漏捕获会话
+  Future<bool> _publishCaptureTrack(
       lk.LocalParticipant participant, String sourceId) async {
-    lk.LocalVideoTrack track;
+    final options = lk.ScreenShareCaptureOptions(
+      sourceId: sourceId,
+      maxFrameRate: 30,
+      params: const lk.VideoParameters(
+        dimensions: lk.VideoDimensionsPresets.h1080_169,
+        encoding: lk.VideoEncoding(
+          maxBitrate: 6 * 1000 * 1000,
+          maxFramerate: 30,
+        ),
+      ),
+    );
+    lk.LocalVideoTrack videoTrack;
+    lk.LocalAudioTrack? audioTrack;
     try {
-      track = await lk.LocalVideoTrack.createScreenShareTrack(
-        lk.ScreenShareCaptureOptions(
-          sourceId: sourceId,
-          captureScreenAudio: true,
-          maxFrameRate: 30,
-          params: const lk.VideoParameters(
-            dimensions: lk.VideoDimensionsPresets.h1080_169,
-            encoding: lk.VideoEncoding(
-              maxBitrate: 6 * 1000 * 1000,
-              maxFramerate: 30,
-            ),
-          ),
-        ),
-      );
+      final tracks =
+          await lk.LocalVideoTrack.createScreenShareTracksWithAudio(options);
+      videoTrack = tracks.whereType<lk.LocalVideoTrack>().first;
+      audioTrack = tracks.whereType<lk.LocalAudioTrack>().firstOrNull;
     } catch (_) {
-      track = await lk.LocalVideoTrack.createScreenShareTrack(
-        lk.ScreenShareCaptureOptions(
-          sourceId: sourceId,
-          captureScreenAudio: false,
-          maxFrameRate: 30,
-          params: const lk.VideoParameters(
-            dimensions: lk.VideoDimensionsPresets.h1080_169,
-            encoding: lk.VideoEncoding(
-              maxBitrate: 6 * 1000 * 1000,
-              maxFramerate: 30,
-            ),
-          ),
-        ),
-      );
+      videoTrack = await lk.LocalVideoTrack.createScreenShareTrack(options);
     }
     try {
-      await participant.publishVideoTrack(track);
+      await participant.publishVideoTrack(videoTrack);
     } catch (error) {
-      await track.stop();
+      await videoTrack.stop();
+      await audioTrack?.stop();
       rethrow;
+    }
+    if (audioTrack == null) return false;
+    try {
+      await participant.publishAudioTrack(audioTrack);
+      return true;
+    } catch (_) {
+      await audioTrack.stop();
+      return false;
     }
   }
 
@@ -265,18 +269,23 @@ class CastSession extends ChangeNotifier {
     try {
       await ready.future.timeout(const Duration(seconds: 15));
       final source = await _waitPlayerWindowSource(title);
-      await _publishCaptureTrack(participant, source.id);
-      final channel =
-          await _publishSystemAudioTrack(participant, preferDedicated: true);
-      if (channel != null && channel.dedicated) {
-        // 把播放进程声音定向路由到本房间独占的虚拟声卡输入端,
-        // 否则播放声音走默认扬声器, 虚拟声卡采到的是静音
-        await _sendPlayerCommand(
-            {'cmd': 'audioRoute', 'keywords': channel.routeKeywords});
-      } else if (channel != null && _sharedWithOthers(channel)) {
-        audioCaptureWarning =
-            '虚拟声卡通道不足, 本房间与其他房间共用伴音采集, 声音会互相串音。'
-            '建议加装 VB-CABLE A/B 等虚拟声卡实现每房间独立伴音';
+      // 捕获播放窗口时伴音按进程隔离采集: 只采本房间播放进程的声音,
+      // 多房间并发天然互不串音, 无需虚拟声卡
+      final hasCaptureAudio =
+          await _publishCaptureTrack(participant, source.id);
+      if (!hasCaptureAudio) {
+        final channel =
+            await _publishSystemAudioTrack(participant, preferDedicated: true);
+        if (channel != null && channel.dedicated) {
+          // 把播放进程声音定向路由到本房间独占的虚拟声卡输入端,
+          // 否则播放声音走默认扬声器, 虚拟声卡采到的是静音
+          await _sendPlayerCommand(
+              {'cmd': 'audioRoute', 'keywords': channel.routeKeywords});
+        } else if (channel != null && _sharedWithOthers(channel)) {
+          audioCaptureWarning =
+              '虚拟声卡通道不足, 本房间与其他房间共用伴音采集, 声音会互相串音。'
+              '建议加装 VB-CABLE A/B 等虚拟声卡实现每房间独立伴音';
+        }
       }
     } catch (error) {
       await _closePlayerWindow();

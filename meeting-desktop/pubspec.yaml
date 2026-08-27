@@ -29,6 +29,13 @@ dependencies:
   file_picker: ^8.0.3
   cupertino_icons: ^1.0.8
 
+# 使用仓库内打补丁的 flutter_webrtc(基于 v1.6.0):
+# 支持多路并发 WASAPI 回环伴音采集, 多房间同时推流各自采集
+# 自己播放进程的声音(上游同一时刻只允许一路回环采集)
+dependency_overrides:
+  flutter_webrtc:
+    path: ../third_party/flutter_webrtc
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
