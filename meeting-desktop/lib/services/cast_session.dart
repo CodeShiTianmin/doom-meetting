@@ -16,7 +16,7 @@ enum CastMode { none, screen, video, camera }
 /// 多房并发时各会话完全隔离, 天然不串音、不串频。
 ///
 /// - 屏幕/窗口推流: getDisplayMedia 捕获整屏或指定窗口, 系统伴音走
-///   WASAPI loopback (captureScreenAudio)
+///   回环采集设备(立体声混音/虚拟声卡)单独发布音频轨
 /// - 本地视频推流: 每房间启动一个独立播放进程(重启自身 exe, media_kit
 ///   解码), 对该进程窗口做窗口捕获推流; 播放与主进程页面完全解耦,
 ///   主窗口切到其他房间操作时后台持续播放推流。必须用独立进程:
@@ -43,6 +43,9 @@ class CastSession extends ChangeNotifier {
   String? error;
   bool connected = false;
   bool publishing = false;
+
+  /// 系统伴音采集失败时的提示(推流仅有画面无声音)
+  String? audioCaptureWarning;
 
   /// 独立播放窗口上报的播放状态(本地视频推流模式)
   bool playerPlaying = false;
@@ -93,6 +96,7 @@ class CastSession extends ChangeNotifier {
     await stopCast();
     final participant = _requireParticipant();
     await _publishCaptureTrack(participant, source.id);
+    await _publishSystemAudioTrack(participant);
     mode = CastMode.screen;
     sourceLabel = source.name;
     publishing = true;
@@ -179,6 +183,54 @@ class CastSession extends ChangeNotifier {
     }
   }
 
+  /// Windows 桌面端 getDisplayMedia 不携带系统声音(captureScreenAudio 仅浏览器
+  /// 生效), 屏幕/本地视频推流需从回环采集设备(立体声混音/虚拟声卡)单独采集
+  /// 系统伴音并作为音频轨发布; 找不到设备时仅推画面并给出提示
+  Future<void> _publishSystemAudioTrack(lk.LocalParticipant participant) async {
+    audioCaptureWarning = null;
+    const loopbackKeywords = [
+      '立体声混音',
+      'stereo mix',
+      'what u hear',
+      'wave out',
+      'loopback',
+      'cable output',
+      'voicemeeter out',
+      'virtual audio',
+    ];
+    lk.MediaDevice? loopback;
+    try {
+      final inputs = await lk.Hardware.instance.audioInputs();
+      for (final device in inputs) {
+        final label = device.label.toLowerCase();
+        if (loopbackKeywords.any(label.contains)) {
+          loopback = device;
+          break;
+        }
+      }
+    } catch (_) {}
+    if (loopback == null) {
+      audioCaptureWarning =
+          '未找到系统伴音采集设备, 推流将没有声音。请在系统声音设置中启用「立体声混音」, '
+          '或安装 VB-CABLE 等虚拟声卡后重新推流';
+      return;
+    }
+    try {
+      final audioTrack = await lk.LocalAudioTrack.create(lk.AudioCaptureOptions(
+        deviceId: loopback.deviceId,
+        // 采集的是音乐/影片伴音, 关闭人声处理避免声音被消除或压制
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        voiceIsolation: false,
+        typingNoiseDetection: false,
+      ));
+      await participant.publishAudioTrack(audioTrack);
+    } catch (error) {
+      audioCaptureWarning = '系统伴音采集失败, 推流将没有声音: $error';
+    }
+  }
+
   /// 本地视频推流: 启动独立播放进程本地解码播放(不上传服务器),
   /// 对该进程窗口做窗口捕获以 LiveKit 实时流推给房间内手机端。
   /// 播放进程独立于主窗口, 切换房间/页面不影响后台推流。
@@ -207,6 +259,7 @@ class CastSession extends ChangeNotifier {
       await ready.future.timeout(const Duration(seconds: 15));
       final source = await _waitPlayerWindowSource(title);
       await _publishCaptureTrack(participant, source.id);
+      await _publishSystemAudioTrack(participant);
     } catch (error) {
       await _closePlayerWindow();
       if (error is TimeoutException) {
@@ -345,6 +398,7 @@ class CastSession extends ChangeNotifier {
     await _closePlayerWindow();
     filePath = null;
     sourceLabel = null;
+    audioCaptureWarning = null;
     mode = CastMode.none;
     publishing = false;
     notifyListeners();

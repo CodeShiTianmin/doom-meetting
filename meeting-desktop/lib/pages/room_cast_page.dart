@@ -252,6 +252,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
       }
       await _refreshRoom();
       _showToast('已开始推流: ${selected.name}');
+      _warnIfNoCastAudio(session);
     }
   }
 
@@ -293,6 +294,18 @@ class _RoomCastPageState extends State<RoomCastPage> {
     }
     await _refreshRoom();
     _showToast('已开始视频推流: $name');
+    _warnIfNoCastAudio(session);
+  }
+
+  /// 系统伴音采集失败时提醒操作员(推流仅有画面无声音)
+  void _warnIfNoCastAudio(CastSession session) {
+    final warning = session.audioCaptureWarning;
+    if (warning == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(warning),
+      backgroundColor: Colors.orange.shade800,
+      duration: const Duration(seconds: 8),
+    ));
   }
 
   /// 摄像头推流: 采集本机摄像头推给房间
