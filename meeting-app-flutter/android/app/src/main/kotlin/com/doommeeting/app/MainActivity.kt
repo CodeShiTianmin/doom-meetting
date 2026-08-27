@@ -1,6 +1,8 @@
 package com.doommeeting.app
 
+import android.app.PictureInPictureParams
 import android.os.Build
+import android.util.Rational
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -18,6 +20,7 @@ class MainActivity : FlutterActivity() {
     private var eventSink: EventChannel.EventSink? = null
     private var recordCallback: java.util.function.Consumer<Int>? = null
     private var guarding = false
+    private var autoPipOnLeave = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -33,6 +36,19 @@ class MainActivity : FlutterActivity() {
                 }
                 "stopGuard" -> {
                     stopGuard()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.doommeeting/pip"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setAutoPipOnLeave" -> {
+                    autoPipOnLeave = call.arguments as? Boolean ?: false
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -86,6 +102,26 @@ class MainActivity : FlutterActivity() {
                 }
             }
             recordCallback = null
+        }
+    }
+
+    /**
+     * Android 8~11 不支持 setAutoEnterEnabled(仅 API 31+),
+     * 返回桌面/切换应用时在此手动进入画中画悬浮窗.
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (!autoPipOnLeave) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                enterPictureInPictureMode(
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .build()
+                )
+            } catch (_: Throwable) {
+            }
         }
     }
 
