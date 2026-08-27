@@ -26,6 +26,9 @@ dependencies:
   wakelock_plus: ^1.2.5
   # 离开 APP 时画中画悬浮窗(Android)
   floating: ^6.0.0
+  # 离开 APP 时推流画面画中画(iOS, vendored)
+  livekit_pip:
+    path: packages/livekit_pip
   # 本地音量调节
   volume_controller: ^2.0.7
   # 本地亮度调节

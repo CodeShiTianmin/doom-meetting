@@ -1,0 +1,18 @@
+name: livekit_pip_platform_interface
+description: Platform interface for the livekit_pip plugin (vendored).
+version: 0.2.0
+homepage: https://github.com/SimiPrambos/livekit_pip
+publish_to: "none"
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  plugin_platform_interface: ^2.1.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

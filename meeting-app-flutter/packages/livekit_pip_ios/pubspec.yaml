@@ -1,0 +1,28 @@
+name: livekit_pip_ios
+description: iOS implementation of the livekit_pip plugin (vendored).
+version: 0.2.0
+homepage: https://github.com/SimiPrambos/livekit_pip
+publish_to: "none"
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+flutter:
+  plugin:
+    implements: livekit_pip
+    platforms:
+      ios:
+        pluginClass: LiveKitPipPlugin
+        dartPluginClass: LivekitPipIOS
+
+dependencies:
+  flutter:
+    sdk: flutter
+  livekit_pip_platform_interface:
+    path: ../livekit_pip_platform_interface
+  meta: ^1.7.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

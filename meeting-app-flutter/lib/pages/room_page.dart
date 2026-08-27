@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:livekit_pip/livekit_pip.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
@@ -38,8 +39,11 @@ class _RoomPageState extends State<RoomPage> {
   final RoomWsService _ws = RoomWsService();
   final RecordingGuard _recordingGuard = RecordingGuard();
 
-  /// 离开 APP 时自动进入画中画悬浮窗(仅 Android 支持)
+  /// 离开 APP 时自动进入画中画悬浮窗(Android)
   Floating? _floating;
+
+  /// 离开 APP 时推流画面画中画(iOS, 无推流画面时系统不显示悬浮窗)
+  LiveKitPip? _iosPip;
 
   lk.Room? _lkRoom;
   lk.EventsListener<lk.RoomEvent>? _lkListener;
@@ -118,6 +122,33 @@ class _RoomPageState extends State<RoomPage> {
       }
     } catch (_) {
       // 设备不支持画中画时忽略
+    }
+  }
+
+  Future<void> _initIosPip(lk.Room room) async {
+    if (!Platform.isIOS) return;
+    final pip = LiveKitPip();
+    try {
+      await pip.initialize(
+        room: room,
+        config: LiveKitPipConfiguration(
+          android: AndroidPipConfiguration(
+            pipWidgetBuilder: (context, room) => const SizedBox.shrink(),
+            autoEnterOnBackground: false,
+          ),
+          ios: const IosPipConfiguration(
+            includeLocalParticipantVideo: false,
+          ),
+        ),
+      );
+      if (!mounted) {
+        unawaited(pip.dispose());
+        return;
+      }
+      setState(() => _iosPip = pip);
+    } catch (_) {
+      // 设备/系统版本不支持画中画时忽略
+      unawaited(pip.dispose());
     }
   }
 
@@ -247,6 +278,7 @@ class _RoomPageState extends State<RoomPage> {
         await room.disconnect();
         return;
       }
+      unawaited(_initIosPip(room));
       // 默认扬声器外放(观看推流场景), 与 UI 初始状态保持一致
       try {
         await lk.Hardware.instance.setSpeakerphoneOn(_speakerOn);
@@ -584,6 +616,7 @@ class _RoomPageState extends State<RoomPage> {
     try {
       _floating?.cancelOnLeavePiP();
     } catch (_) {}
+    _iosPip?.dispose();
     _heartbeatTimer?.cancel();
     _stateTimer?.cancel();
     _clockTimer?.cancel();
@@ -668,9 +701,13 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   Widget _buildFullView(RoomState state) {
+    final lkRoom = _lkRoom;
     return Scaffold(
       body: Stack(
         children: [
+          // iOS 画中画源视图(透明, 必须铺满屏幕才能触发 PiP), Android 为空占位
+          if (_iosPip != null && lkRoom != null)
+            Positioned.fill(child: LiveKitPipView(room: lkRoom)),
           // 主画面: PC 实时推流 > 等待画面
           Positioned.fill(
             child: _castVideoTrack != null

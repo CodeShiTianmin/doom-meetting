@@ -1,0 +1,28 @@
+name: livekit_pip
+description: Native Picture-in-Picture support for LiveKit video calls (vendored, iOS only).
+version: 0.2.0
+homepage: https://github.com/SimiPrambos/livekit_pip
+publish_to: "none"
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+flutter:
+  plugin:
+    platforms:
+      ios:
+        default_package: livekit_pip_ios
+
+dependencies:
+  flutter:
+    sdk: flutter
+  livekit_client: ">=2.6.0 <3.0.0"
+  livekit_pip_ios:
+    path: ../livekit_pip_ios
+  livekit_pip_platform_interface:
+    path: ../livekit_pip_platform_interface
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
