@@ -88,7 +88,12 @@ class _JoinPageState extends State<JoinPage> {
   Future<void> _openScanner() async {
     final status = await Permission.camera.request();
     if (!status.isGranted) {
-      _showError('需要摄像头权限才能扫码入会');
+      if (status.isPermanentlyDenied) {
+        _showError('需要摄像头权限才能扫码入会, 请在系统设置中允许访问相机');
+        await openAppSettings();
+      } else {
+        _showError('需要摄像头权限才能扫码入会');
+      }
       return;
     }
     setState(() => _scanning = true);

@@ -26,6 +26,8 @@
 	<string>用于扫码入会以及会议中的视频通话</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>用于会议中的语音讨论</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于从图库选择邀请二维码图片</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
