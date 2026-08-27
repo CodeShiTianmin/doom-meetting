@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:permission_handler/permission_handler.dart';
@@ -35,6 +37,9 @@ class RoomPage extends StatefulWidget {
 class _RoomPageState extends State<RoomPage> {
   final RoomWsService _ws = RoomWsService();
   final RecordingGuard _recordingGuard = RecordingGuard();
+
+  /// 离开 APP 时自动进入画中画悬浮窗(仅 Android 支持)
+  Floating? _floating;
 
   lk.Room? _lkRoom;
   lk.EventsListener<lk.RoomEvent>? _lkListener;
@@ -96,6 +101,23 @@ class _RoomPageState extends State<RoomPage> {
         Timer.periodic(const Duration(seconds: 1), (_) => _tickClock());
     if (session.recordingForbidden) {
       _recordingGuard.start(_onRecordingDetected);
+    }
+    _initPip();
+  }
+
+  /// 返回桌面/切到其他应用时自动进入画中画悬浮窗,
+  /// 点击悬浮窗(展开按钮)回到 APP
+  Future<void> _initPip() async {
+    if (!Platform.isAndroid) return;
+    final floating = Floating();
+    try {
+      if (await floating.isPipAvailable) {
+        _floating = floating;
+        await floating
+            .enable(const OnLeavePiP(aspectRatio: Rational.landscape()));
+      }
+    } catch (_) {
+      // 设备不支持画中画时忽略
     }
   }
 
@@ -559,6 +581,9 @@ class _RoomPageState extends State<RoomPage> {
 
   @override
   void dispose() {
+    try {
+      _floating?.cancelOnLeavePiP();
+    } catch (_) {}
     _heartbeatTimer?.cancel();
     _stateTimer?.cancel();
     _clockTimer?.cancel();
@@ -599,7 +624,50 @@ class _RoomPageState extends State<RoomPage> {
     if (state == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    if (_floating != null) {
+      return PiPSwitcher(
+        childWhenEnabled: _buildPipView(state),
+        childWhenDisabled: _buildFullView(state),
+      );
+    }
+    return _buildFullView(state);
+  }
 
+  /// 画中画悬浮窗内容: 有推流画面则播放推流, 否则展示会议号与状态
+  Widget _buildPipView(RoomState state) {
+    final castTrack = _castVideoTrack;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: castTrack != null
+          ? lk.VideoTrackRenderer(castTrack)
+          : Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cast_connected,
+                      size: 26, color: Colors.white38),
+                  const SizedBox(height: 6),
+                  Text(session.roomCode,
+                      style: const TextStyle(
+                          fontSize: 20,
+                          letterSpacing: 2,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                  const SizedBox(height: 4),
+                  Text(
+                      _closedReason ??
+                          (state.running
+                              ? '会议进行中 · 暂无推流'
+                              : '等待全员就位'),
+                      style: const TextStyle(
+                          fontSize: 11, color: Colors.white54)),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildFullView(RoomState state) {
     return Scaffold(
       body: Stack(
         children: [
