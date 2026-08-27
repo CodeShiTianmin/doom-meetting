@@ -3,6 +3,9 @@ package com.doommeeting.server.repository;
 import com.doommeeting.server.entity.Room;
 import com.doommeeting.server.entity.RoomMember;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -24,5 +27,7 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
 
     Optional<RoomMember> findByRoomAndInviteTokenId(Room room, Long inviteTokenId);
 
-    void deleteByRoom(Room room);
+    @Modifying
+    @Query("delete from RoomMember m where m.room = :room")
+    void deleteByRoom(@Param("room") Room room);
 }

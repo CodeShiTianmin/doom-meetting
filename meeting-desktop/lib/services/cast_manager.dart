@@ -22,6 +22,12 @@ class CastManager {
     final tokenInfo = await ApiClient.instance.getPublisherToken(roomId);
     final session = existing ??
         CastSession(roomId: roomId, roomCode: tokenInfo['roomCode'] as String);
+    // 播放窗口被手动关闭时同步服务端推流登记
+    session.onPlayerClosedExternally ??= () async {
+      try {
+        await ApiClient.instance.stopCast(roomId);
+      } catch (_) {}
+    };
     _sessions[roomId] = session;
     try {
       await session.connect(

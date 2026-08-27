@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
-import 'package:media_kit_video/media_kit_video.dart';
 
 import '../models/room.dart';
 import '../services/api_client.dart';
@@ -15,8 +14,8 @@ import '../widgets/chat_overlay.dart';
 /// 单房间推流控制:
 /// - 每个房间可独立选择推流源: 屏幕/窗口共享、本地视频推流、摄像头推流(均走 LiveKit 实时流)
 /// - 推流前检查已有推流, 提示先停止当前推流
-/// - 本地视频在本页预览区内直接解码播放(无独立窗口), 同时捕获主窗口推流;
-///   本页提供播放/暂停/进度控制
+/// - 本地视频在独立播放窗口后台播放推流, 退出本页/切到其他房间不中断;
+///   本页提供播放/暂停/进度控制(转发给播放窗口)
 /// - 房间设置开关(视频通话/摄像头)、会议时长、成员就位、点赞实时展示、关闭房间
 class RoomCastPage extends StatefulWidget {
   final int roomId;
@@ -569,62 +568,105 @@ class _RoomCastPageState extends State<RoomCastPage> {
             ),
           ),
           // 右侧: 当前投放 / 设置 / 成员 / 点赞
-          SizedBox(
-            width: 310,
+          Container(
+            width: 400,
+            margin: const EdgeInsets.fromLTRB(0, 16, 16, 16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withValues(alpha: 0.04),
+                  Colors.white.withValues(alpha: 0.01),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white10),
+            ),
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(14),
               children: [
                 _buildCurrentCastCard(room, scheme),
-                const SizedBox(height: 12),
-                Card(
-                  child: Column(
-                    children: [
-                      SwitchListTile(
-                        dense: true,
-                        secondary: const Icon(Icons.videocam_outlined),
-                        title: const Text('开放视频通话'),
-                        value: room.videoCallEnabled,
-                        onChanged: (value) async {
-                          await ApiClient.instance
-                              .updateSettings(room.id, videoCallEnabled: value);
-                          _refreshRoom();
-                        },
-                      ),
-                      SwitchListTile(
-                        dense: true,
-                        secondary: const Icon(Icons.camera_alt_outlined),
-                        title: const Text('开放摄像头'),
-                        value: room.cameraEnabled,
-                        onChanged: (value) async {
-                          await ApiClient.instance
-                              .updateSettings(room.id, cameraEnabled: value);
-                          _refreshRoom();
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Card(
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Column(
+                      children: [
+                        _sectionHeader(
+                            Icons.tune, '房间设置', scheme.primary,
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4)),
+                        SwitchListTile(
+                          dense: true,
+                          secondary: const Icon(Icons.videocam_outlined),
+                          title: const Text('开放视频通话'),
+                          subtitle: const Text('允许成员参与视频通话',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.white38)),
+                          value: room.videoCallEnabled,
+                          onChanged: (value) async {
+                            await ApiClient.instance.updateSettings(room.id,
+                                videoCallEnabled: value);
+                            _refreshRoom();
+                          },
+                        ),
+                        SwitchListTile(
+                          dense: true,
+                          secondary: const Icon(Icons.camera_alt_outlined),
+                          title: const Text('开放摄像头'),
+                          subtitle: const Text('允许成员开启摄像头',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.white38)),
+                          value: room.cameraEnabled,
+                          onChanged: (value) async {
+                            await ApiClient.instance.updateSettings(room.id,
+                                cameraEnabled: value);
+                            _refreshRoom();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.group_outlined, size: 18),
-                            const SizedBox(width: 6),
+                            Icon(Icons.group_outlined,
+                                size: 18, color: scheme.primary),
+                            const SizedBox(width: 8),
                             const Text('成员就位',
-                                style: TextStyle(fontWeight: FontWeight.w700)),
-                            const Spacer(),
-                            Text('${room.onlineMemberCount}/${room.maxMembers}',
                                 style: TextStyle(
-                                    color: room.onlineMemberCount >=
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14.5,
+                                    letterSpacing: 0.3)),
+                            const Spacer(),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: (room.onlineMemberCount >=
                                             room.maxMembers
                                         ? Colors.greenAccent
-                                        : Colors.orangeAccent,
-                                    fontWeight: FontWeight.w700)),
+                                        : Colors.orangeAccent)
+                                    .withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                  '${room.onlineMemberCount}/${room.maxMembers}',
+                                  style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: room.onlineMemberCount >=
+                                              room.maxMembers
+                                          ? Colors.greenAccent
+                                          : Colors.orangeAccent,
+                                      fontWeight: FontWeight.w700)),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 8),
@@ -749,10 +791,10 @@ class _RoomCastPageState extends State<RoomCastPage> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Card(
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -763,10 +805,12 @@ class _RoomCastPageState extends State<RoomCastPage> {
                                 color: _likeFlash.isEven
                                     ? Colors.pinkAccent
                                     : Colors.pink.shade200),
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 8),
                             Text('点赞记录 (${room.likeCount})',
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.w700)),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14.5,
+                                    letterSpacing: 0.3)),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -804,34 +848,73 @@ class _RoomCastPageState extends State<RoomCastPage> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Card(
-                  color: Colors.red.withValues(alpha: 0.08),
-                  child: ListTile(
-                    leading:
-                        const Icon(Icons.meeting_room, color: Colors.redAccent),
-                    title: const Text('结束会议'),
-                    subtitle: const Text('全部成员移出, 推流停止',
-                        style: TextStyle(fontSize: 11)),
-                    enabled: !room.closed,
-                    onTap: room.closed ? null : _closeRoom,
+                  color: Colors.red.withValues(alpha: 0.06),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(
+                        color: Colors.redAccent.withValues(alpha: 0.25)),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  color: Colors.red.withValues(alpha: 0.08),
-                  child: ListTile(
-                    leading: const Icon(Icons.delete_forever,
-                        color: Colors.redAccent),
-                    title: const Text('删除房间'),
-                    subtitle: const Text('删除房间及全部关联记录, 不可恢复',
-                        style: TextStyle(fontSize: 11)),
-                    onTap: _deleteRoom,
+                  child: Column(
+                    children: [
+                      ListTile(
+                        shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.vertical(
+                                top: Radius.circular(14))),
+                        leading: const Icon(Icons.meeting_room,
+                            color: Colors.redAccent),
+                        title: const Text('结束会议'),
+                        subtitle: const Text('全部成员移出, 推流停止',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.white38)),
+                        trailing: const Icon(Icons.chevron_right,
+                            size: 18, color: Colors.white24),
+                        enabled: !room.closed,
+                        onTap: room.closed ? null : _closeRoom,
+                      ),
+                      Divider(
+                          height: 1,
+                          color: Colors.redAccent.withValues(alpha: 0.15)),
+                      ListTile(
+                        shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.vertical(
+                                bottom: Radius.circular(14))),
+                        leading: const Icon(Icons.delete_forever,
+                            color: Colors.redAccent),
+                        title: const Text('删除房间'),
+                        subtitle: const Text('删除房间及全部关联记录, 不可恢复',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.white38)),
+                        trailing: const Icon(Icons.chevron_right,
+                            size: 18, color: Colors.white24),
+                        onTap: _deleteRoom,
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// 右侧面板统一小节标题
+  Widget _sectionHeader(IconData icon, String title, Color color,
+      {EdgeInsetsGeometry padding = EdgeInsets.zero}) {
+    return Padding(
+      padding: padding,
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Text(title,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14.5,
+                  letterSpacing: 0.3)),
         ],
       ),
     );
@@ -851,16 +934,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          if (session?.mode == CastMode.video &&
-              session?.videoController != null)
-            Positioned.fill(
-              child: Video(
-                controller: session!.videoController!,
-                controls: null,
-              ),
-            )
-          else
-            Positioned.fill(child: _buildPreviewPlaceholder(session, scheme)),
+          Positioned.fill(child: _buildPreviewPlaceholder(session, scheme)),
           // 左下角聊天气泡(最多 6 条, 新消息从下往上滑入)
           Positioned(
             left: 12,
@@ -914,7 +988,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
   Widget _buildPreviewPlaceholder(CastSession? session, ColorScheme scheme) {
     final (icon, text) = switch (session?.mode) {
       CastMode.screen => (Icons.screen_share, '屏幕/窗口推流中 — 后台持续推流, 切换房间/页面不中断'),
-      CastMode.video => (Icons.movie_outlined, '本地视频推流中'),
+      CastMode.video => (Icons.movie_outlined, '本地视频推流中 — 独立播放窗口后台播放, 切换房间不中断'),
       CastMode.camera => (Icons.videocam, '摄像头推流中 — 后台持续推流, 切换房间/页面不中断'),
       _ => (Icons.cast, '未推流 — 选择屏幕共享、本地视频或摄像头开始推流'),
     };
@@ -960,7 +1034,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     );
   }
 
-  /// 本地视频推流控制区: 播放/暂停/进度控制
+  /// 本地视频推流控制区: 播放/暂停/进度指令转发给独立播放窗口
   Widget _buildLocalPlayerControls(CastSession session, ColorScheme scheme) {
     final playing = session.playerPlaying;
     final duration = session.playerDurationMs / 1000.0;

@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:livekit_pip/livekit_pip.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
@@ -35,6 +38,12 @@ class RoomPage extends StatefulWidget {
 class _RoomPageState extends State<RoomPage> {
   final RoomWsService _ws = RoomWsService();
   final RecordingGuard _recordingGuard = RecordingGuard();
+
+  /// 离开 APP 时自动进入画中画悬浮窗(Android)
+  Floating? _floating;
+
+  /// 离开 APP 时推流画面画中画(iOS, 无推流画面时系统不显示悬浮窗)
+  LiveKitPip? _iosPip;
 
   lk.Room? _lkRoom;
   lk.EventsListener<lk.RoomEvent>? _lkListener;
@@ -96,6 +105,50 @@ class _RoomPageState extends State<RoomPage> {
         Timer.periodic(const Duration(seconds: 1), (_) => _tickClock());
     if (session.recordingForbidden) {
       _recordingGuard.start(_onRecordingDetected);
+    }
+    _initPip();
+  }
+
+  /// 返回桌面/切到其他应用时自动进入画中画悬浮窗,
+  /// 点击悬浮窗(展开按钮)回到 APP
+  Future<void> _initPip() async {
+    if (!Platform.isAndroid) return;
+    final floating = Floating();
+    try {
+      if (await floating.isPipAvailable) {
+        _floating = floating;
+        await floating
+            .enable(const OnLeavePiP(aspectRatio: Rational.landscape()));
+      }
+    } catch (_) {
+      // 设备不支持画中画时忽略
+    }
+  }
+
+  Future<void> _initIosPip(lk.Room room) async {
+    if (!Platform.isIOS) return;
+    final pip = LiveKitPip();
+    try {
+      await pip.initialize(
+        room: room,
+        config: LiveKitPipConfiguration(
+          android: AndroidPipConfiguration(
+            pipWidgetBuilder: (context, room) => const SizedBox.shrink(),
+            autoEnterOnBackground: false,
+          ),
+          ios: const IosPipConfiguration(
+            includeLocalParticipantVideo: false,
+          ),
+        ),
+      );
+      if (!mounted) {
+        unawaited(pip.dispose());
+        return;
+      }
+      setState(() => _iosPip = pip);
+    } catch (_) {
+      // 设备/系统版本不支持画中画时忽略
+      unawaited(pip.dispose());
     }
   }
 
@@ -225,6 +278,7 @@ class _RoomPageState extends State<RoomPage> {
         await room.disconnect();
         return;
       }
+      unawaited(_initIosPip(room));
       // 默认扬声器外放(观看推流场景), 与 UI 初始状态保持一致
       try {
         await lk.Hardware.instance.setSpeakerphoneOn(_speakerOn);
@@ -559,6 +613,10 @@ class _RoomPageState extends State<RoomPage> {
 
   @override
   void dispose() {
+    try {
+      _floating?.cancelOnLeavePiP();
+    } catch (_) {}
+    _iosPip?.dispose();
     _heartbeatTimer?.cancel();
     _stateTimer?.cancel();
     _clockTimer?.cancel();
@@ -599,10 +657,57 @@ class _RoomPageState extends State<RoomPage> {
     if (state == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    if (_floating != null) {
+      return PiPSwitcher(
+        childWhenEnabled: _buildPipView(state),
+        childWhenDisabled: _buildFullView(state),
+      );
+    }
+    return _buildFullView(state);
+  }
 
+  /// 画中画悬浮窗内容: 有推流画面则播放推流, 否则展示会议号与状态
+  Widget _buildPipView(RoomState state) {
+    final castTrack = _castVideoTrack;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: castTrack != null
+          ? lk.VideoTrackRenderer(castTrack)
+          : Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cast_connected,
+                      size: 26, color: Colors.white38),
+                  const SizedBox(height: 6),
+                  Text(session.roomCode,
+                      style: const TextStyle(
+                          fontSize: 20,
+                          letterSpacing: 2,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                  const SizedBox(height: 4),
+                  Text(
+                      _closedReason ??
+                          (state.running
+                              ? '会议进行中 · 暂无推流'
+                              : '等待全员就位'),
+                      style: const TextStyle(
+                          fontSize: 11, color: Colors.white54)),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildFullView(RoomState state) {
+    final lkRoom = _lkRoom;
     return Scaffold(
       body: Stack(
         children: [
+          // iOS 画中画源视图(透明, 必须铺满屏幕才能触发 PiP), Android 为空占位
+          if (_iosPip != null && lkRoom != null)
+            Positioned.fill(child: LiveKitPipView(room: lkRoom)),
           // 主画面: PC 实时推流 > 等待画面
           Positioned.fill(
             child: _castVideoTrack != null

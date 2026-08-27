@@ -1,11 +1,21 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'pages/login_page.dart';
+import 'pages/player_window_page.dart';
 
-void main() {
+void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  // 播放进程入口: 独立本地视频播放进程(主进程以 `exe player <参数>` 重启自身)
+  if (args.length >= 2 && args.first == 'player') {
+    final params =
+        jsonDecode(utf8.decode(base64Url.decode(args[1]))) as Map<String, dynamic>;
+    runApp(PlayerWindowApp(params: params));
+    return;
+  }
   runApp(const MeetingDesktopApp());
 }
 
