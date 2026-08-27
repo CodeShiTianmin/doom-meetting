@@ -17,7 +17,8 @@ class LoopbackChannel {
 /// 多房并发的回环采集通道分配器:
 ///
 /// 本地视频推流时每个房间独占一条虚拟声卡通道(VB-CABLE / CABLE-A /
-/// CABLE-B ...), 播放进程把声音定向路由进该通道, 各房间伴音互不串音;
+/// CABLE-B, 或开源 Virtual Cables 的 Virtual Cable 01..32),
+/// 播放进程把声音定向路由进该通道, 各房间伴音互不串音;
 /// 无空闲虚拟声卡时回退共享的立体声混音(采集默认输出, 多房间同时
 /// 推流会串音, 由调用方提示操作员加装 CABLE A/B)。
 class AudioLoopbackPool {
@@ -41,9 +42,14 @@ class AudioLoopbackPool {
   Future<List<LoopbackChannel>> _channels() async {
     final inputs = await lk.Hardware.instance.audioInputs();
     final channels = <LoopbackChannel>[];
+    final virtualCablePattern = RegExp(r'virtual cable[\s-]*\d+');
     for (final device in inputs) {
       final label = device.label.toLowerCase();
-      if (label.contains('cable') && label.contains('output')) {
+      final virtualCable = virtualCablePattern.firstMatch(label);
+      if (virtualCable != null) {
+        // 开源 Virtual Cables: 同名的 "Virtual Cable NN" 播放/录音端点对
+        channels.add(LoopbackChannel(device, [virtualCable.group(0)!]));
+      } else if (label.contains('cable') && label.contains('output')) {
         // "CABLE Output (VB-Audio ...)"/"CABLE-A Output (...)" 的配对
         // 播放端为 "CABLE Input"/"CABLE-A Input"
         final pair =
