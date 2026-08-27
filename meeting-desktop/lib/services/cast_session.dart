@@ -62,9 +62,9 @@ class CastSession extends ChangeNotifier {
         adaptiveStream: false,
         dynacast: true,
         defaultVideoPublishOptions: lk.VideoPublishOptions(
-          // 高清 1080p/30fps, 最高 6Mbps 自适应, simulcast 多档分辨率
+          // 高清 1080p/30fps, 最高 10Mbps 自适应, simulcast 多档分辨率
           videoEncoding: lk.VideoEncoding(
-            maxBitrate: 6 * 1000 * 1000,
+            maxBitrate: 10 * 1000 * 1000,
             maxFramerate: 30,
           ),
           simulcast: true,
@@ -74,7 +74,7 @@ class CastSession extends ChangeNotifier {
           params: lk.VideoParameters(
             dimensions: lk.VideoDimensionsPresets.h1080_169,
             encoding: lk.VideoEncoding(
-              maxBitrate: 6 * 1000 * 1000,
+              maxBitrate: 10 * 1000 * 1000,
               maxFramerate: 30,
             ),
           ),
@@ -131,7 +131,7 @@ class CastSession extends ChangeNotifier {
           // 高清 1080p 摄像头推流
           dimensions: lk.VideoDimensionsPresets.h1080_169,
           encoding: lk.VideoEncoding(
-            maxBitrate: 4 * 1000 * 1000,
+            maxBitrate: 6 * 1000 * 1000,
             maxFramerate: 30,
           ),
         ),
@@ -169,7 +169,7 @@ class CastSession extends ChangeNotifier {
       params: const lk.VideoParameters(
         dimensions: lk.VideoDimensionsPresets.h1080_169,
         encoding: lk.VideoEncoding(
-          maxBitrate: 6 * 1000 * 1000,
+          maxBitrate: 10 * 1000 * 1000,
           maxFramerate: 30,
         ),
       ),
