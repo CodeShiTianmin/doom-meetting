@@ -96,7 +96,14 @@ class CastSession extends ChangeNotifier {
     await stopCast();
     final participant = _requireParticipant();
     await _publishCaptureTrack(participant, source.id);
-    await _publishSystemAudioTrack(participant);
+    final loopback = await _publishSystemAudioTrack(participant);
+    if (loopback != null && _playbackRouteKeywords(loopback.label) != null) {
+      // 虚拟声卡输出端只能采到路由进其输入端的声音;
+      // 屏幕推流无法代为路由, 需系统默认播放设备指向虚拟声卡
+      audioCaptureWarning =
+          '已从虚拟声卡「${loopback.label}」采集伴音; 若推流无声音, '
+          '请将系统默认播放设备设为该虚拟声卡的输入端(如 CABLE Input)';
+    }
     mode = CastMode.screen;
     sourceLabel = source.name;
     publishing = true;
@@ -185,13 +192,21 @@ class CastSession extends ChangeNotifier {
 
   /// Windows 桌面端 getDisplayMedia 不携带系统声音(captureScreenAudio 仅浏览器
   /// 生效), 屏幕/本地视频推流需从回环采集设备(立体声混音/虚拟声卡)单独采集
-  /// 系统伴音并作为音频轨发布; 找不到设备时仅推画面并给出提示
-  Future<void> _publishSystemAudioTrack(lk.LocalParticipant participant) async {
+  /// 系统伴音并作为音频轨发布; 找不到设备时仅推画面并给出提示。
+  /// 返回成功采集的回环设备(未采到时返回 null)。
+  ///
+  /// 按关键字优先级选择: 立体声混音类设备直接采集默认扬声器输出,
+  /// 无需路由, 优先使用; 虚拟声卡(VB-CABLE/Voicemeeter)只能采到
+  /// 路由进其输入端的声音, 本地视频推流时由播放进程定向路由。
+  Future<lk.MediaDevice?> _publishSystemAudioTrack(
+      lk.LocalParticipant participant) async {
     audioCaptureWarning = null;
     const loopbackKeywords = [
       '立体声混音',
+      '立體聲混音',
       'stereo mix',
       'what u hear',
+      'what you hear',
       'wave out',
       'loopback',
       'cable output',
@@ -201,19 +216,21 @@ class CastSession extends ChangeNotifier {
     lk.MediaDevice? loopback;
     try {
       final inputs = await lk.Hardware.instance.audioInputs();
-      for (final device in inputs) {
-        final label = device.label.toLowerCase();
-        if (loopbackKeywords.any(label.contains)) {
-          loopback = device;
-          break;
+      for (final keyword in loopbackKeywords) {
+        for (final device in inputs) {
+          if (device.label.toLowerCase().contains(keyword)) {
+            loopback = device;
+            break;
+          }
         }
+        if (loopback != null) break;
       }
     } catch (_) {}
     if (loopback == null) {
       audioCaptureWarning =
           '未找到系统伴音采集设备, 推流将没有声音。请在系统声音设置中启用「立体声混音」, '
           '或安装 VB-CABLE 等虚拟声卡后重新推流';
-      return;
+      return null;
     }
     try {
       final audioTrack = await lk.LocalAudioTrack.create(lk.AudioCaptureOptions(
@@ -226,9 +243,24 @@ class CastSession extends ChangeNotifier {
         typingNoiseDetection: false,
       ));
       await participant.publishAudioTrack(audioTrack);
+      return loopback;
     } catch (error) {
       audioCaptureWarning = '系统伴音采集失败, 推流将没有声音: $error';
+      return null;
     }
+  }
+
+  /// 回环采集设备为虚拟声卡输出端时, 返回其配对播放端(输入端)的关键字,
+  /// 用于将播放进程音频路由过去; 立体声混音类设备采集默认输出,
+  /// 无需路由, 返回 null
+  List<String>? _playbackRouteKeywords(String inputLabel) {
+    final label = inputLabel.toLowerCase();
+    if (label.contains('cable output')) return const ['cable input'];
+    if (label.contains('voicemeeter out')) {
+      return const ['voicemeeter input', 'voicemeeter aux input'];
+    }
+    if (label.contains('virtual audio')) return const ['virtual audio'];
+    return null;
   }
 
   /// 本地视频推流: 启动独立播放进程本地解码播放(不上传服务器),
@@ -259,7 +291,16 @@ class CastSession extends ChangeNotifier {
       await ready.future.timeout(const Duration(seconds: 15));
       final source = await _waitPlayerWindowSource(title);
       await _publishCaptureTrack(participant, source.id);
-      await _publishSystemAudioTrack(participant);
+      final loopback = await _publishSystemAudioTrack(participant);
+      if (loopback != null) {
+        // 采集的是虚拟声卡输出端时, 把播放进程声音路由到其配对输入端,
+        // 否则播放声音走默认扬声器, 虚拟声卡采到的是静音
+        final routeKeywords = _playbackRouteKeywords(loopback.label);
+        if (routeKeywords != null) {
+          await _sendPlayerCommand(
+              {'cmd': 'audioRoute', 'keywords': routeKeywords});
+        }
+      }
     } catch (error) {
       await _closePlayerWindow();
       if (error is TimeoutException) {
@@ -308,6 +349,14 @@ class CastSession extends ChangeNotifier {
           positionMs: message['positionMs'] as int,
           durationMs: message['durationMs'] as int,
         );
+        break;
+      case 'audioRoute':
+        if (message['ok'] != true) {
+          audioCaptureWarning =
+              '播放声音未能路由到虚拟声卡, 推流可能没有声音。'
+              '请将系统默认播放设备设为虚拟声卡输入端(如 CABLE Input)';
+          notifyListeners();
+        }
         break;
     }
   }
