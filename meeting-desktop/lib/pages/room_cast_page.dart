@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
+import 'package:livekit_client/livekit_client.dart' as lk;
 
 import '../models/room.dart';
 import '../services/api_client.dart';
@@ -606,8 +607,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Column(
                       children: [
-                        _sectionHeader(
-                            Icons.tune, '房间设置', scheme.primary,
+                        _sectionHeader(Icons.tune, '房间设置', scheme.primary,
                             padding: const EdgeInsets.fromLTRB(16, 8, 16, 4)),
                         SwitchListTile(
                           dense: true,
@@ -632,8 +632,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
                                   fontSize: 11, color: Colors.white38)),
                           value: room.cameraEnabled,
                           onChanged: (value) async {
-                            await ApiClient.instance.updateSettings(room.id,
-                                cameraEnabled: value);
+                            await ApiClient.instance
+                                .updateSettings(room.id, cameraEnabled: value);
                             _refreshRoom();
                           },
                         ),
@@ -663,11 +663,11 @@ class _RoomCastPageState extends State<RoomCastPage> {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 10, vertical: 3),
                               decoration: BoxDecoration(
-                                color: (room.onlineMemberCount >=
-                                            room.maxMembers
-                                        ? Colors.greenAccent
-                                        : Colors.orangeAccent)
-                                    .withValues(alpha: 0.12),
+                                color:
+                                    (room.onlineMemberCount >= room.maxMembers
+                                            ? Colors.greenAccent
+                                            : Colors.orangeAccent)
+                                        .withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(20),
                               ),
                               child: Text(
@@ -879,8 +879,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
                             color: Colors.redAccent),
                         title: const Text('结束会议'),
                         subtitle: const Text('全部成员移出, 推流停止',
-                            style: TextStyle(
-                                fontSize: 11, color: Colors.white38)),
+                            style:
+                                TextStyle(fontSize: 11, color: Colors.white38)),
                         trailing: const Icon(Icons.chevron_right,
                             size: 18, color: Colors.white24),
                         enabled: !room.closed,
@@ -897,8 +897,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
                             color: Colors.redAccent),
                         title: const Text('删除房间'),
                         subtitle: const Text('删除房间及全部关联记录, 不可恢复',
-                            style: TextStyle(
-                                fontSize: 11, color: Colors.white38)),
+                            style:
+                                TextStyle(fontSize: 11, color: Colors.white38)),
                         trailing: const Icon(Icons.chevron_right,
                             size: 18, color: Colors.white24),
                         onTap: _deleteRoom,
@@ -934,6 +934,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
   }
 
   Widget _buildPreview(CastSession? session, ColorScheme scheme) {
+    final previewTrack = session?.localVideoTrack;
     return Container(
       decoration: BoxDecoration(
         color: Colors.black,
@@ -947,7 +948,12 @@ class _RoomCastPageState extends State<RoomCastPage> {
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          Positioned.fill(child: _buildPreviewPlaceholder(session, scheme)),
+          // 推流中直接在房间页面内嵌展示推流画面(本地轨预览)
+          Positioned.fill(
+            child: previewTrack != null
+                ? lk.VideoTrackRenderer(previewTrack)
+                : _buildPreviewPlaceholder(session, scheme),
+          ),
           // 左下角聊天气泡(最多 6 条, 新消息从下往上滑入)
           Positioned(
             left: 12,

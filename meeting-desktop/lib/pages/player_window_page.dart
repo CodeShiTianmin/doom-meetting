@@ -45,12 +45,48 @@ final int Function(int, Pointer<Uint32>) _getWindowThreadProcessId =
     _user32.lookupFunction<Uint32 Function(IntPtr, Pointer<Uint32>),
         int Function(int, Pointer<Uint32>)>('GetWindowThreadProcessId');
 
-final int Function(int) _isWindowVisible = _user32.lookupFunction<
-    Int32 Function(IntPtr), int Function(int)>('IsWindowVisible');
+final int Function(int) _isWindowVisible =
+    _user32.lookupFunction<Int32 Function(IntPtr), int Function(int)>(
+        'IsWindowVisible');
 
 final int Function(int, Pointer<Utf16>) _setWindowText = _user32.lookupFunction<
     Int32 Function(IntPtr, Pointer<Utf16>),
     int Function(int, Pointer<Utf16>)>('SetWindowTextW');
+
+final int Function(int, int) _getWindowLongPtr = _user32.lookupFunction<
+    IntPtr Function(IntPtr, Int32),
+    int Function(int, int)>('GetWindowLongPtrW');
+
+final int Function(int, int, int) _setWindowLongPtr = _user32.lookupFunction<
+    IntPtr Function(IntPtr, Int32, IntPtr),
+    int Function(int, int, int)>('SetWindowLongPtrW');
+
+final int Function(int, int, int, int, int, int, int) _setWindowPos =
+    _user32.lookupFunction<
+        Int32 Function(IntPtr, IntPtr, Int32, Int32, Int32, Int32, Uint32),
+        int Function(int, int, int, int, int, int, int)>('SetWindowPos');
+
+const int _gwlStyle = -16;
+const int _wsCaption = 0x00C00000;
+const int _wsThickFrame = 0x00040000;
+const int _wsMinimizeBox = 0x00020000;
+const int _wsMaximizeBox = 0x00010000;
+const int _wsSysMenu = 0x00080000;
+const int _swpFrameChangedFlags = 0x0001 | 0x0002 | 0x0004 | 0x0020;
+
+/// 去掉标题栏/边框: 窗口捕获推流时手机端只看到视频画面,
+/// 不出现「投屏播放」标题文字(窗口标题文本仍在, 不影响捕获枚举)
+void _removeWindowChrome(int hwnd) {
+  final style = _getWindowLongPtr(hwnd, _gwlStyle);
+  final newStyle = style &
+      ~(_wsCaption |
+          _wsThickFrame |
+          _wsMinimizeBox |
+          _wsMaximizeBox |
+          _wsSysMenu);
+  _setWindowLongPtr(hwnd, _gwlStyle, newStyle);
+  _setWindowPos(hwnd, 0, 0, 0, 0, 0, _swpFrameChangedFlags);
+}
 
 int _ownWindowHwnd = 0;
 
@@ -75,6 +111,7 @@ Future<bool> _applyWindowTitle(String title) async {
       final text = title.toNativeUtf16();
       _setWindowText(_ownWindowHwnd, text);
       calloc.free(text);
+      _removeWindowChrome(_ownWindowHwnd);
       return true;
     }
     await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -87,6 +124,8 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
   late final VideoController _videoController;
   Timer? _stateTimer;
   StreamSubscription<String>? _stdinSub;
+  Socket? _controlSocket;
+  StreamSubscription<String>? _controlSub;
 
   String get _title => widget.params['title'] as String? ?? '投屏播放';
 
@@ -108,8 +147,26 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
   }
 
   Future<void> _setup() async {
+    await _connectControlChannel();
     await _applyWindowTitle(_title);
     _emit({'event': 'ready'});
+  }
+
+  /// 控制通道走本地回环 TCP(stdin 管道在部分 Windows 环境下不可靠)
+  Future<void> _connectControlChannel() async {
+    final port = (widget.params['controlPort'] as num?)?.toInt();
+    if (port == null) return;
+    try {
+      final socket = await Socket.connect(InternetAddress.loopbackIPv4, port);
+      _controlSocket = socket;
+      _controlSub = socket
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen(_handleCommand, onDone: _exit, onError: (_) {});
+    } catch (_) {
+      // 连接失败时回退 stdin/stdout 通信
+    }
   }
 
   void _handleCommand(String line) {
@@ -175,7 +232,14 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
   }
 
   void _emit(Map<String, dynamic> message) {
-    stdout.writeln('@@player ${jsonEncode(message)}');
+    final line = '@@player ${jsonEncode(message)}';
+    final socket = _controlSocket;
+    if (socket != null) {
+      try {
+        socket.write('$line\n');
+      } catch (_) {}
+    }
+    stdout.writeln(line);
   }
 
   void _reportState() {
@@ -190,6 +254,8 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
   Future<void> _exit() async {
     _stateTimer?.cancel();
     await _stdinSub?.cancel();
+    await _controlSub?.cancel();
+    _controlSocket?.destroy();
     try {
       await _player.dispose();
     } catch (_) {}
@@ -200,6 +266,8 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
   void dispose() {
     _stateTimer?.cancel();
     _stdinSub?.cancel();
+    _controlSub?.cancel();
+    _controlSocket?.destroy();
     _player.dispose();
     super.dispose();
   }
