@@ -265,7 +265,9 @@ class _RoomPageState extends State<RoomPage> {
     final room = lk.Room(
       roomOptions: const lk.RoomOptions(
         // 关闭自适应订阅: 始终订阅最高清晰度档位。开启时会按渲染控件的
-        // 逻辑像素尺寸选档, 高分屏手机常被降到低档, 画面发糊/块状阴影
+        // 逻辑像素尺寸选档, 高分屏手机常被降到低档, 画面发糊/块状阴影。
+        // 下行带宽不足时由 SFU 拥塞控制自动切到发送端 simulcast 低档层
+        // 保持流畅, 带宽恢复后自动切回最高档
         adaptiveStream: false,
         dynacast: true,
       ),
