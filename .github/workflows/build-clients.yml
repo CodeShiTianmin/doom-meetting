@@ -2,7 +2,8 @@ name: build-clients
 
 on:
   push:
-    branches: [devin/**]
+    branches: [main, devin/**]
+    tags: ["v*"]
   workflow_dispatch:
 
 env:
@@ -85,3 +86,19 @@ jobs:
         with:
           name: meeting-desktop-windows
           path: meeting-desktop/meeting-desktop-windows.zip
+
+  # 打 tag(v*) 时把三端产物汇总发布到 GitHub Release
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, ios, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
