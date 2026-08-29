@@ -62,9 +62,10 @@ class CastSession extends ChangeNotifier {
         adaptiveStream: false,
         dynacast: true,
         defaultVideoPublishOptions: lk.VideoPublishOptions(
-          // 高清 1080p/30fps, 最高 10Mbps 自适应, simulcast 多档分辨率
+          // 高清 1080p/30fps; 1080p30 屏幕/视频内容 4Mbps 已接近主观清晰度
+          // 上限, 码率再高只会挤占手机下行带宽造成卡顿
           videoEncoding: lk.VideoEncoding(
-            maxBitrate: 10 * 1000 * 1000,
+            maxBitrate: 4 * 1000 * 1000,
             maxFramerate: 30,
           ),
           simulcast: true,
@@ -74,7 +75,7 @@ class CastSession extends ChangeNotifier {
           params: lk.VideoParameters(
             dimensions: lk.VideoDimensionsPresets.h1080_169,
             encoding: lk.VideoEncoding(
-              maxBitrate: 10 * 1000 * 1000,
+              maxBitrate: 4 * 1000 * 1000,
               maxFramerate: 30,
             ),
           ),
@@ -131,7 +132,7 @@ class CastSession extends ChangeNotifier {
           // 高清 1080p 摄像头推流
           dimensions: lk.VideoDimensionsPresets.h1080_169,
           encoding: lk.VideoEncoding(
-            maxBitrate: 6 * 1000 * 1000,
+            maxBitrate: 3 * 1000 * 1000,
             maxFramerate: 30,
           ),
         ),
@@ -169,7 +170,7 @@ class CastSession extends ChangeNotifier {
       params: const lk.VideoParameters(
         dimensions: lk.VideoDimensionsPresets.h1080_169,
         encoding: lk.VideoEncoding(
-          maxBitrate: 10 * 1000 * 1000,
+          maxBitrate: 4 * 1000 * 1000,
           maxFramerate: 30,
         ),
       ),
@@ -185,16 +186,34 @@ class CastSession extends ChangeNotifier {
       videoTrack = await lk.LocalVideoTrack.createScreenShareTrack(options);
     }
     try {
-      // 屏幕/视频内容单层满码率编码: simulcast 会把码率拆到多档低分辨率
-      // 层, 造成块状阴影; 带宽/性能不足时优先保帧率(降分辨率), 避免卡顿
+      // 顶层 1080p30/4Mbps 独立满码率编码, 另发 720p/360p 全帧率低档层:
+      // 手机下行带宽不足时 SFU 自动切低档层保持流畅, 带宽充足时始终收
+      // 顶层高清; 低档层保持 30fps 避免视频内容切档后掉帧卡顿。
+      // 发送端带宽/性能不足时优先保帧率(降分辨率), 避免卡顿
       await participant.publishVideoTrack(
         videoTrack,
         publishOptions: const lk.VideoPublishOptions(
-          simulcast: false,
+          simulcast: true,
           videoEncoding: lk.VideoEncoding(
-            maxBitrate: 10 * 1000 * 1000,
+            maxBitrate: 4 * 1000 * 1000,
             maxFramerate: 30,
           ),
+          screenShareSimulcastLayers: [
+            lk.VideoParameters(
+              dimensions: lk.VideoDimensionsPresets.h360_169,
+              encoding: lk.VideoEncoding(
+                maxBitrate: 600 * 1000,
+                maxFramerate: 30,
+              ),
+            ),
+            lk.VideoParameters(
+              dimensions: lk.VideoDimensionsPresets.h720_169,
+              encoding: lk.VideoEncoding(
+                maxBitrate: 1700 * 1000,
+                maxFramerate: 30,
+              ),
+            ),
+          ],
           degradationPreference: lk.DegradationPreference.maintainFramerate,
         ),
       );
