@@ -33,6 +33,9 @@ class CastSession extends ChangeNotifier {
   lk.Room? _lkRoom;
   Process? _playerProcess;
   StreamSubscription<String>? _playerStdoutSub;
+  ServerSocket? _controlServer;
+  Socket? _controlSocket;
+  StreamSubscription<String>? _controlSub;
 
   /// 播放窗口被用户手动关闭时的回调(用于同步服务端推流登记)
   Future<void> Function()? onPlayerClosedExternally;
@@ -45,6 +48,9 @@ class CastSession extends ChangeNotifier {
   String? error;
   bool connected = false;
   bool publishing = false;
+
+  /// 当前发布的视频轨(屏幕/本地视频/摄像头), 供房间页面内嵌预览
+  lk.LocalVideoTrack? localVideoTrack;
 
   /// 系统伴音采集失败时的提示(推流仅有画面无声音)
   String? audioCaptureWarning;
@@ -106,12 +112,10 @@ class CastSession extends ChangeNotifier {
       if (channel != null && channel.dedicated) {
         // 虚拟声卡输出端只能采到路由进其输入端的声音;
         // 屏幕推流无法代为路由, 需系统默认播放设备指向虚拟声卡
-        audioCaptureWarning =
-            '已从虚拟声卡「${channel.device.label}」采集伴音; 若推流无声音, '
+        audioCaptureWarning = '已从虚拟声卡「${channel.device.label}」采集伴音; 若推流无声音, '
             '请将系统默认播放设备设为该虚拟声卡的输入端(如 CABLE Input)';
       } else if (channel != null && _sharedWithOthers(channel)) {
-        audioCaptureWarning =
-            '多个房间正在共用同一伴音采集设备, 声音会互相串音。'
+        audioCaptureWarning = '多个房间正在共用同一伴音采集设备, 声音会互相串音。'
             '建议安装多条 VB-CABLE 虚拟声卡(CABLE A/B)实现每房间独立伴音';
       }
     }
@@ -144,6 +148,7 @@ class CastSession extends ChangeNotifier {
       await videoTrack.stop();
       rethrow;
     }
+    localVideoTrack = videoTrack;
     try {
       final audioTrack =
           await lk.LocalAudioTrack.create(const lk.AudioCaptureOptions());
@@ -185,6 +190,7 @@ class CastSession extends ChangeNotifier {
     } catch (_) {
       videoTrack = await lk.LocalVideoTrack.createScreenShareTrack(options);
     }
+    localVideoTrack = videoTrack;
     try {
       // 顶层 1080p30/4Mbps 独立满码率编码, 另发 720p/360p 全帧率低档层:
       // 手机下行带宽不足时 SFU 自动切低档层保持流畅, 带宽充足时始终收
@@ -246,8 +252,7 @@ class CastSession extends ChangeNotifier {
     final channel = await AudioLoopbackPool.instance
         .acquire(roomId, preferDedicated: preferDedicated);
     if (channel == null) {
-      audioCaptureWarning =
-          '未找到系统伴音采集设备, 推流将没有声音。请在系统声音设置中启用「立体声混音」, '
+      audioCaptureWarning = '未找到系统伴音采集设备, 推流将没有声音。请在系统声音设置中启用「立体声混音」, '
           '或安装 VB-CABLE 等虚拟声卡后重新推流';
       return null;
     }
@@ -281,15 +286,31 @@ class CastSession extends ChangeNotifier {
     final participant = _requireParticipant();
 
     final title = '投屏播放-$roomCode';
+    // 控制通道走本地回环 TCP: Windows GUI 子进程的 stdin 管道在部分
+    // 环境下不可靠, 导致播放/暂停/进度指令无法送达播放进程
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    _controlServer = server;
+    final ready = Completer<void>();
+    server.listen((socket) {
+      _controlSocket?.destroy();
+      _controlSocket = socket;
+      _controlSub?.cancel();
+      _controlSub = socket
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) => _handlePlayerLine(line, ready),
+              onError: (_) {}, cancelOnError: true);
+    });
     final payload = base64Url.encode(utf8.encode(jsonEncode({
       'roomId': roomId,
       'path': path,
       'title': title,
+      'controlPort': server.port,
     })));
-    final process = await Process.start(
-        Platform.resolvedExecutable, ['player', payload]);
+    final process =
+        await Process.start(Platform.resolvedExecutable, ['player', payload]);
     _playerProcess = process;
-    final ready = Completer<void>();
     _playerStdoutSub = process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
@@ -313,8 +334,7 @@ class CastSession extends ChangeNotifier {
           await _sendPlayerCommand(
               {'cmd': 'audioRoute', 'keywords': channel.routeKeywords});
         } else if (channel != null && _sharedWithOthers(channel)) {
-          audioCaptureWarning =
-              '虚拟声卡通道不足, 本房间与其他房间共用伴音采集, 声音会互相串音。'
+          audioCaptureWarning = '虚拟声卡通道不足, 本房间与其他房间共用伴音采集, 声音会互相串音。'
               '建议加装 VB-CABLE A/B 等虚拟声卡实现每房间独立伴音';
         }
       }
@@ -369,8 +389,7 @@ class CastSession extends ChangeNotifier {
         break;
       case 'audioRoute':
         if (message['ok'] != true) {
-          audioCaptureWarning =
-              '播放声音未能路由到虚拟声卡, 推流可能没有声音。'
+          audioCaptureWarning = '播放声音未能路由到虚拟声卡, 推流可能没有声音。'
               '请将系统默认播放设备设为虚拟声卡输入端(如 CABLE Input)';
           notifyListeners();
         }
@@ -386,10 +405,19 @@ class CastSession extends ChangeNotifier {
       _sendPlayerCommand({'cmd': 'seekMs', 'value': positionMs});
 
   Future<void> _sendPlayerCommand(Map<String, dynamic> command) async {
+    final line = jsonEncode(command);
+    final socket = _controlSocket;
+    if (socket != null) {
+      try {
+        socket.write('$line\n');
+        await socket.flush();
+        return;
+      } catch (_) {}
+    }
     final process = _playerProcess;
     if (process == null) return;
     try {
-      process.stdin.writeln(jsonEncode(command));
+      process.stdin.writeln(line);
       await process.stdin.flush();
     } catch (_) {
       // 播放进程已退出/未就绪时忽略
@@ -430,14 +458,27 @@ class CastSession extends ChangeNotifier {
     playerDurationMs = 0;
     await _playerStdoutSub?.cancel();
     _playerStdoutSub = null;
-    if (process == null) return;
-    try {
-      process.stdin.writeln(jsonEncode({'cmd': 'close'}));
-      await process.stdin.flush();
-      await process.exitCode.timeout(const Duration(seconds: 3));
-    } catch (_) {
-      process.kill();
+    final socket = _controlSocket;
+    if (process != null) {
+      try {
+        if (socket != null) {
+          socket.write('${jsonEncode({'cmd': 'close'})}\n');
+          await socket.flush();
+        } else {
+          process.stdin.writeln(jsonEncode({'cmd': 'close'}));
+          await process.stdin.flush();
+        }
+        await process.exitCode.timeout(const Duration(seconds: 3));
+      } catch (_) {
+        process.kill();
+      }
     }
+    await _controlSub?.cancel();
+    _controlSub = null;
+    _controlSocket?.destroy();
+    _controlSocket = null;
+    await _controlServer?.close();
+    _controlServer = null;
   }
 
   /// 未连接时直接报错, 避免静默跳过推流却显示投屏中的"假成功"
@@ -463,6 +504,7 @@ class CastSession extends ChangeNotifier {
     }
     await _closePlayerWindow();
     AudioLoopbackPool.instance.release(roomId);
+    localVideoTrack = null;
     filePath = null;
     sourceLabel = null;
     audioCaptureWarning = null;

@@ -70,6 +70,7 @@ class _RoomPageState extends State<RoomPage> {
   final List<HeartItem> _hearts = [];
   bool _liked = false;
   bool _uiHidden = false;
+  bool _landscape = false;
   int _chatId = 0;
   final List<ChatMessageItem> _chatMessages = [];
   bool _chatInputVisible = false;
@@ -135,8 +136,7 @@ class _RoomPageState extends State<RoomPage> {
     } catch (_) {}
   }
 
-  static const MethodChannel _pipChannel =
-      MethodChannel('com.doommeeting/pip');
+  static const MethodChannel _pipChannel = MethodChannel('com.doommeeting/pip');
 
   /// 系统返回键: 进入画中画悬浮窗而非直接退出
   void _onBackPressed() {
@@ -186,8 +186,13 @@ class _RoomPageState extends State<RoomPage> {
     // 干扰 WebRTC 音频会话导致播放无声, 仅在 Android 读取系统音量
     if (!Platform.isIOS) {
       try {
+        VolumeController().showSystemUI = false;
         final current = await VolumeController().getVolume();
         _volume = current;
+        // 硬件音量键调节时同步滑条, 避免显示与实际音量不一致
+        VolumeController().listener((value) {
+          if (mounted) setState(() => _volume = value);
+        });
       } catch (_) {}
     }
     if (mounted) setState(() {});
@@ -562,8 +567,17 @@ class _RoomPageState extends State<RoomPage> {
   Future<void> _setVolume(double value) async {
     setState(() => _volume = value);
     try {
-      VolumeController().setVolume(value);
+      VolumeController().setVolume(value, showSystemUI: false);
     } catch (_) {}
+  }
+
+  /// 横屏/竖屏切换
+  Future<void> _toggleOrientation() async {
+    _landscape = !_landscape;
+    await SystemChrome.setPreferredOrientations(_landscape
+        ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+        : [DeviceOrientation.portraitUp]);
+    if (mounted) setState(() {});
   }
 
   Future<void> _like() async {
@@ -654,6 +668,7 @@ class _RoomPageState extends State<RoomPage> {
 
   @override
   void dispose() {
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     try {
       _floating?.cancelOnLeavePiP();
     } catch (_) {}
@@ -746,11 +761,9 @@ class _RoomPageState extends State<RoomPage> {
                   const SizedBox(height: 4),
                   Text(
                       _closedReason ??
-                          (state.running
-                              ? '会议进行中 · 暂无推流'
-                              : '等待全员就位'),
-                      style: const TextStyle(
-                          fontSize: 11, color: Colors.white54)),
+                          (state.running ? '会议进行中 · 暂无推流' : '等待全员就位'),
+                      style:
+                          const TextStyle(fontSize: 11, color: Colors.white54)),
                 ],
               ),
             ),
@@ -824,37 +837,44 @@ class _RoomPageState extends State<RoomPage> {
           ),
           if (!_uiHidden && _chatInputVisible) _buildChatInput(),
           _buildBottomControls(state),
-          // 左侧垂直居中: 隐藏/显示上下菜单按钮
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: Material(
-                color: Colors.black.withValues(alpha: 0.4),
-                shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: () => setState(() {
-                    _uiHidden = !_uiHidden;
-                    if (_uiHidden) {
-                      _chatInputVisible = false;
-                      _chatFocus.unfocus();
-                    }
-                  }),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Icon(
-                      _uiHidden
-                          ? Icons.keyboard_arrow_right
-                          : Icons.keyboard_arrow_left,
-                      color: Colors.white70,
-                      size: 22,
+          // 垂直居中侧边按钮(竖屏在左, 横屏在右): 隐藏/显示菜单 + 横竖屏切换
+          Builder(builder: (context) {
+            final isLandscape =
+                MediaQuery.of(context).orientation == Orientation.landscape;
+            final hideIcon = _uiHidden != isLandscape
+                ? Icons.keyboard_arrow_right
+                : Icons.keyboard_arrow_left;
+            return Align(
+              alignment:
+                  isLandscape ? Alignment.centerRight : Alignment.centerLeft,
+              child: Padding(
+                padding: EdgeInsets.only(
+                    left: isLandscape ? 0 : 4, right: isLandscape ? 4 : 0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _sideCircleButton(
+                      icon: hideIcon,
+                      onTap: () => setState(() {
+                        _uiHidden = !_uiHidden;
+                        if (_uiHidden) {
+                          _chatInputVisible = false;
+                          _chatFocus.unfocus();
+                        }
+                      }),
                     ),
-                  ),
+                    const SizedBox(height: 10),
+                    _sideCircleButton(
+                      icon: isLandscape
+                          ? Icons.stay_current_portrait
+                          : Icons.stay_current_landscape,
+                      onTap: _toggleOrientation,
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ),
+            );
+          }),
           Positioned.fill(
               child: Watermark(
                   identityText:
@@ -862,6 +882,22 @@ class _RoomPageState extends State<RoomPage> {
           if (_recordingBlocked) _buildRecordingOverlay(),
           if (_closedReason != null) _buildClosedOverlay(),
         ],
+      ),
+    );
+  }
+
+  Widget _sideCircleButton(
+      {required IconData icon, required VoidCallback onTap}) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.4),
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(icon, color: Colors.white70, size: 22),
+        ),
       ),
     );
   }
