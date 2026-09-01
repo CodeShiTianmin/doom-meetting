@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_config.dart';
 import '../services/api_client.dart';
 import 'rooms_page.dart';
 
@@ -14,28 +15,38 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _usernameController = TextEditingController(text: 'jxys1');
   final _passwordController = TextEditingController();
+  final _passwordFocus = FocusNode();
   bool _loading = false;
+  bool _obscure = true;
+  String? _error;
 
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
   Future<void> _login() async {
-    setState(() => _loading = true);
+    if (_loading) return;
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text;
+    if (username.isEmpty || password.isEmpty) {
+      setState(() => _error = '请输入管理员账号和密码');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
-      await ApiClient.instance
-          .login(_usernameController.text.trim(), _passwordController.text);
+      await ApiClient.instance.login(username, password);
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const RoomsPage()));
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
-      }
+      if (mounted) setState(() => _error = describeError(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -43,6 +54,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -53,78 +65,140 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
         child: Center(
-          child: SizedBox(
-            width: 380,
-            child: Card(
-              elevation: 12,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Container(
-                      width: 72,
-                      height: 72,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF5B8DEF), Color(0xFF8E6BEF)],
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: SizedBox(
+              width: 400,
+              child: Card(
+                elevation: 12,
+                color: const Color(0xFF121737),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
+                  child: AutofillGroup(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          width: 72,
+                          height: 72,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF5B8DEF), Color(0xFF8E6BEF)],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF5B8DEF)
+                                    .withValues(alpha: 0.4),
+                                blurRadius: 24,
+                              ),
+                            ],
+                          ),
+                          child: const Icon(Icons.connected_tv,
+                              size: 36, color: Colors.white),
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color:
-                                const Color(0xFF5B8DEF).withValues(alpha: 0.4),
-                            blurRadius: 24,
+                        const SizedBox(height: 16),
+                        Text('惊喜影视平台',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 6),
+                        Text('PC 投屏端 · 20 房并发统一推流',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.white.withValues(alpha: 0.55))),
+                        const SizedBox(height: 28),
+                        TextField(
+                          controller: _usernameController,
+                          enabled: !_loading,
+                          autofocus: true,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.username],
+                          onSubmitted: (_) => _passwordFocus.requestFocus(),
+                          decoration: const InputDecoration(
+                            labelText: '管理员账号',
+                            prefixIcon: Icon(Icons.person_outline),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: _passwordController,
+                          focusNode: _passwordFocus,
+                          enabled: !_loading,
+                          obscureText: _obscure,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: const [AutofillHints.password],
+                          onSubmitted: (_) => _login(),
+                          decoration: InputDecoration(
+                            labelText: '密码',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            suffixIcon: IconButton(
+                              tooltip: _obscure ? '显示密码' : '隐藏密码',
+                              onPressed: () =>
+                                  setState(() => _obscure = !_obscure),
+                              icon: Icon(_obscure
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined),
+                            ),
+                          ),
+                        ),
+                        if (_error != null) ...[
+                          const SizedBox(height: 14),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: scheme.error.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                  color: scheme.error.withValues(alpha: 0.4)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.error_outline,
+                                    size: 18, color: scheme.error),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(_error!,
+                                      style: TextStyle(
+                                          fontSize: 13, color: scheme.error)),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
-                      ),
-                      child: const Icon(Icons.connected_tv,
-                          size: 36, color: Colors.white),
+                        const SizedBox(height: 20),
+                        FilledButton(
+                          onPressed: _loading ? null : _login,
+                          child: _loading
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2))
+                              : const Text('登录'),
+                        ),
+                        const SizedBox(height: 18),
+                        Text(
+                          '服务器: ${AppConfig.apiBaseUrl}',
+                          textAlign: TextAlign.center,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.white.withValues(alpha: 0.35)),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 16),
-                    Text('惊喜影视平台',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineSmall),
-                    const SizedBox(height: 24),
-                    TextField(
-                      controller: _usernameController,
-                      decoration: const InputDecoration(
-                          labelText: '管理员',
-                          prefixIcon: Icon(Icons.person_outline),
-                          border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: _passwordController,
-                      obscureText: true,
-                      onSubmitted: (_) => _login(),
-                      decoration: const InputDecoration(
-                          labelText: '密码',
-                          prefixIcon: Icon(Icons.lock_outline),
-                          border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 20),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: _loading ? null : _login,
-                      child: _loading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('登录'),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),

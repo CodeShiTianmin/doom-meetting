@@ -46,13 +46,33 @@ const theme = createTheme({
     MuiChip: {
       styleOverrides: { root: { fontWeight: 600 } },
     },
+    MuiPaper: {
+      styleOverrides: { rounded: { borderRadius: 14 } },
+    },
+    MuiTooltip: {
+      styleOverrides: {
+        tooltip: { fontSize: 12, borderRadius: 8, backgroundColor: 'rgba(30, 35, 64, 0.94)' },
+      },
+    },
+    MuiTableRow: {
+      styleOverrides: {
+        root: {
+          '&:last-child td': { borderBottom: 'none' },
+        },
+      },
+    },
+    MuiAlert: {
+      styleOverrides: { root: { borderRadius: 12 } },
+    },
     MuiTableCell: {
       styleOverrides: {
+        root: { borderBottomColor: 'rgba(107, 114, 145, 0.14)' },
         head: {
           fontWeight: 700,
           color: '#6b7291',
           background: '#f7f8fd',
           borderBottom: 'none',
+          whiteSpace: 'nowrap',
         },
       },
     },

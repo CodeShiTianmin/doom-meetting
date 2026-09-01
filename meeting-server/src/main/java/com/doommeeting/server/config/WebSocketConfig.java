@@ -8,6 +8,8 @@ import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBr
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
+import java.util.Arrays;
+
 /**
  * STOMP 信令通道:
  * /topic/rooms/{roomCode}   房间事件(成员进出/就位/推流状态/点赞/倒计时/关闭)
@@ -21,6 +23,7 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final WsAuthChannelInterceptor wsAuthChannelInterceptor;
+    private final AppProperties appProperties;
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
@@ -35,10 +38,23 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
+        // 与 REST CORS 使用同一份允许来源配置; 原生客户端(Flutter)不携带 Origin, 不受此限制
+        String[] allowedOrigins = allowedOriginPatterns();
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*")
+                .setAllowedOriginPatterns(allowedOrigins)
                 .withSockJS();
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*");
+                .setAllowedOriginPatterns(allowedOrigins);
+    }
+
+    private String[] allowedOriginPatterns() {
+        String configured = appProperties.getCors().getAllowedOrigins();
+        if (configured == null || configured.isBlank() || "*".equals(configured.trim())) {
+            return new String[] {"*"};
+        }
+        return Arrays.stream(configured.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
     }
 }

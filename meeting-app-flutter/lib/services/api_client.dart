@@ -6,7 +6,18 @@ import '../models/room_state.dart';
 
 /// 手机端 REST 接口封装(对应后端 MobileRoomController)
 class ApiClient {
-  ApiClient._();
+  ApiClient._() {
+    _dio.interceptors.add(InterceptorsWrapper(
+      onError: (error, handler) {
+        handler.reject(DioException(
+          requestOptions: error.requestOptions,
+          response: error.response,
+          type: error.type,
+          error: ApiException(_describeNetworkError(error), -1),
+        ));
+      },
+    ));
+  }
 
   static final ApiClient instance = ApiClient._();
 
@@ -14,17 +25,47 @@ class ApiClient {
     baseUrl: AppConfig.apiBaseUrl,
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 10),
-    // 业务错误使用 HTTP 4xx + {code,message} 返回, 由 _unwrap 统一解析
+    // 业务错误使用 HTTP 4xx + {code,message} 返回, 由 _envelope 统一解析
     validateStatus: (status) => status != null && status < 500,
   ));
 
-  Map<String, dynamic> _unwrap(Response<dynamic> response) {
-    final body = response.data as Map<String, dynamic>;
-    if (body['code'] != 0) {
-      throw ApiException(
-          (body['message'] as String?) ?? '请求失败', body['code'] as int? ?? -1);
+  static String _describeNetworkError(DioException error) {
+    switch (error.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return '网络超时, 请检查网络后重试';
+      case DioExceptionType.connectionError:
+        return '无法连接服务器, 请检查网络';
+      case DioExceptionType.badResponse:
+        return '服务器异常 (HTTP ${error.response?.statusCode ?? '?'})';
+      case DioExceptionType.cancel:
+        return '请求已取消';
+      case DioExceptionType.badCertificate:
+        return '服务器证书校验失败';
+      case DioExceptionType.unknown:
+        return '网络请求失败, 请稍后重试';
     }
-    return (body['data'] as Map<String, dynamic>?) ?? const {};
+  }
+
+  Map<String, dynamic> _envelope(Response<dynamic> response) {
+    final body = response.data;
+    if (body is! Map<String, dynamic>) {
+      throw ApiException(
+          '服务器返回了无法识别的响应 (HTTP ${response.statusCode})',
+          response.statusCode ?? -1);
+    }
+    final code = (body['code'] as num?)?.toInt();
+    if (code != 0) {
+      throw ApiException((body['message'] as String?) ?? '请求失败',
+          code ?? response.statusCode ?? -1);
+    }
+    return body;
+  }
+
+  Map<String, dynamic> _unwrap(Response<dynamic> response) {
+    final data = _envelope(response)['data'];
+    return data is Map<String, dynamic> ? data : const {};
   }
 
   Future<JoinSession> joinRoom({
@@ -50,8 +91,9 @@ class ApiClient {
 
   Future<void> heartbeat(
       String roomCode, String identity, String memberToken) async {
-    await _dio.post('/api/mobile/rooms/$roomCode/heartbeat',
+    final response = await _dio.post('/api/mobile/rooms/$roomCode/heartbeat',
         data: {'identity': identity, 'memberToken': memberToken});
+    _envelope(response);
   }
 
   Future<int> sendLike(
@@ -68,19 +110,14 @@ class ApiClient {
       'memberToken': memberToken,
       'content': content,
     });
-    _unwrap(response);
+    _envelope(response);
   }
 
   Future<List<Map<String, dynamic>>> fetchChat(String roomCode) async {
     final response = await _dio.get('/api/mobile/rooms/$roomCode/chat');
-    final body = response.data as Map<String, dynamic>;
-    if (body['code'] != 0) {
-      throw ApiException(
-          (body['message'] as String?) ?? '请求失败', body['code'] as int? ?? -1);
-    }
-    return ((body['data'] as List<dynamic>?) ?? const [])
-        .map((item) => item as Map<String, dynamic>)
-        .toList();
+    final data = _envelope(response)['data'];
+    if (data is! List<dynamic>) return const [];
+    return data.whereType<Map<String, dynamic>>().toList();
   }
 
   Future<void> reportRecording(String roomCode, String identity,
@@ -110,7 +147,7 @@ class ApiClient {
       'action': action,
       'positionMs': positionMs,
     });
-    _unwrap(response);
+    _envelope(response);
   }
 
   Future<RoomState> getRoomState(String roomCode) async {
@@ -127,4 +164,16 @@ class ApiException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 把任意异常转换为可直接展示给用户的文案
+String describeError(Object error) {
+  if (error is ApiException) return error.message;
+  if (error is DioException) {
+    final wrapped = error.error;
+    if (wrapped is ApiException) return wrapped.message;
+    return error.message ?? '网络请求失败';
+  }
+  if (error is StateError) return error.message;
+  return error.toString();
 }

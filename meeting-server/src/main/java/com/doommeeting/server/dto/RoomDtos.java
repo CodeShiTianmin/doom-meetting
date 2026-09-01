@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
@@ -119,6 +120,9 @@ public class RoomDtos {
     }
 
     /** PC 端统一播放状态广播(播放/暂停/进度) */
-    public record PlaybackStateRequest(Boolean playing, Long positionMs, Long durationMs) {
+    public record PlaybackStateRequest(
+            @NotNull(message = "播放状态不能为空") Boolean playing,
+            @PositiveOrZero(message = "播放进度不能为负数") Long positionMs,
+            @PositiveOrZero(message = "视频时长不能为负数") Long durationMs) {
     }
 }

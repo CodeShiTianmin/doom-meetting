@@ -15,6 +15,8 @@ export const startCast = (id, type, label, replace = false) =>
   client.post(`/admin/rooms/${id}/cast/start`, { type, label, replace })
 export const stopCast = (id) => client.post(`/admin/rooms/${id}/cast/stop`)
 export const closeRoom = (id) => client.post(`/admin/rooms/${id}/close`)
+export const resetRoom = (id) => client.post(`/admin/rooms/${id}/reset`)
+export const deleteRoom = (id) => client.delete(`/admin/rooms/${id}`)
 export const regenerateInvite = (id) =>
   client.post(`/admin/rooms/${id}/invite/regenerate`)
 export const getPublisherToken = (id) =>

@@ -37,17 +37,26 @@ class CastManager extends ChangeNotifier {
     if (existing != null && existing.connected) return existing;
 
     final tokenInfo = await ApiClient.instance.getPublisherToken(roomId);
+    final wsUrl = tokenInfo['livekitWsUrl'] as String?;
+    final token = tokenInfo['livekitToken'] as String?;
+    if (wsUrl == null || wsUrl.isEmpty || token == null || token.isEmpty) {
+      throw StateError('服务端未返回媒体服务连接信息');
+    }
     final session = existing ??
-        CastSession(roomId: roomId, roomCode: tokenInfo['roomCode'] as String);
+        CastSession(
+            roomId: roomId,
+            roomCode: (tokenInfo['roomCode'] as String?) ?? '$roomId');
+    if (existing == null) {
+      // 会话状态(连接/推流/错误)变化同步通知页面刷新
+      session.addListener(notifyListeners);
+    }
     _sessions[roomId] = session;
     try {
-      await session.connect(
-        tokenInfo['livekitWsUrl'] as String,
-        tokenInfo['livekitToken'] as String,
-      );
+      await session.connect(wsUrl, token);
     } catch (_) {
       // 连接失败的会话不留在缓存, 避免后续复用失败实例
       _sessions.remove(roomId);
+      session.removeListener(notifyListeners);
       session.dispose();
       rethrow;
     }
@@ -82,15 +91,22 @@ class CastManager extends ChangeNotifier {
       await sharedPlayer.start(path);
       final source = await sharedPlayer.waitWindowSource();
       final failed = <String>[];
+      var succeeded = 0;
       for (final room in rooms) {
         if (room.closed) continue;
         try {
           final session = await ensureSession(room.id);
           await session.startWindowCast(source,
               label: sharedPlayer.fileName);
+          succeeded++;
         } catch (_) {
           failed.add(room.roomCode);
         }
+      }
+      if (succeeded == 0) {
+        throw StateError(failed.isEmpty
+            ? '没有可推流的房间(全部房间已关闭)'
+            : '全部房间推流失败, 请检查媒体服务连接');
       }
       await ApiClient.instance
           .startCastAll('VIDEO', label: sharedPlayer.fileName);
@@ -143,8 +159,10 @@ class CastManager extends ChangeNotifier {
 
   Future<void> closeSession(int roomId) async {
     final session = _sessions.remove(roomId);
-    await session?.disconnect();
-    session?.dispose();
+    if (session == null) return;
+    session.removeListener(notifyListeners);
+    await session.disconnect();
+    session.dispose();
   }
 
   Future<void> closeAll() async {

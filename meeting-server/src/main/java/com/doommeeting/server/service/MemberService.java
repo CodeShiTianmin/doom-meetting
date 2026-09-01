@@ -70,6 +70,7 @@ public class MemberService {
         }
 
         long onlineCount = memberRepository.countByRoomAndOnlineTrue(room);
+        boolean newMember = member == null;
         if (member == null) {
             if (invite.getUsedCount() >= invite.getMaxUses()) {
                 throw new BusinessException(403, "入会凭证使用次数已达上限");
@@ -94,11 +95,14 @@ public class MemberService {
         // 等候室: 未批准前不上线、不发 LiveKit token; 客户端重试 join 轮询审批结果
         if (Boolean.TRUE.equals(room.getApprovalRequired()) && !Boolean.TRUE.equals(member.getApproved())) {
             memberRepository.save(member);
-            eventLogService.log(room, RoomEventType.JOIN_REQUEST, request.nickname() + " 申请入会, 等待审批");
-            notificationService.pushToAdmin("JOIN_REQUEST", room.getRoomCode(), Map.of(
-                    "identity", member.getIdentity(),
-                    "nickname", member.getNickname(),
-                    "seatNo", member.getSeatNo() == null ? 0 : member.getSeatNo()));
+            // 客户端轮询审批结果会重复调用 join, 只在首次申请时记录/通知, 避免刷屏
+            if (newMember) {
+                eventLogService.log(room, RoomEventType.JOIN_REQUEST, request.nickname() + " 申请入会, 等待审批");
+                notificationService.pushToAdmin("JOIN_REQUEST", room.getRoomCode(), Map.of(
+                        "identity", member.getIdentity(),
+                        "nickname", member.getNickname(),
+                        "seatNo", member.getSeatNo() == null ? 0 : member.getSeatNo()));
+            }
             return pendingResponse(room, member);
         }
 

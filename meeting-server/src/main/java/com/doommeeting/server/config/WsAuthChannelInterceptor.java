@@ -23,7 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * - CONNECT 携带 Authorization: Bearer <管理端JWT> -> 管理端会话, 可订阅全部 topic;
  * - CONNECT 携带 roomCode + identity + memberToken(入会签发的会话级凭证) -> 手机端会话, 仅可订阅对应房间 topic;
  * - /topic/admin/** 仅管理端可订阅; /topic/rooms/{roomCode} 需管理端或该房间成员;
- * - SUBSCRIBE 时按当前数据库状态重新校验成员凭证/踢出/审批, 不信任 CONNECT 时的缓存结论。
+ * - SEND 到 /app/rooms/{roomCode}/** 同样需管理端或该房间成员凭证, 匿名连接不得触发房间广播;
+ * - SUBSCRIBE/SEND 时按当前数据库状态重新校验成员凭证/踢出/审批, 不信任 CONNECT 时的缓存结论。
  */
 @Slf4j
 @Component
@@ -32,6 +33,7 @@ public class WsAuthChannelInterceptor implements ChannelInterceptor {
 
     private static final String ADMIN_TOPIC_PREFIX = "/topic/admin/";
     private static final String ROOM_TOPIC_PREFIX = "/topic/rooms/";
+    private static final String ROOM_APP_PREFIX = "/app/rooms/";
 
     private final JwtService jwtService;
     private final RoomRepository roomRepository;
@@ -56,6 +58,7 @@ public class WsAuthChannelInterceptor implements ChannelInterceptor {
         switch (command) {
             case CONNECT -> handleConnect(accessor, sessionId);
             case SUBSCRIBE -> handleSubscribe(accessor, sessionId);
+            case SEND -> handleSend(accessor, sessionId);
             case DISCONNECT -> {
                 if (sessionId != null) {
                     sessionCredentials.remove(sessionId);
@@ -109,19 +112,68 @@ public class WsAuthChannelInterceptor implements ChannelInterceptor {
             throw new MessageDeliveryException("管理端 topic 需要管理员凭证");
         }
         if (destination.startsWith(ROOM_TOPIC_PREFIX)) {
-            String roomCode = destination.substring(ROOM_TOPIC_PREFIX.length());
-            int slash = roomCode.indexOf('/');
-            if (slash > 0) {
-                roomCode = roomCode.substring(0, slash);
-            }
-            Map<String, MemberCredential> credentials = sessionCredentials.get(sessionId);
-            MemberCredential credential = credentials == null ? null : credentials.get(roomCode);
+            String roomCode = extractRoomCode(destination, ROOM_TOPIC_PREFIX);
+            MemberCredential credential = credentialOf(sessionId, roomCode);
             if (credential == null) {
                 throw new MessageDeliveryException("未认证的房间订阅: " + roomCode);
             }
             // 按当前数据库状态重新校验: 凭证轮换/被踢/审批被拒后立即失效
             requireValidMember(roomCode, credential.identity(), credential.memberToken());
         }
+    }
+
+    private void handleSend(StompHeaderAccessor accessor, String sessionId) {
+        String destination = accessor.getDestination();
+        if (destination == null || sessionId == null) {
+            throw new MessageDeliveryException("缺少消息目标");
+        }
+        if (isAdminSession(sessionId)) {
+            return;
+        }
+        if (!destination.startsWith(ROOM_APP_PREFIX)) {
+            throw new MessageDeliveryException("不允许的消息目标: " + destination);
+        }
+        String roomCode = extractRoomCode(destination, ROOM_APP_PREFIX);
+        MemberCredential credential = credentialOf(sessionId, roomCode);
+        if (credential == null) {
+            throw new MessageDeliveryException("未认证的房间消息: " + roomCode);
+        }
+        requireValidMember(roomCode, credential.identity(), credential.memberToken());
+    }
+
+    /** 当前会话是否为管理端(JWT 仍有效) */
+    public boolean isAdminSession(String sessionId) {
+        String adminToken = sessionId == null ? null : adminTokens.get(sessionId);
+        if (adminToken == null) {
+            return false;
+        }
+        try {
+            requireAdminToken(adminToken);
+            return true;
+        } catch (MessageDeliveryException e) {
+            adminTokens.remove(sessionId);
+            return false;
+        }
+    }
+
+    /** 会话在 CONNECT 时为该房间登记的成员身份(未登记返回 null) */
+    public String memberIdentityOf(String sessionId, String roomCode) {
+        MemberCredential credential = credentialOf(sessionId, roomCode);
+        return credential == null ? null : credential.identity();
+    }
+
+    private MemberCredential credentialOf(String sessionId, String roomCode) {
+        if (sessionId == null || roomCode == null) {
+            return null;
+        }
+        Map<String, MemberCredential> credentials = sessionCredentials.get(sessionId);
+        return credentials == null ? null : credentials.get(roomCode);
+    }
+
+    private static String extractRoomCode(String destination, String prefix) {
+        String rest = destination.substring(prefix.length());
+        int slash = rest.indexOf('/');
+        return slash > 0 ? rest.substring(0, slash) : rest;
     }
 
     private void requireAdminToken(String token) {

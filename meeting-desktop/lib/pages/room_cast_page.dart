@@ -25,6 +25,8 @@ class RoomCastPage extends StatefulWidget {
 
 class _RoomCastPageState extends State<RoomCastPage> {
   RoomModel? _room;
+  String? _loadError;
+  bool _busy = false;
   Timer? _refreshTimer;
   Timer? _tickTimer;
   double? _seekPreview;
@@ -38,7 +40,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     _refreshTimer =
         Timer.periodic(const Duration(seconds: 10), (_) => _refreshRoom());
     _tickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (mounted && (_room?.running ?? false)) setState(() {});
     });
   }
 
@@ -60,10 +62,15 @@ class _RoomCastPageState extends State<RoomCastPage> {
       if (mounted) {
         setState(() {
           _room = room;
+          _loadError = null;
           _lastRefreshAt = DateTime.now();
         });
       }
-    } catch (_) {}
+    } catch (error) {
+      if (mounted && _room == null) {
+        setState(() => _loadError = describeError(error));
+      }
+    }
   }
 
   int? get _remainingSeconds {
@@ -88,26 +95,26 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
   /// 本地视频推流(统一推流): 选择本地视频后全部房间同步推同一内容
   Future<void> _pickLocalVideo() async {
+    if (_busy) return;
     if (CastManager.instance.casting) {
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (_) => AlertDialog(
+        builder: (dialogContext) => AlertDialog(
           icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
           title: const Text('正在统一推流'),
           content: Text('当前正在推流「${CastManager.instance.castFileName ?? ''}」。\n'
               '需要先停止当前推流, 才能开始新推流。'),
           actions: [
             TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
+                onPressed: () => Navigator.of(dialogContext).pop(false),
                 child: const Text('取消')),
             FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
                 child: const Text('停止当前推流并继续')),
           ],
         ),
       );
-      if (confirmed != true) return;
-      await CastManager.instance.stopUnifiedCast();
+      if (confirmed != true || !mounted) return;
     }
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -115,40 +122,53 @@ class _RoomCastPageState extends State<RoomCastPage> {
       dialogTitle: '选择本地视频文件(统一推流到全部房间, 不上传服务器)',
     );
     final path = result?.files.single.path;
-    if (path == null || !mounted) return;
+    if (path == null || !mounted || _busy) return;
 
-    List<RoomModel> rooms;
+    setState(() => _busy = true);
     try {
-      rooms = await ApiClient.instance.listRooms();
-    } catch (error) {
-      _showToast('获取房间列表失败: $error');
-      return;
-    }
-    try {
+      if (CastManager.instance.casting) {
+        await CastManager.instance.stopUnifiedCast();
+      }
+      final rooms = await ApiClient.instance.listRooms();
       final failed =
           await CastManager.instance.startUnifiedVideoCast(path, rooms);
-      await _refreshRoom();
       if (failed.isEmpty) {
         _showToast('已开始统一推流(初始暂停), 全部房间同步此内容');
       } else {
-        _showToast('统一推流已开始, 以下房间推流失败: ${failed.join('、')}');
+        _showToast('统一推流已开始, 以下房间推流失败: ${failed.join('、')}',
+            error: true);
       }
     } catch (error) {
-      _showToast('统一推流启动失败: $error');
+      _showToast('统一推流启动失败: ${describeError(error)}', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
       await _refreshRoom();
     }
   }
 
   Future<void> _stopCast() async {
-    await CastManager.instance.stopUnifiedCast();
-    await _refreshRoom();
-    _showToast('已停止统一推流');
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await CastManager.instance.stopUnifiedCast();
+      _showToast('已停止统一推流');
+    } catch (error) {
+      _showToast('停止推流失败: ${describeError(error)}', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      await _refreshRoom();
+    }
   }
 
-  void _showToast(String message) {
+  void _showToast(String message, {bool error = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(message),
+        backgroundColor: error ? const Color(0xFF7F1D1D) : null,
+        duration: Duration(seconds: error ? 6 : 3),
+      ));
   }
 
   String _formatClock(int? seconds) {
@@ -165,7 +185,38 @@ class _RoomCastPageState extends State<RoomCastPage> {
   Widget build(BuildContext context) {
     final room = _room;
     if (room == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(
+          leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+          title: const Text('单房推流'),
+        ),
+        body: Center(
+          child: _loadError == null
+              ? const CircularProgressIndicator()
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.cloud_off,
+                        size: 56, color: Colors.white24),
+                    const SizedBox(height: 14),
+                    const Text('房间信息加载失败',
+                        style:
+                            TextStyle(fontSize: 16, color: Colors.white70)),
+                    const SizedBox(height: 6),
+                    Text(_loadError!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 12, color: Colors.white38)),
+                    const SizedBox(height: 18),
+                    FilledButton.icon(
+                      onPressed: _refreshRoom,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('重试'),
+                    ),
+                  ],
+                ),
+        ),
+      );
     }
     final scheme = Theme.of(context).colorScheme;
     final manager = CastManager.instance;
@@ -195,6 +246,12 @@ class _RoomCastPageState extends State<RoomCastPage> {
                       color: scheme.primary,
                       fontWeight: FontWeight.w700)),
             ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(room.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 15)),
+            ),
             const SizedBox(width: 12),
             if (room.running && remaining != null)
               Row(
@@ -211,6 +268,11 @@ class _RoomCastPageState extends State<RoomCastPage> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: '刷新',
+            onPressed: _refreshRoom,
+            icon: const Icon(Icons.refresh),
+          ),
           TextButton.icon(
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.grid_view, size: 18),
@@ -219,67 +281,104 @@ class _RoomCastPageState extends State<RoomCastPage> {
           const SizedBox(width: 12),
         ],
       ),
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 左侧: 推流预览 + 推流按钮 + 播放控制
-          Expanded(
-            flex: 3,
-            child: Padding(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final narrow = constraints.maxWidth < 900;
+          final sidePanel = _buildSidePanel(room, manager, session, scheme);
+          final mainPanel = _buildMainPanel(manager, session, scheme);
+          if (narrow) {
+            return ListView(
               padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Expanded(child: _buildPreview(session, scheme)),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      FilledButton.icon(
-                        onPressed: _pickLocalVideo,
-                        icon: const Icon(Icons.video_file_outlined),
-                        label: const Text('本地视频推流(全部房间统一)'),
-                      ),
-                      const SizedBox(width: 12),
-                      if (manager.casting)
-                        OutlinedButton.icon(
-                          onPressed: _stopCast,
-                          icon: const Icon(Icons.stop_circle_outlined),
-                          label: const Text('停止推流'),
-                        ),
-                    ],
-                  ),
-                  if (manager.casting) ...[
-                    const SizedBox(height: 12),
-                    _buildPlayerControls(manager, scheme),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          // 右侧: 推流内容 + 成员信息
-          Container(
-            width: 340,
-            margin: const EdgeInsets.fromLTRB(0, 16, 16, 16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white10),
-              color: Colors.white.withValues(alpha: 0.03),
-            ),
-            child: ListView(
-              padding: const EdgeInsets.all(14),
               children: [
-                _buildCastInfoCard(room, manager, scheme),
+                SizedBox(height: 360, child: mainPanel),
                 const SizedBox(height: 14),
-                _buildMembersCard(room, scheme),
+                sidePanel,
               ],
-            ),
-          ),
-        ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: mainPanel,
+                ),
+              ),
+              Container(
+                width: 340,
+                margin: const EdgeInsets.fromLTRB(0, 16, 16, 16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: Colors.white10),
+                  color: Colors.white.withValues(alpha: 0.03),
+                ),
+                child: ListView(
+                  padding: const EdgeInsets.all(14),
+                  children: [sidePanel],
+                ),
+              ),
+            ],
+          );
+        },
       ),
+    );
+  }
+
+  /// 左侧: 推流预览 + 推流按钮 + 播放控制
+  Widget _buildMainPanel(
+      CastManager manager, CastSession? session, ColorScheme scheme) {
+    return Column(
+      children: [
+        Expanded(child: _buildPreview(session, scheme)),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            FilledButton.icon(
+              onPressed: _busy ? null : _pickLocalVideo,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.video_file_outlined),
+              label: Text(manager.casting ? '更换推流视频' : '本地视频推流(全部房间统一)'),
+            ),
+            if (manager.casting)
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _stopCast,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('停止推流'),
+              ),
+          ],
+        ),
+        if (manager.casting) ...[
+          const SizedBox(height: 12),
+          _buildPlayerControls(manager, scheme),
+        ],
+      ],
+    );
+  }
+
+  /// 右侧: 推流内容 + 成员信息
+  Widget _buildSidePanel(RoomModel room, CastManager manager,
+      CastSession? session, ColorScheme scheme) {
+    return Column(
+      children: [
+        _buildCastInfoCard(room, manager, session, scheme),
+        const SizedBox(height: 14),
+        _buildMembersCard(room, scheme),
+      ],
     );
   }
 
   Widget _buildPreview(CastSession? session, ColorScheme scheme) {
     final track = session?.localVideoTrack;
+    final sessionError = session?.error;
     return Container(
       decoration: BoxDecoration(
         color: Colors.black,
@@ -289,14 +388,27 @@ class _RoomCastPageState extends State<RoomCastPage> {
       clipBehavior: Clip.antiAlias,
       child: track != null
           ? lk.VideoTrackRenderer(track)
-          : const Center(
+          : Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.movie_outlined, size: 56, color: Colors.white24),
-                  SizedBox(height: 10),
-                  Text('暂无推流 — 点击下方按钮选择本地视频',
-                      style: TextStyle(color: Colors.white38, fontSize: 13)),
+                  Icon(
+                      sessionError != null
+                          ? Icons.error_outline
+                          : Icons.movie_outlined,
+                      size: 56,
+                      color: sessionError != null
+                          ? scheme.error.withValues(alpha: 0.7)
+                          : Colors.white24),
+                  const SizedBox(height: 10),
+                  Text(
+                      sessionError ?? '暂无推流 — 点击下方按钮选择本地视频',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: sessionError != null
+                              ? scheme.error
+                              : Colors.white38,
+                          fontSize: 13)),
                 ],
               ),
             ),
@@ -308,8 +420,10 @@ class _RoomCastPageState extends State<RoomCastPage> {
     final player = manager.player;
     if (player == null) return const SizedBox.shrink();
     final durationMs = player.durationMs;
-    final positionMs =
-        (_seekPreview ?? player.positionMs.toDouble()).clamp(0.0, double.infinity).toDouble();
+    final positionMs = (_seekPreview ?? player.positionMs.toDouble())
+        .clamp(0.0, double.infinity)
+        .toDouble();
+    final hasDuration = durationMs > 0;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
@@ -320,7 +434,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
       child: Row(
         children: [
           IconButton(
-            tooltip: player.playing ? '暂停' : '播放',
+            tooltip: player.playing ? '暂停(全部房间同步)' : '播放(全部房间同步)',
             onPressed: () => player.playOrPause(),
             icon: Icon(
                 player.playing
@@ -334,33 +448,35 @@ class _RoomCastPageState extends State<RoomCastPage> {
               style: const TextStyle(fontSize: 12, color: Colors.white70)),
           Expanded(
             child: Slider(
-              value: durationMs > 0
+              value: hasDuration
                   ? positionMs.clamp(0.0, durationMs.toDouble()).toDouble()
                   : 0,
-              max: durationMs > 0 ? durationMs.toDouble() : 1,
-              onChanged: durationMs > 0
+              max: hasDuration ? durationMs.toDouble() : 1,
+              onChanged: hasDuration
                   ? (value) => setState(() => _seekPreview = value)
                   : null,
-              onChangeEnd: durationMs > 0
+              onChangeEnd: hasDuration
                   ? (value) {
-                      _seekPreview = null;
+                      setState(() => _seekPreview = null);
                       player.seek(value.round());
                     }
                   : null,
             ),
           ),
-          Text(_formatClock(durationMs ~/ 1000),
+          Text(_formatClock(hasDuration ? durationMs ~/ 1000 : null),
               style: const TextStyle(fontSize: 12, color: Colors.white70)),
         ],
       ),
     );
   }
 
-  /// 推流内容: 类型 + 视频文件名
-  Widget _buildCastInfoCard(
-      RoomModel room, CastManager manager, ColorScheme scheme) {
+  /// 推流内容: 类型 + 视频文件名 + 本房间推流状态
+  Widget _buildCastInfoCard(RoomModel room, CastManager manager,
+      CastSession? session, ColorScheme scheme) {
     final fileName = manager.castFileName ?? room.castLabel;
     final casting = manager.casting || room.casting;
+    final audioWarning = session?.audioCaptureWarning;
+    final sessionError = session?.error;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -376,6 +492,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 Text('推流内容',
                     style: TextStyle(
                         fontWeight: FontWeight.w700, color: scheme.primary)),
+                const Spacer(),
+                if (session != null)
+                  _SessionBadge(session: session),
               ],
             ),
             const SizedBox(height: 10),
@@ -399,6 +518,22 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 ],
               ),
             ],
+            if (manager.casting && session?.publishing != true) ...[
+              const SizedBox(height: 8),
+              _InlineNotice(
+                icon: Icons.info_outline,
+                color: Colors.orange,
+                text: sessionError ?? '本房间未加入本次统一推流, 可停止后重新推流',
+              ),
+            ],
+            if (audioWarning != null) ...[
+              const SizedBox(height: 8),
+              _InlineNotice(
+                icon: Icons.volume_off_outlined,
+                color: Colors.orange,
+                text: audioWarning,
+              ),
+            ],
           ],
         ),
       ),
@@ -407,7 +542,11 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
   /// 成员信息: 就位人数 + 昵称列表
   Widget _buildMembersCard(RoomModel room, ColorScheme scheme) {
-    final members = room.members.where((m) => !m.kicked).toList();
+    final members = room.members.where((m) => !m.kicked).toList()
+      ..sort((a, b) {
+        if (a.online != b.online) return a.online ? -1 : 1;
+        return (a.seatNo ?? 99).compareTo(b.seatNo ?? 99);
+      });
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -421,11 +560,18 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 Text('成员信息 (${room.onlineMemberCount}/${room.maxMembers})',
                     style: TextStyle(
                         fontWeight: FontWeight.w700, color: scheme.primary)),
+                const Spacer(),
+                if (room.understaffedAlert)
+                  Tooltip(
+                    message: '缺人红灯预警',
+                    child: Icon(Icons.warning_amber_rounded,
+                        size: 18, color: Colors.red.shade400),
+                  ),
               ],
             ),
             const SizedBox(height: 10),
             if (members.isEmpty)
-              const Text('暂无成员',
+              const Text('暂无成员, 等待扫码入会',
                   style: TextStyle(fontSize: 12, color: Colors.white38))
             else
               for (final member in members)
@@ -439,10 +585,26 @@ class _RoomCastPageState extends State<RoomCastPage> {
                               member.online ? Colors.green : Colors.white24),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(member.nickname,
+                        child: Text(
+                            member.seatNo != null
+                                ? '${member.seatNo}号 · ${member.nickname}'
+                                : member.nickname,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 13)),
                       ),
+                      if (!member.approved)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 6),
+                          child: Text('待审批',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.orange)),
+                        ),
+                      if (member.muted)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 6),
+                          child: Icon(Icons.mic_off,
+                              size: 14, color: Colors.white38),
+                        ),
                       Text(member.online ? '在线' : '离线',
                           style: TextStyle(
                               fontSize: 11,
@@ -454,6 +616,70 @@ class _RoomCastPageState extends State<RoomCastPage> {
                 ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SessionBadge extends StatelessWidget {
+  final CastSession session;
+
+  const _SessionBadge({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color;
+    final String label;
+    if (session.publishing) {
+      color = Colors.green;
+      label = '推流中';
+    } else if (session.connected) {
+      color = Colors.lightBlue;
+      label = '已连接';
+    } else {
+      color = Colors.grey;
+      label = '未连接';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+class _InlineNotice extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  const _InlineNotice(
+      {required this.icon, required this.color, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(text,
+                style: TextStyle(fontSize: 12, color: color)),
+          ),
+        ],
       ),
     );
   }
