@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -264,6 +265,23 @@ public class MemberService {
                 roomRepository.save(room);
             }
         }
+    }
+
+    /** 手机端播放控制: 转发给 PC 端统一播放器执行(播放/暂停/进度) */
+    @Transactional(readOnly = true)
+    public void castControl(String roomCode, CastControlRequest request) {
+        Room room = roomService.getRoomByCode(roomCode);
+        RoomMember member = requireOnlineMember(room, request.identity(), request.memberToken());
+        if (room.getCastType() == null) {
+            throw new BusinessException("当前没有推流内容");
+        }
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("action", request.action());
+        payload.put("operator", member.getNickname());
+        if (request.positionMs() != null) {
+            payload.put("positionMs", request.positionMs());
+        }
+        notificationService.pushToAdmin("CAST_CONTROL", room.getRoomCode(), payload);
     }
 
     /** 手机端检测到录屏 -> 遮挡画面并上报 */

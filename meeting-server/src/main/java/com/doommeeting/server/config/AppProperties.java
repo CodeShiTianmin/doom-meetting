@@ -53,6 +53,10 @@ public class AppProperties {
         private int maxClients = 2;
         private int understaffedAlertMinutes = 3;
         private int heartbeatTimeoutSeconds = 60;
+        /** 固定房间数(1-N 号房, 启动时自动初始化) */
+        private int fixedRoomCount = 20;
+        /** 固定房间默认会议时长(分钟) */
+        private int defaultDurationMinutes = 50;
     }
 
     /** 手机 App 版本检查与 APK 私发下载(不上架应用商店) */

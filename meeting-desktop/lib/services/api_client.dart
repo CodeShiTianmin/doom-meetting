@@ -78,27 +78,6 @@ class ApiClient {
     return RoomModel.fromJson(_unwrap(response));
   }
 
-  Future<RoomModel> createRoom({
-    required String name,
-    required int durationMinutes,
-    int? maxMembers,
-    required bool videoCallEnabled,
-    required bool cameraEnabled,
-    String? scheduledStartAt,
-    bool approvalRequired = false,
-  }) async {
-    final response = await _dio.post('/api/admin/rooms', data: {
-      'name': name,
-      'durationMinutes': durationMinutes,
-      'maxMembers': maxMembers,
-      'videoCallEnabled': videoCallEnabled,
-      'cameraEnabled': cameraEnabled,
-      'scheduledStartAt': scheduledStartAt,
-      'approvalRequired': approvalRequired,
-    });
-    return RoomModel.fromJson(_unwrap(response));
-  }
-
   Future<RoomModel> updateSettings(int id,
       {bool? videoCallEnabled,
       bool? cameraEnabled,
@@ -113,50 +92,40 @@ class ApiClient {
     return RoomModel.fromJson(_unwrap(response));
   }
 
-  /// 开始推流登记(屏幕/本地视频/摄像头, 均走 LiveKit 实时流);
-  /// type: SCREEN / VIDEO / CAMERA, label 为推流源名称
-  Future<RoomModel> startCast(int roomId, String type,
-      {String? label, bool replace = false}) async {
-    final response = await _dio.post('/api/admin/rooms/$roomId/cast/start',
-        data: {'type': type, 'label': label, 'replace': replace});
-    return RoomModel.fromJson(_unwrap(response));
-  }
-
-  /// 停止当前推流登记
-  Future<RoomModel> stopCast(int roomId) async {
-    final response = await _dio.post('/api/admin/rooms/$roomId/cast/stop');
-    return RoomModel.fromJson(_unwrap(response));
-  }
-
-  Future<void> closeRoom(int id) async {
-    await _dio.post('/api/admin/rooms/$id/close');
-  }
-
-  /// 删除房间(先结束会议, 再删除房间及关联记录)
-  Future<void> deleteRoom(int id) async {
-    final response = await _dio.delete('/api/admin/rooms/$id');
+  /// 统一推流登记: 全部未关闭房间登记同一推流内容
+  Future<void> startCastAll(String type, {String? label}) async {
+    final response = await _dio.post('/api/admin/rooms/cast/start-all',
+        data: {'type': type, 'label': label, 'replace': true});
     final body = response.data as Map<String, dynamic>;
     if (body['code'] != 0) {
-      throw ApiException((body['message'] as String?) ?? '删除失败',
+      throw ApiException((body['message'] as String?) ?? '推流登记失败',
           code: (body['code'] as num?)?.toInt() ?? -1);
     }
   }
 
-  /// PC 端发送文字聊天消息
-  Future<void> sendChat(int roomId, String content) async {
-    final response = await _dio
-        .post('/api/admin/rooms/$roomId/chat', data: {'content': content});
-    _unwrap(response);
+  /// 统一停止推流登记
+  Future<void> stopCastAll() async {
+    final response = await _dio.post('/api/admin/rooms/cast/stop-all');
+    final body = response.data as Map<String, dynamic>;
+    if (body['code'] != 0) {
+      throw ApiException((body['message'] as String?) ?? '停止推流失败',
+          code: (body['code'] as num?)?.toInt() ?? -1);
+    }
   }
 
-  /// 近期聊天记录(时间正序)
-  Future<List<dynamic>> chatHistory(int roomId) async {
-    final response = await _dio.get('/api/admin/rooms/$roomId/chat');
-    return _unwrapList(response);
+  /// 统一播放状态广播(同步到全部手机端)
+  Future<void> broadcastPlayback(
+      {required bool playing, int? positionMs, int? durationMs}) async {
+    await _dio.post('/api/admin/rooms/cast/playback', data: {
+      'playing': playing,
+      'positionMs': positionMs,
+      'durationMs': durationMs,
+    });
   }
 
-  Future<RoomModel> regenerateInvite(int id) async {
-    final response = await _dio.post('/api/admin/rooms/$id/invite/regenerate');
+  /// 手动结束会议并重置固定房间(旧凭证失效, 签发新客户码/服务码)
+  Future<RoomModel> resetRoom(int id) async {
+    final response = await _dio.post('/api/admin/rooms/$id/reset');
     return RoomModel.fromJson(_unwrap(response));
   }
 
@@ -166,53 +135,6 @@ class ApiClient {
     return _unwrap(response);
   }
 
-  Future<List<dynamic>> listLikes(int roomId) async {
-    final response = await _dio.get('/api/admin/rooms/$roomId/likes');
-    return _unwrapList(response);
-  }
-
-  // ---------- 成员管理 ----------
-
-  Future<void> kickMember(int roomId, String identity) async {
-    final response =
-        await _dio.post('/api/admin/rooms/$roomId/members/$identity/kick');
-    _unwrap(response);
-  }
-
-  Future<void> muteMember(int roomId, String identity, bool muted) async {
-    final response = await _dio.post(
-        '/api/admin/rooms/$roomId/members/$identity/mute',
-        queryParameters: {'muted': muted});
-    _unwrap(response);
-  }
-
-  Future<void> muteAll(int roomId, bool muted) async {
-    final response = await _dio.post(
-        '/api/admin/rooms/$roomId/members/mute-all',
-        queryParameters: {'muted': muted});
-    _unwrap(response);
-  }
-
-  Future<void> setMemberCamera(
-      int roomId, String identity, bool disabled) async {
-    final response = await _dio.post(
-        '/api/admin/rooms/$roomId/members/$identity/camera',
-        queryParameters: {'disabled': disabled});
-    _unwrap(response);
-  }
-
-  Future<void> approveMember(int roomId, String identity, bool approved) async {
-    final response = await _dio.post(
-        '/api/admin/rooms/$roomId/members/$identity/approve',
-        queryParameters: {'approved': approved});
-    _unwrap(response);
-  }
-
-  /// 会后出席统计报表
-  Future<List<dynamic>> attendance(int roomId) async {
-    final response = await _dio.get('/api/admin/rooms/$roomId/attendance');
-    return _unwrapList(response);
-  }
 }
 
 class ApiException implements Exception {

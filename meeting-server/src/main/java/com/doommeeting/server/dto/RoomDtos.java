@@ -117,4 +117,8 @@ public class RoomDtos {
 
     public record RoomEventResponse(Long id, String type, String detail, LocalDateTime createdAt) {
     }
+
+    /** PC 端统一播放状态广播(播放/暂停/进度) */
+    public record PlaybackStateRequest(Boolean playing, Long positionMs, Long durationMs) {
+    }
 }

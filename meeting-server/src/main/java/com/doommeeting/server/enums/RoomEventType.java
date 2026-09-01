@@ -23,5 +23,7 @@ public enum RoomEventType {
     MEMBER_CAMERA_CHANGED,
     JOIN_REQUEST,
     JOIN_APPROVED,
-    JOIN_REJECTED
+    JOIN_REJECTED,
+    ROOM_RESET,
+    CAST_CONTROL
 }

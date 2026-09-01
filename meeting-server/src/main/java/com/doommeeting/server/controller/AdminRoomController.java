@@ -120,6 +120,34 @@ public class AdminRoomController {
         return ApiResponse.ok(roomService.stopCast(id, authentication.getName()));
     }
 
+    /** 统一推流: 全部未关闭房间登记同一推流内容 */
+    @PostMapping("/cast/start-all")
+    public ApiResponse<List<RoomResponse>> startCastAll(@Valid @RequestBody CastStartRequest request,
+                                                        Authentication authentication) {
+        return ApiResponse.ok(roomService.startCastAll(
+                request.type(), request.label(), authentication.getName()));
+    }
+
+    /** 统一停止推流: 清除全部未关闭房间的推流状态 */
+    @PostMapping("/cast/stop-all")
+    public ApiResponse<List<RoomResponse>> stopCastAll(Authentication authentication) {
+        return ApiResponse.ok(roomService.stopCastAll(authentication.getName()));
+    }
+
+    /** 统一播放状态广播: PC 端播放器状态同步到全部手机端 */
+    @PostMapping("/cast/playback")
+    public ApiResponse<Void> broadcastPlayback(@RequestBody PlaybackStateRequest request) {
+        roomService.broadcastPlayback(request.playing(), request.positionMs(), request.durationMs());
+        return ApiResponse.ok();
+    }
+
+    /** 手动结束会议并重置固定房间(旧凭证失效, 签发新客户码/服务码) */
+    @PostMapping("/{id}/reset")
+    public ApiResponse<RoomResponse> resetRoom(@PathVariable Long id,
+                                               Authentication authentication) {
+        return ApiResponse.ok(roomService.resetRoom(id, authentication.getName()));
+    }
+
     @PostMapping("/{id}/close")
     public ApiResponse<Void> closeRoom(@PathVariable Long id) {
         roomService.closeRoom(id);

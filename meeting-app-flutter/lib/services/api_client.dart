@@ -99,6 +99,20 @@ class ApiClient {
     return _unwrap(response);
   }
 
+  /// 统一推流播放控制: 播放/暂停/进度(经服务端转发 PC 端执行)
+  /// action: playOrPause / seek
+  Future<void> castControl(String roomCode, String identity,
+      String memberToken, String action, {int? positionMs}) async {
+    final response =
+        await _dio.post('/api/mobile/rooms/$roomCode/cast/control', data: {
+      'identity': identity,
+      'memberToken': memberToken,
+      'action': action,
+      'positionMs': positionMs,
+    });
+    _unwrap(response);
+  }
+
   Future<RoomState> getRoomState(String roomCode) async {
     final response = await _dio.get('/api/mobile/rooms/$roomCode/state');
     return RoomState.fromJson(_unwrap(response));

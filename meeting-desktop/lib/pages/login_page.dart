@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import 'rooms_page.dart';
 
-/// 公司账号登录(PC 端)
+/// 管理员登录(惊喜影视平台 PC 端)
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -12,7 +12,7 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _usernameController = TextEditingController();
+  final _usernameController = TextEditingController(text: 'jxys1');
   final _passwordController = TextEditingController();
   bool _loading = false;
 
@@ -88,18 +88,14 @@ class _LoginPageState extends State<LoginPage> {
                           size: 36, color: Colors.white),
                     ),
                     const SizedBox(height: 16),
-                    Text('PC 投屏端',
+                    Text('惊喜影视平台',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.headlineSmall),
-                    const SizedBox(height: 4),
-                    const Text('多房并发投屏会议系统 · 上传文件投放 + 屏幕共享',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white54, fontSize: 12)),
                     const SizedBox(height: 24),
                     TextField(
                       controller: _usernameController,
                       decoration: const InputDecoration(
-                          labelText: '公司账号',
+                          labelText: '管理员',
                           prefixIcon: Icon(Icons.person_outline),
                           border: OutlineInputBorder()),
                     ),

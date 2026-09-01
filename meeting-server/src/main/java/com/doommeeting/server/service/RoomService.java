@@ -267,10 +267,90 @@ public class RoomService {
         closeRoomInternal(room, CloseReason.MANUAL);
     }
 
+    /**
+     * 手动结束会议并重置固定房间:
+     * 下线全部成员 -> 旧凭证全部失效 -> 清空计时/点赞/成员记录 ->
+     * 签发新的客户码/服务码 -> 房间回到等待就位初始状态。
+     */
+    @Transactional
+    public RoomResponse resetRoom(Long id, String operator) {
+        Room room = getRoomById(id);
+        closeRoomInternal(room, CloseReason.MANUAL);
+        likeRepository.deleteByRoom(room);
+        memberRepository.deleteByRoom(room);
+        room.setStatus(RoomStatus.WAITING);
+        room.setCloseReason(null);
+        room.setClosedAt(null);
+        room.setMeetingStartAt(null);
+        room.setMeetingEndAt(null);
+        room.setReminder5Sent(false);
+        room.setReminder1Sent(false);
+        room.setAllMuted(false);
+        room.setLikeCount(0L);
+        room.setCameraEnabled(false);
+        room.setUnderstaffedAlert(false);
+        room.setUnderstaffedSince(LocalDateTime.now());
+        room.setCastType(null);
+        room.setCastLabel(null);
+        room.setCastBy(null);
+        roomRepository.save(room);
+        createSeatInvites(room);
+        eventLogService.log(room, RoomEventType.ROOM_RESET, operator + " 手动结束会议, 房间已重置");
+        notificationService.pushToAdmin("ROOM_RESET", room.getRoomCode(), Map.of(
+                "roomId", room.getId(), "name", room.getName(), "operator", operator));
+        return toResponse(room, latestInvite(room));
+    }
+
+    /** 统一推流: 对全部未关闭房间登记同一推流内容 */
+    @Transactional
+    public synchronized List<RoomResponse> startCastAll(CastType type, String label, String operator) {
+        List<RoomResponse> result = new ArrayList<>();
+        for (Room room : roomRepository.findAllByOrderByCreatedAtDesc()) {
+            if (room.getStatus() == RoomStatus.CLOSED) {
+                continue;
+            }
+            result.add(startCast(room.getId(), type, label, operator, true));
+        }
+        return result;
+    }
+
+    /** 统一停止推流: 清除全部未关闭房间的推流状态 */
+    @Transactional
+    public synchronized List<RoomResponse> stopCastAll(String operator) {
+        List<RoomResponse> result = new ArrayList<>();
+        for (Room room : roomRepository.findAllByOrderByCreatedAtDesc()) {
+            if (room.getStatus() == RoomStatus.CLOSED || room.getCastType() == null) {
+                continue;
+            }
+            result.add(stopCast(room.getId(), operator));
+        }
+        return result;
+    }
+
+    /** PC 端向全部未关闭房间广播统一播放状态(播放/暂停/进度) */
+    @Transactional(readOnly = true)
+    public void broadcastPlayback(Boolean playing, Long positionMs, Long durationMs) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("playing", Boolean.TRUE.equals(playing));
+        if (positionMs != null) {
+            payload.put("positionMs", positionMs);
+        }
+        if (durationMs != null) {
+            payload.put("durationMs", durationMs);
+        }
+        for (Room room : roomRepository.findByStatusIn(
+                List.of(RoomStatus.WAITING, RoomStatus.RUNNING))) {
+            notificationService.pushToRoom(room.getRoomCode(), "CAST_PLAYBACK", payload);
+        }
+    }
+
     /** 删除房间: 先关闭会议, 再删除房间及其成员/邀请/点赞/事件记录 */
     @Transactional
     public void deleteRoom(Long id, String operator) {
         Room room = getRoomById(id);
+        if ("system".equals(room.getCreatedBy())) {
+            throw new BusinessException("固定房间不支持删除, 请使用手动结束会议重置房间");
+        }
         closeRoomInternal(room, CloseReason.MANUAL);
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_DELETED", Map.of(
                 "roomId", room.getId(),
@@ -390,6 +470,7 @@ public class RoomService {
         state.put("recordingForbidden", room.getRecordingForbidden());
         state.put("durationMinutes", room.getDurationMinutes());
         state.put("maxMembers", room.getMaxMembers());
+        state.put("onlineMemberCount", memberRepository.countByRoomAndOnlineTrue(room));
         state.put("meetingStartAt", room.getMeetingStartAt());
         state.put("meetingEndAt", room.getMeetingEndAt());
         if (room.getStatus() == RoomStatus.RUNNING && room.getMeetingEndAt() != null) {
