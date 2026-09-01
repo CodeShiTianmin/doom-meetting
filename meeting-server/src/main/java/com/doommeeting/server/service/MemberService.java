@@ -275,6 +275,12 @@ public class MemberService {
         if (room.getCastType() == null) {
             throw new BusinessException("当前没有推流内容");
         }
+        if (!"playOrPause".equals(request.action()) && !"seek".equals(request.action())) {
+            throw new BusinessException("不支持的控制动作: " + request.action());
+        }
+        if ("seek".equals(request.action()) && request.positionMs() == null) {
+            throw new BusinessException("进度调节需要提供目标位置");
+        }
         Map<String, Object> payload = new HashMap<>();
         payload.put("action", request.action());
         payload.put("operator", member.getNickname());

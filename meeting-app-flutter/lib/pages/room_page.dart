@@ -209,6 +209,7 @@ class _RoomPageState extends State<RoomPage> {
       setState(() {
         _state = state;
         _remainingSeconds = state.remainingSeconds ?? _remainingSeconds;
+        _castPlaying = state.casting && state.castPlaying;
       });
       await _enforceFeatureToggles(state);
       if (state.closed && _closedReason == null) {
@@ -564,6 +565,9 @@ class _RoomPageState extends State<RoomPage> {
       case 'MEMBER_JOINED':
       case 'MEMBER_LEFT':
         _refreshState();
+        break;
+      case 'ROOM_RESET':
+        _onRoomClosed('公司已结束会议');
         break;
       case 'ROOM_CLOSED':
         _onRoomClosed(switch (data['reason']) {

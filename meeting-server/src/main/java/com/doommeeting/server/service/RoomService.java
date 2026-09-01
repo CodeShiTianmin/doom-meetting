@@ -103,7 +103,18 @@ public class RoomService {
             }
             rooms = roomRepository.findByStatusOrderByCreatedAtDesc(roomStatus);
         }
-        return rooms.stream().map(room -> toResponse(room, latestInvite(room))).toList();
+        // 固定房号(纯数字)按数字升序排列, 其余房间排在其后
+        return rooms.stream()
+                .sorted(Comparator.comparingLong(RoomService::roomCodeOrder))
+                .map(room -> toResponse(room, latestInvite(room))).toList();
+    }
+
+    private static long roomCodeOrder(Room room) {
+        try {
+            return Long.parseLong(room.getRoomCode());
+        } catch (NumberFormatException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Transactional(readOnly = true)
@@ -296,14 +307,16 @@ public class RoomService {
         roomRepository.save(room);
         createSeatInvites(room);
         eventLogService.log(room, RoomEventType.ROOM_RESET, operator + " 手动结束会议, 房间已重置");
-        notificationService.pushToAdmin("ROOM_RESET", room.getRoomCode(), Map.of(
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RESET", Map.of(
                 "roomId", room.getId(), "name", room.getName(), "operator", operator));
         return toResponse(room, latestInvite(room));
     }
 
-    /** 统一推流: 对全部未关闭房间登记同一推流内容 */
+    /** 统一推流: 对全部未关闭房间登记同一推流内容(推流后初始暂停) */
     @Transactional
     public synchronized List<RoomResponse> startCastAll(CastType type, String label, String operator) {
+        playbackState.clear();
+        playbackState.set(false, 0L, null);
         List<RoomResponse> result = new ArrayList<>();
         for (Room room : roomRepository.findAllByOrderByCreatedAtDesc()) {
             if (room.getStatus() == RoomStatus.CLOSED) {
@@ -317,6 +330,7 @@ public class RoomService {
     /** 统一停止推流: 清除全部未关闭房间的推流状态 */
     @Transactional
     public synchronized List<RoomResponse> stopCastAll(String operator) {
+        playbackState.clear();
         List<RoomResponse> result = new ArrayList<>();
         for (Room room : roomRepository.findAllByOrderByCreatedAtDesc()) {
             if (room.getStatus() == RoomStatus.CLOSED || room.getCastType() == null) {
@@ -327,9 +341,38 @@ public class RoomService {
         return result;
     }
 
+    /**
+     * 统一播放状态(内存快照): 供后加入的手机端查询当前播放/暂停状态,
+     * 不落库 —— 播放状态由 PC 端播放进程持有, 服务重启后随下一次广播恢复
+     */
+    private static final class PlaybackState {
+        private volatile Boolean playing;
+        private volatile Long positionMs;
+        private volatile Long durationMs;
+
+        void set(Boolean playing, Long positionMs, Long durationMs) {
+            this.playing = playing;
+            if (positionMs != null) {
+                this.positionMs = positionMs;
+            }
+            if (durationMs != null) {
+                this.durationMs = durationMs;
+            }
+        }
+
+        void clear() {
+            playing = null;
+            positionMs = null;
+            durationMs = null;
+        }
+    }
+
+    private final PlaybackState playbackState = new PlaybackState();
+
     /** PC 端向全部未关闭房间广播统一播放状态(播放/暂停/进度) */
     @Transactional(readOnly = true)
     public void broadcastPlayback(Boolean playing, Long positionMs, Long durationMs) {
+        playbackState.set(Boolean.TRUE.equals(playing), positionMs, durationMs);
         Map<String, Object> payload = new HashMap<>();
         payload.put("playing", Boolean.TRUE.equals(playing));
         if (positionMs != null) {
@@ -480,6 +523,11 @@ public class RoomService {
         state.put("likeCount", room.getLikeCount());
         state.put("castType", room.getCastType() == null ? null : room.getCastType().name());
         state.put("castLabel", room.getCastLabel());
+        if (room.getCastType() != null) {
+            state.put("castPlaying", Boolean.TRUE.equals(playbackState.playing));
+            state.put("castPositionMs", playbackState.positionMs);
+            state.put("castDurationMs", playbackState.durationMs);
+        }
         state.put("allMuted", room.getAllMuted());
         return state;
     }
