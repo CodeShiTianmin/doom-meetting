@@ -136,7 +136,7 @@ public class AdminRoomController {
 
     /** 统一播放状态广播: PC 端播放器状态同步到全部手机端 */
     @PostMapping("/cast/playback")
-    public ApiResponse<Void> broadcastPlayback(@RequestBody PlaybackStateRequest request) {
+    public ApiResponse<Void> broadcastPlayback(@Valid @RequestBody PlaybackStateRequest request) {
         roomService.broadcastPlayback(request.playing(), request.positionMs(), request.durationMs());
         return ApiResponse.ok();
     }

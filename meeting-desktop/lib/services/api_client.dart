@@ -19,31 +19,74 @@ class ApiClient {
     // 业务错误使用 HTTP 4xx + {code,message} 返回, 由 _unwrap 统一解析
     validateStatus: (status) => status != null && status < 500,
   ))
-    ..interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
-      if (_token != null) {
-        options.headers['Authorization'] = 'Bearer $_token';
+    ..interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        if (_token != null) {
+          options.headers['Authorization'] = 'Bearer $_token';
+        }
+        handler.next(options);
+      },
+      onError: (error, handler) {
+        handler.reject(DioException(
+          requestOptions: error.requestOptions,
+          response: error.response,
+          type: error.type,
+          error: ApiException(_describe(error),
+              code: error.response?.statusCode ?? -1),
+        ));
+      },
+    ));
+
+  /// 把网络层异常转成可直接展示的提示文案
+  static String _describe(DioException error) {
+    switch (error.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return '服务器响应超时, 请检查网络后重试';
+      case DioExceptionType.connectionError:
+        return '无法连接服务器, 请检查网络或服务器地址';
+      case DioExceptionType.badResponse:
+        return '服务器开小差了 (HTTP ${error.response?.statusCode})';
+      case DioExceptionType.cancel:
+        return '请求已取消';
+      case DioExceptionType.badCertificate:
+        return '服务器证书无效';
+      case DioExceptionType.unknown:
+        return '网络请求失败, 请稍后重试';
+    }
+  }
+
+  /// 校验统一响应包裹 {code,message,data}, 业务失败或响应形态不对时抛出 ApiException
+  Map<String, dynamic> _envelope(Response<dynamic> response) {
+    final body = response.data;
+    if (body is! Map<String, dynamic>) {
+      if (response.statusCode == 401) {
+        throw ApiException('登录已失效, 请重新登录', code: 401);
       }
-      handler.next(options);
-    }));
+      throw ApiException('服务器返回了无法识别的响应 (HTTP ${response.statusCode})',
+          code: response.statusCode ?? -1);
+    }
+    final code = (body['code'] as num?)?.toInt();
+    if (code != 0) {
+      throw ApiException((body['message'] as String?) ?? '请求失败',
+          code: code ?? response.statusCode ?? -1);
+    }
+    return body;
+  }
 
   Map<String, dynamic> _unwrap(Response<dynamic> response) {
-    final body = response.data as Map<String, dynamic>;
-    if (body['code'] != 0) {
-      throw ApiException((body['message'] as String?) ?? '请求失败',
-          code: (body['code'] as num?)?.toInt() ?? -1);
-    }
-    final data = body['data'];
+    final data = _envelope(response)['data'];
     if (data is Map<String, dynamic>) return data;
     return {'list': data};
   }
 
   List<dynamic> _unwrapList(Response<dynamic> response) {
-    final body = response.data as Map<String, dynamic>;
-    if (body['code'] != 0) {
-      throw ApiException((body['message'] as String?) ?? '请求失败',
-          code: (body['code'] as num?)?.toInt() ?? -1);
-    }
-    return (body['data'] as List<dynamic>?) ?? const [];
+    return (_envelope(response)['data'] as List<dynamic>?) ?? const [];
+  }
+
+  void _ensureOk(Response<dynamic> response) {
+    _envelope(response);
   }
 
   bool get loggedIn => _token != null;
@@ -55,7 +98,11 @@ class ApiClient {
     final response = await _dio.post('/api/auth/login',
         data: {'username': user, 'password': password});
     final data = _unwrap(response);
-    _token = data['token'] as String;
+    final token = data['token'] as String?;
+    if (token == null || token.isEmpty) {
+      throw ApiException('登录响应缺少凭证');
+    }
+    _token = token;
     username = data['username'] as String?;
   }
 
@@ -96,31 +143,24 @@ class ApiClient {
   Future<void> startCastAll(String type, {String? label}) async {
     final response = await _dio.post('/api/admin/rooms/cast/start-all',
         data: {'type': type, 'label': label, 'replace': true});
-    final body = response.data as Map<String, dynamic>;
-    if (body['code'] != 0) {
-      throw ApiException((body['message'] as String?) ?? '推流登记失败',
-          code: (body['code'] as num?)?.toInt() ?? -1);
-    }
+    _ensureOk(response);
   }
 
   /// 统一停止推流登记
   Future<void> stopCastAll() async {
     final response = await _dio.post('/api/admin/rooms/cast/stop-all');
-    final body = response.data as Map<String, dynamic>;
-    if (body['code'] != 0) {
-      throw ApiException((body['message'] as String?) ?? '停止推流失败',
-          code: (body['code'] as num?)?.toInt() ?? -1);
-    }
+    _ensureOk(response);
   }
 
   /// 统一播放状态广播(同步到全部手机端)
   Future<void> broadcastPlayback(
       {required bool playing, int? positionMs, int? durationMs}) async {
-    await _dio.post('/api/admin/rooms/cast/playback', data: {
+    final response = await _dio.post('/api/admin/rooms/cast/playback', data: {
       'playing': playing,
       'positionMs': positionMs,
       'durationMs': durationMs,
     });
+    _ensureOk(response);
   }
 
   /// 手动结束会议并重置固定房间(旧凭证失效, 签发新客户码/服务码)
@@ -134,7 +174,6 @@ class ApiClient {
     final response = await _dio.get('/api/admin/rooms/$roomId/publisher-token');
     return _unwrap(response);
   }
-
 }
 
 class ApiException implements Exception {
@@ -146,6 +185,21 @@ class ApiException implements Exception {
   /// 房间已有投放, 需先停止当前投放后再投放
   bool get castConflict => code == 409;
 
+  bool get unauthorized => code == 401;
+
   @override
   String toString() => message;
+}
+
+/// 从任意异常中提取可展示给用户的提示文案
+/// (Dio 层异常已在拦截器中包装为 ApiException)
+String describeError(Object error) {
+  if (error is ApiException) return error.message;
+  if (error is DioException) {
+    final wrapped = error.error;
+    if (wrapped is ApiException) return wrapped.message;
+    return error.message ?? '网络请求失败';
+  }
+  if (error is StateError) return error.message;
+  return error.toString();
 }

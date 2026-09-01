@@ -38,13 +38,18 @@ class SharedVideoPlayer extends ChangeNotifier {
 
   DateTime? _lastBroadcastAt;
   int _lastBroadcastPositionMs = 0;
+  Completer<void>? _ready;
 
   /// 启动独立播放进程(初始暂停、后台窗口), 等待窗口就绪
   Future<void> start(String path) async {
     await close();
+    if (!File(path).existsSync()) {
+      throw StateError('视频文件不存在: $path');
+    }
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     _controlServer = server;
     final ready = Completer<void>();
+    _ready = ready;
     server.listen((socket) {
       _controlSocket?.destroy();
       _controlSocket = socket;
@@ -78,6 +83,8 @@ class SharedVideoPlayer extends ChangeNotifier {
     } catch (_) {
       await close();
       throw StateError('播放进程未就绪, 无法开始统一推流');
+    } finally {
+      _ready = null;
     }
     filePath = path;
     fileName = path.split(RegExp(r'[\\/]')).last;
@@ -125,9 +132,9 @@ class SharedVideoPlayer extends ChangeNotifier {
         break;
       case 'state':
         _updateState(
-          playing: message['playing'] as bool,
-          positionMs: message['positionMs'] as int,
-          durationMs: message['durationMs'] as int,
+          playing: message['playing'] == true,
+          positionMs: (message['positionMs'] as num?)?.toInt() ?? 0,
+          durationMs: (message['durationMs'] as num?)?.toInt() ?? 0,
         );
         break;
     }
@@ -189,6 +196,10 @@ class SharedVideoPlayer extends ChangeNotifier {
   Future<void> _onProcessExited(Process process) async {
     if (!identical(process, _process)) return;
     _process = null;
+    final ready = _ready;
+    if (ready != null && !ready.isCompleted) {
+      ready.completeError(StateError('播放进程已退出'));
+    }
     await close();
     final callback = onClosedExternally;
     if (callback != null) await callback();

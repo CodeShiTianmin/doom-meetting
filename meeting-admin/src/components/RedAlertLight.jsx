@@ -8,21 +8,28 @@ const blink = keyframes`
 `
 
 /**
- * 红灯预警指示灯: 房间创建后缺人超过 3 分钟时闪烁红灯
+ * 红灯预警指示灯: 房间缺人超过服务端配置的时长时闪烁红灯
  */
-export default function RedAlertLight({ on }) {
+export default function RedAlertLight({ on, since, size = 14 }) {
   if (!on) {
     return (
       <Tooltip title="人员状态正常">
-        <Box sx={{ width: 14, height: 14, borderRadius: '50%', background: '#c8cdda' }} />
+        <Box
+          role="img"
+          aria-label="人员状态正常"
+          sx={{ width: size, height: size, borderRadius: '50%', background: '#c8cdda', flexShrink: 0 }}
+        />
       </Tooltip>
     )
   }
+  const sinceText = since ? ` (自 ${String(since).replace('T', ' ').slice(0, 16)})` : ''
   return (
-    <Tooltip title="红灯预警: 缺人超过3分钟">
+    <Tooltip title={`红灯预警: 房间缺人已超时${sinceText}`}>
       <Box
+        role="img"
+        aria-label="红灯预警"
         sx={{
-          width: 14, height: 14, borderRadius: '50%', background: '#e53935',
+          width: size, height: size, borderRadius: '50%', background: '#e53935', flexShrink: 0,
           animation: `${blink} 1s infinite`,
         }}
       />

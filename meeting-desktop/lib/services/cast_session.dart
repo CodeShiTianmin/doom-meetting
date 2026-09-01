@@ -17,6 +17,7 @@ class CastSession extends ChangeNotifier {
   CastSession({required this.roomId, required this.roomCode});
 
   lk.Room? _lkRoom;
+  lk.EventsListener<lk.RoomEvent>? _roomListener;
 
   /// 当前推流源名称(视频文件名)
   String? sourceLabel;
@@ -33,6 +34,8 @@ class CastSession extends ChangeNotifier {
   /// 连接 LiveKit(隐藏推流身份)
   Future<void> connect(String wsUrl, String token) async {
     if (connected) return;
+    // 断线后重连: 先释放旧连接的资源
+    if (_lkRoom != null) await disconnect();
     final room = lk.Room(
       roomOptions: const lk.RoomOptions(
         adaptiveStream: false,
@@ -61,9 +64,25 @@ class CastSession extends ChangeNotifier {
         ),
       ),
     );
-    await room.connect(wsUrl, token);
+    try {
+      await room.connect(wsUrl, token);
+    } catch (_) {
+      await room.dispose();
+      rethrow;
+    }
     _lkRoom = room;
+    _roomListener = room.createListener()
+      ..on<lk.RoomDisconnectedEvent>((event) {
+        if (!identical(room, _lkRoom)) return;
+        connected = false;
+        publishing = false;
+        localVideoTrack = null;
+        sourceLabel = null;
+        error = '媒体连接已断开';
+        notifyListeners();
+      });
     connected = true;
+    error = null;
     notifyListeners();
   }
 
@@ -72,12 +91,21 @@ class CastSession extends ChangeNotifier {
       {String? label}) async {
     await stopCast();
     final participant = _requireParticipant();
-    final hasCaptureAudio = await _publishCaptureTrack(participant, source.id);
+    final bool hasCaptureAudio;
+    try {
+      hasCaptureAudio = await _publishCaptureTrack(participant, source.id);
+    } catch (e) {
+      localVideoTrack = null;
+      error = '推流失败: $e';
+      notifyListeners();
+      rethrow;
+    }
     if (!hasCaptureAudio) {
       audioCaptureWarning = '本房间伴音采集失败, 推流仅有画面无声音';
     }
     sourceLabel = label ?? source.name;
     publishing = true;
+    error = null;
     notifyListeners();
   }
 
@@ -194,9 +222,18 @@ class CastSession extends ChangeNotifier {
 
   Future<void> disconnect() async {
     await stopCast();
-    await _lkRoom?.disconnect();
-    await _lkRoom?.dispose();
+    final room = _lkRoom;
     _lkRoom = null;
+    await _roomListener?.dispose();
+    _roomListener = null;
+    if (room != null) {
+      try {
+        await room.disconnect();
+      } catch (_) {}
+      try {
+        await room.dispose();
+      } catch (_) {}
+    }
     connected = false;
     notifyListeners();
   }

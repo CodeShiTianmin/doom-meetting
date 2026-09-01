@@ -33,7 +33,9 @@ public class LikeService {
 
     @Transactional
     public long like(String roomCode, String identity, String memberToken) {
-        Room room = roomService.getRoomByCode(roomCode);
+        // 行锁串行化同一房间的点赞计数, 避免并发 read-increment-write 丢失更新
+        Room room = roomRepository.findByRoomCodeForUpdate(roomCode)
+                .orElseThrow(() -> new BusinessException(404, "房间不存在"));
         if (room.getStatus() == RoomStatus.CLOSED) {
             throw new BusinessException("房间已关闭, 无法点赞");
         }

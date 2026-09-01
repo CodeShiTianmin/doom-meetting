@@ -1,4 +1,5 @@
 -- 多房并发投屏会议软件 - MySQL 8 初始化脚本(PC 端 LiveKit 实时推流, 无服务器文件存储)
+-- 表结构与 meeting-server 的 JPA 实体保持一致; 后端 ddl-auto=update 会自动补齐后续新增列
 CREATE DATABASE IF NOT EXISTS doom_meeting DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE doom_meeting;
 
@@ -19,11 +20,15 @@ CREATE TABLE IF NOT EXISTS room (
     room_code                 VARCHAR(16) NOT NULL,
     name                      VARCHAR(64) NOT NULL,
     status                    VARCHAR(16) NOT NULL DEFAULT 'WAITING',
+    max_members               INT         NOT NULL DEFAULT 2,
     video_call_enabled        TINYINT(1)  NOT NULL DEFAULT 1,
     camera_enabled            TINYINT(1)  NOT NULL DEFAULT 1,
     screenshot_allowed        TINYINT(1)  NOT NULL DEFAULT 1,
     recording_forbidden       TINYINT(1)  NOT NULL DEFAULT 1,
     duration_minutes          INT         NOT NULL,
+    scheduled_start_at        DATETIME,
+    approval_required         TINYINT(1)  NOT NULL DEFAULT 0,
+    all_muted                 TINYINT(1)  NOT NULL DEFAULT 0,
     meeting_start_at          DATETIME,
     meeting_end_at            DATETIME,
     cast_type                 VARCHAR(16),
@@ -47,9 +52,19 @@ CREATE TABLE IF NOT EXISTS room_member (
     id                BIGINT AUTO_INCREMENT PRIMARY KEY,
     room_id           BIGINT      NOT NULL,
     identity          VARCHAR(64) NOT NULL,
+    member_token      VARCHAR(64) NOT NULL,
+    invite_token_id   BIGINT,
+    seat_no           INT,
     nickname          VARCHAR(64) NOT NULL,
     device_info       VARCHAR(128),
     online            TINYINT(1)  NOT NULL DEFAULT 1,
+    muted             TINYINT(1)  NOT NULL DEFAULT 0,
+    camera_disabled   TINYINT(1)  NOT NULL DEFAULT 0,
+    kicked            TINYINT(1)  NOT NULL DEFAULT 0,
+    approved          TINYINT(1)  NOT NULL DEFAULT 1,
+    online_seconds    BIGINT      NOT NULL DEFAULT 0,
+    join_count        INT         NOT NULL DEFAULT 0,
+    last_online_at    DATETIME,
     joined_at         DATETIME    NOT NULL,
     left_at           DATETIME,
     last_heartbeat_at DATETIME,
@@ -63,6 +78,7 @@ CREATE TABLE IF NOT EXISTS invite_token (
     room_id    BIGINT      NOT NULL,
     token      VARCHAR(64) NOT NULL,
     expire_at  DATETIME    NOT NULL,
+    seat_no    INT,
     max_uses   INT         NOT NULL DEFAULT 2,
     used_count INT         NOT NULL DEFAULT 0,
     revoked    TINYINT(1)  NOT NULL DEFAULT 0,
@@ -79,6 +95,7 @@ CREATE TABLE IF NOT EXISTS room_like (
     nickname        VARCHAR(64) NOT NULL,
     liked_at        DATETIME    NOT NULL,
     KEY idx_room_like_room (room_id),
+    UNIQUE KEY uk_room_like_member (room_id, member_identity),
     CONSTRAINT fk_like_room FOREIGN KEY (room_id) REFERENCES room (id)
 ) ENGINE = InnoDB;
 

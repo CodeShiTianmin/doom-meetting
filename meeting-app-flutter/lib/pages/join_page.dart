@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -27,6 +28,8 @@ class _JoinPageState extends State<JoinPage> {
   final _nicknameController = TextEditingController();
   bool _joining = false;
   bool _scanning = false;
+  bool _analyzingImage = false;
+  bool _inviteHandled = false;
   final MobileScannerController _scannerController = MobileScannerController();
 
   @override
@@ -42,21 +45,54 @@ class _JoinPageState extends State<JoinPage> {
           await ApiClient.instance.checkAppVersion(AppConfig.versionCode);
       if (!mounted || info['updateAvailable'] != true) return;
       final force = info['forceUpdate'] == true;
+      final releaseNotes = (info['releaseNotes'] as String?)?.trim() ?? '';
+      final downloadUrl = (info['apkDownloadUrl'] as String?)?.trim() ?? '';
       await showDialog<void>(
         context: context,
         barrierDismissible: !force,
-        builder: (_) => AlertDialog(
+        builder: (dialogContext) => AlertDialog(
           title: Text('发现新版本 ${info['latestVersionName'] ?? ''}'),
-          content: Text(
-              '${info['releaseNotes'] ?? ''}\n\n下载地址:\n${info['apkDownloadUrl'] ?? ''}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (releaseNotes.isNotEmpty) ...[
+                Text(releaseNotes),
+                const SizedBox(height: 12),
+              ],
+              if (downloadUrl.isNotEmpty) ...[
+                const Text('下载地址',
+                    style: TextStyle(fontSize: 12, color: Colors.white60)),
+                const SizedBox(height: 4),
+                SelectableText(downloadUrl,
+                    style: const TextStyle(
+                        fontSize: 13, color: Color(0xFF8AB8FF))),
+              ],
+              if (force) ...[
+                const SizedBox(height: 12),
+                const Text('当前版本已停用, 请安装新版本后继续使用',
+                    style: TextStyle(fontSize: 12, color: Colors.orangeAccent)),
+              ],
+            ],
+          ),
           actions: [
+            if (downloadUrl.isNotEmpty)
+              TextButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: downloadUrl));
+                  _showMessage('下载地址已复制');
+                },
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('复制地址'),
+              ),
             if (!force)
               TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () => Navigator.of(dialogContext).pop(),
                   child: const Text('稍后再说')),
-            FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('知道了')),
+            if (!force)
+              FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('知道了')),
           ],
         ),
       );
@@ -93,15 +129,41 @@ class _JoinPageState extends State<JoinPage> {
       }
       return;
     }
-    setState(() => _scanning = true);
+    setState(() {
+      _inviteHandled = false;
+      _scanning = true;
+    });
+  }
+
+  /// 摄像头连续识别会在同一帧内多次回调, 仅处理首个有效邀请码
+  void _onScannerDetect(BarcodeCapture capture) {
+    if (_joining || _inviteHandled) return;
+    for (final barcode in capture.barcodes) {
+      final raw = barcode.rawValue;
+      if (raw == null) continue;
+      final invite = _parseInviteLink(raw);
+      if (invite != null) {
+        _inviteHandled = true;
+        setState(() => _scanning = false);
+        _join(invite.roomCode, invite.token);
+        return;
+      }
+    }
   }
 
   /// 从图库选择图片并识别其中的邀请二维码
   Future<void> _pickImageAndScan() async {
+    if (_analyzingImage || _joining) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    final XFile? image =
-        await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (image == null) return;
+    final XFile? image;
+    try {
+      image = await ImagePicker().pickImage(source: ImageSource.gallery);
+    } catch (_) {
+      _showError('无法打开图库, 请检查相册访问权限');
+      return;
+    }
+    if (image == null || !mounted) return;
+    setState(() => _analyzingImage = true);
     try {
       final capture = await _scannerController.analyzeImage(image.path);
       final barcodes = capture?.barcodes ?? const <Barcode>[];
@@ -118,6 +180,8 @@ class _JoinPageState extends State<JoinPage> {
       _showError('图片中未识别到有效的邀请二维码');
     } catch (_) {
       _showError('图片识别失败, 请换一张更清晰的二维码图片');
+    } finally {
+      if (mounted) setState(() => _analyzingImage = false);
     }
   }
 
@@ -138,16 +202,32 @@ class _JoinPageState extends State<JoinPage> {
         MaterialPageRoute(builder: (_) => MatchingPage(session: session)),
       );
     } catch (error) {
-      _showError(error.toString());
+      _showError(describeError(error));
     } finally {
-      if (mounted) setState(() => _joining = false);
+      if (mounted) {
+        setState(() {
+          _joining = false;
+          _inviteHandled = false;
+        });
+      }
     }
   }
 
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(message),
+        backgroundColor: const Color(0xFF7A1F2B),
+      ));
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -164,24 +244,53 @@ class _JoinPageState extends State<JoinPage> {
             IconButton(
               tooltip: '从图库选图识别',
               icon: const Icon(Icons.photo_library_outlined),
-              onPressed: _pickImageAndScan,
+              onPressed: _analyzingImage ? null : _pickImageAndScan,
             ),
           ],
         ),
-        body: MobileScanner(
-          onDetect: (capture) {
-            if (_joining) return;
-            for (final barcode in capture.barcodes) {
-              final raw = barcode.rawValue;
-              if (raw == null) continue;
-              final invite = _parseInviteLink(raw);
-              if (invite != null) {
-                setState(() => _scanning = false);
-                _join(invite.roomCode, invite.token);
-                return;
-              }
-            }
-          },
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: MobileScanner(onDetect: _onScannerDetect),
+            ),
+            // 取景框与提示, 帮助用户对准二维码
+            IgnorePointer(
+              child: Center(
+                child: Container(
+                  width: 240,
+                  height: 240,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: const Color(0xFF5B8DEF), width: 2),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 24,
+              right: 24,
+              bottom: 40,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Text('将邀请二维码对准取景框, 识别后自动入会',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70, fontSize: 13)),
+              ),
+            ),
+            if (_analyzingImage)
+              const Positioned.fill(
+                child: ColoredBox(
+                  color: Color(0x99000000),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              ),
+          ],
         ),
       );
     }
@@ -256,8 +365,14 @@ class _JoinPageState extends State<JoinPage> {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                       ),
-                      icon: const Icon(Icons.qr_code_scanner),
-                      label: const Text('扫描二维码'),
+                      icon: _joining
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.qr_code_scanner),
+                      label: Text(_joining ? '正在入会…' : '扫描二维码'),
                       onPressed: _joining ? null : _openScanner,
                     ),
                     const SizedBox(height: 10),
@@ -267,10 +382,23 @@ class _JoinPageState extends State<JoinPage> {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                       ),
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: const Text('从图库选图识别二维码'),
-                      onPressed: _joining ? null : _pickImageAndScan,
+                      icon: _analyzingImage
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.photo_library_outlined),
+                      label: Text(
+                          _analyzingImage ? '正在识别图片…' : '从图库选图识别二维码'),
+                      onPressed:
+                          _joining || _analyzingImage ? null : _pickImageAndScan,
                     ),
+                    const SizedBox(height: 28),
+                    Text('版本 ${AppConfig.versionCode}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: Colors.white24, fontSize: 11)),
                   ],
                 ),
               ),
@@ -298,59 +426,75 @@ class _MatchingPageState extends State<MatchingPage> {
   Timer? _pollTimer;
   Timer? _heartbeatTimer;
   bool _entering = false;
+  bool _cancelling = false;
   String? _failedReason;
+  int _onlineCount = 1;
+  int _maxMembers = 2;
+
+  JoinSession get session => widget.session;
 
   @override
   void initState() {
     super.initState();
-    _ws.connect(widget.session.roomCode, widget.session.identity,
-        widget.session.memberToken, _onRoomEvent);
+    _ws.connect(
+        session.roomCode, session.identity, session.memberToken, _onRoomEvent);
     // WS 断开时的兜底轮询 + 心跳保持在线(等待期间不下线)
     _pollTimer =
         Timer.periodic(const Duration(seconds: 3), (_) => _checkMatched());
     _heartbeatTimer =
-        Timer.periodic(const Duration(seconds: 20), (_) => _heartbeat());
+        Timer.periodic(AppConfig.heartbeatInterval, (_) => _heartbeat());
     _checkMatched();
   }
 
   void _onRoomEvent(Map<String, dynamic> event) {
     final type = event['type'] as String?;
+    final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
       case 'MEMBER_JOINED':
+      case 'MEMBER_LEFT':
       case 'ROOM_ACTIVATED':
       case 'ROOM_RUNNING':
         _checkMatched();
         break;
       case 'ROOM_CLOSED':
       case 'ROOM_RESET':
-        if (mounted) setState(() => _failedReason = '房间已结束, 请重新获取二维码');
+      case 'ROOM_DELETED':
+        _fail('房间已结束, 请重新获取二维码');
         break;
       case 'MEMBER_KICKED':
-        final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
-        if (data['identity'] == widget.session.identity && mounted) {
-          setState(() => _failedReason = '您已被移出房间');
+        if (data['identity'] == session.identity) _fail('您已被移出房间');
+        break;
+      case 'JOIN_REJECTED':
+        if (data['identity'] == session.identity) {
+          _fail('主持人拒绝了您的入会申请');
         }
         break;
     }
   }
 
+  void _fail(String reason) {
+    if (!mounted || _failedReason != null) return;
+    _pollTimer?.cancel();
+    _heartbeatTimer?.cancel();
+    setState(() => _failedReason = reason);
+  }
+
   Future<void> _heartbeat() async {
     try {
-      await ApiClient.instance.heartbeat(widget.session.roomCode,
-          widget.session.identity, widget.session.memberToken);
+      await ApiClient.instance
+          .heartbeat(session.roomCode, session.identity, session.memberToken);
     } catch (_) {}
   }
 
   /// 两人都扫码成功(全部成员就位)后同时进入房间
   Future<void> _checkMatched() async {
-    if (_entering || _failedReason != null) return;
+    if (_entering || _cancelling || _failedReason != null) return;
     _entering = true;
     try {
-      final state =
-          await ApiClient.instance.getRoomState(widget.session.roomCode);
-      if (!mounted) return;
+      final state = await ApiClient.instance.getRoomState(session.roomCode);
+      if (!mounted || _cancelling) return;
       if (state.closed) {
-        setState(() => _failedReason = '房间已结束, 请重新获取二维码');
+        _fail('房间已结束, 请重新获取二维码');
         return;
       }
       if (state.allSeated) {
@@ -358,10 +502,14 @@ class _MatchingPageState extends State<MatchingPage> {
         _heartbeatTimer?.cancel();
         _ws.disconnect();
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => RoomPage(session: widget.session)),
+          MaterialPageRoute(builder: (_) => RoomPage(session: session)),
         );
         return;
       }
+      setState(() {
+        _onlineCount = state.onlineMemberCount;
+        _maxMembers = state.maxMembers;
+      });
     } catch (_) {
     } finally {
       _entering = false;
@@ -369,9 +517,11 @@ class _MatchingPageState extends State<MatchingPage> {
   }
 
   Future<void> _cancel() async {
+    if (_cancelling) return;
+    setState(() => _cancelling = true);
     try {
-      await ApiClient.instance.leaveRoom(widget.session.roomCode,
-          widget.session.identity, widget.session.memberToken);
+      await ApiClient.instance
+          .leaveRoom(session.roomCode, session.identity, session.memberToken);
     } catch (_) {}
     if (mounted) Navigator.of(context).pop();
   }
@@ -380,38 +530,105 @@ class _MatchingPageState extends State<MatchingPage> {
   void dispose() {
     _pollTimer?.cancel();
     _heartbeatTimer?.cancel();
-    _ws.disconnect();
+    _ws.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final failed = _failedReason;
+    final waitingCount = (_maxMembers - _onlineCount).clamp(0, _maxMembers);
     return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (_failedReason == null) ...[
-              const CircularProgressIndicator(),
-              const SizedBox(height: 20),
-              const Text('正在匹配中',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              Text('${widget.session.roomCode} 号房间 · 等待另一位扫码入场',
-                  style: const TextStyle(color: Colors.white60, fontSize: 13)),
-            ] else ...[
-              const Icon(Icons.block, size: 48, color: Colors.redAccent),
-              const SizedBox(height: 16),
-              Text(_failedReason!),
-            ],
-            const SizedBox(height: 24),
-            OutlinedButton(
-              onPressed: _failedReason == null
-                  ? _cancel
-                  : () => Navigator.of(context).pop(),
-              child: Text(_failedReason == null ? '取消匹配' : '返回'),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF0A0E27), Color(0xFF141B41), Color(0xFF05071C)],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (failed == null) ...[
+                    SizedBox(
+                      width: 96,
+                      height: 96,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          const SizedBox(
+                            width: 96,
+                            height: 96,
+                            child: CircularProgressIndicator(strokeWidth: 3),
+                          ),
+                          Text('$_onlineCount/$_maxMembers',
+                              style: const TextStyle(
+                                  fontSize: 22, fontWeight: FontWeight.w700)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text('正在匹配中',
+                        style: TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    Text(
+                        waitingCount > 0
+                            ? '${session.roomCode} 号房间 · 还需 $waitingCount 位扫码入场'
+                            : '${session.roomCode} 号房间 · 即将进入',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: Colors.white60, fontSize: 13)),
+                    const SizedBox(height: 16),
+                    ValueListenableBuilder<bool>(
+                      valueListenable: _ws.connected,
+                      builder: (_, connected, __) => Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.circle,
+                              size: 8,
+                              color: connected
+                                  ? Colors.greenAccent
+                                  : Colors.orangeAccent),
+                          const SizedBox(width: 6),
+                          Text(connected ? '实时连接正常' : '实时连接中断, 自动轮询中',
+                              style: const TextStyle(
+                                  color: Colors.white38, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    const Icon(Icons.block, size: 56, color: Colors.redAccent),
+                    const SizedBox(height: 16),
+                    Text(failed,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w700)),
+                  ],
+                  const SizedBox(height: 28),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 32, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: failed == null
+                        ? (_cancelling ? null : _cancel)
+                        : () => Navigator.of(context).pop(),
+                    child: Text(failed == null
+                        ? (_cancelling ? '正在取消…' : '取消匹配')
+                        : '返回'),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );

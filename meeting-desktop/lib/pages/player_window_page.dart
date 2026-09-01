@@ -145,6 +145,7 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
   StreamSubscription<String>? _stdinSub;
   Socket? _controlSocket;
   StreamSubscription<String>? _controlSub;
+  bool _exiting = false;
 
   String get _title => widget.params['title'] as String? ?? '投屏播放';
 
@@ -169,8 +170,10 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
 
   Future<void> _setup() async {
     await _connectControlChannel();
-    await _applyWindowTitle(_title,
-        background: widget.params['background'] == true);
+    if (Platform.isWindows) {
+      await _applyWindowTitle(_title,
+          background: widget.params['background'] == true);
+    }
     _emit({'event': 'ready'});
   }
 
@@ -203,7 +206,10 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
         _player.playOrPause();
         break;
       case 'seekMs':
-        _player.seek(Duration(milliseconds: command['value'] as int));
+        final value = (command['value'] as num?)?.toInt();
+        if (value != null) {
+          _player.seek(Duration(milliseconds: value < 0 ? 0 : value));
+        }
         break;
       case 'audioRoute':
         final keywords = (command['keywords'] as List<dynamic>? ?? const [])
@@ -274,12 +280,14 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
   }
 
   Future<void> _exit() async {
+    if (_exiting) return;
+    _exiting = true;
     _stateTimer?.cancel();
     await _stdinSub?.cancel();
     await _controlSub?.cancel();
     _controlSocket?.destroy();
     try {
-      await _player.dispose();
+      await _player.dispose().timeout(const Duration(seconds: 3));
     } catch (_) {}
     exit(0);
   }

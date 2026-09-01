@@ -53,6 +53,8 @@ class _RoomPageState extends State<RoomPage> {
   lk.LocalVideoTrack? _selfVideoTrack;
 
   RoomState? _state;
+  String? _stateError;
+  bool _leaving = false;
   bool _micOn = true;
   bool _camOn = false;
   bool _frontCamera = true;
@@ -208,6 +210,7 @@ class _RoomPageState extends State<RoomPage> {
       if (!mounted) return;
       setState(() {
         _state = state;
+        _stateError = null;
         _remainingSeconds = state.remainingSeconds ?? _remainingSeconds;
         _castPlaying = state.casting && state.castPlaying;
       });
@@ -215,7 +218,12 @@ class _RoomPageState extends State<RoomPage> {
       if (state.closed && _closedReason == null) {
         _onRoomClosed('会议已结束');
       }
-    } catch (_) {}
+    } catch (error) {
+      // 首屏尚未拿到状态时展示错误与重试, 之后的周期刷新失败静默保留旧状态
+      if (mounted && _state == null) {
+        setState(() => _stateError = describeError(error));
+      }
+    }
   }
 
   /// PC 端关闭视频通话/摄像头后, 已开启的麦克风/摄像头立即关闭;
@@ -329,7 +337,10 @@ class _RoomPageState extends State<RoomPage> {
 
     final wsUrl = session.livekitWsUrl;
     final lkToken = session.livekitToken;
-    if (wsUrl == null || lkToken == null) return;
+    if (wsUrl == null || wsUrl.isEmpty || lkToken == null || lkToken.isEmpty) {
+      _showToast('未获取到媒体服务连接信息, 请退出房间后重新进入');
+      return;
+    }
     try {
       await room.connect(wsUrl, lkToken);
       if (!mounted) {
@@ -398,7 +409,12 @@ class _RoomPageState extends State<RoomPage> {
       return;
     }
     final next = !_micOn;
-    await _lkRoom?.localParticipant?.setMicrophoneEnabled(next);
+    try {
+      await _lkRoom?.localParticipant?.setMicrophoneEnabled(next);
+    } catch (_) {
+      _showToast(next ? '麦克风开启失败, 请检查麦克风权限' : '麦克风关闭失败');
+      return;
+    }
     if (!mounted) return;
     setState(() => _micOn = next);
   }
@@ -415,14 +431,22 @@ class _RoomPageState extends State<RoomPage> {
     }
     final next = !_camOn;
     final participant = _lkRoom?.localParticipant;
-    if (participant == null) return;
-    await participant.setCameraEnabled(
-      next,
-      cameraCaptureOptions: lk.CameraCaptureOptions(
-        cameraPosition:
-            _frontCamera ? lk.CameraPosition.front : lk.CameraPosition.back,
-      ),
-    );
+    if (participant == null) {
+      _showToast('媒体服务尚未连接, 请稍后再试');
+      return;
+    }
+    try {
+      await participant.setCameraEnabled(
+        next,
+        cameraCaptureOptions: lk.CameraCaptureOptions(
+          cameraPosition:
+              _frontCamera ? lk.CameraPosition.front : lk.CameraPosition.back,
+        ),
+      );
+    } catch (_) {
+      _showToast(next ? '摄像头开启失败, 请检查相机权限' : '摄像头关闭失败');
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _camOn = next;
@@ -452,11 +476,16 @@ class _RoomPageState extends State<RoomPage> {
   Future<void> _switchCamera() async {
     final track = _selfVideoTrack;
     if (track == null) return;
-    _frontCamera = !_frontCamera;
-    await track.setCameraPosition(
-        _frontCamera ? lk.CameraPosition.front : lk.CameraPosition.back);
+    final next = !_frontCamera;
+    try {
+      await track.setCameraPosition(
+          next ? lk.CameraPosition.front : lk.CameraPosition.back);
+    } catch (_) {
+      _showToast('切换镜头失败');
+      return;
+    }
     if (!mounted) return;
-    setState(() {});
+    setState(() => _frontCamera = next);
   }
 
   // ---------------- 房间事件 ----------------
@@ -567,7 +596,13 @@ class _RoomPageState extends State<RoomPage> {
         _refreshState();
         break;
       case 'ROOM_RESET':
+      case 'ROOM_DELETED':
         _onRoomClosed('公司已结束会议');
+        break;
+      case 'JOIN_REJECTED':
+        if (data['identity'] == session.identity) {
+          _onRoomClosed('主持人拒绝了您的入会申请');
+        }
         break;
       case 'ROOM_CLOSED':
         _onRoomClosed(switch (data['reason']) {
@@ -690,10 +725,14 @@ class _RoomPageState extends State<RoomPage> {
     try {
       await ApiClient.instance.sendChat(
           session.roomCode, session.identity, session.memberToken, content);
-    } on ApiException catch (e) {
-      _showToast(e.message);
-    } catch (_) {
-      _showToast('消息发送失败');
+    } catch (error) {
+      // 发送失败时还原输入, 避免用户重新输入
+      if (mounted && _chatController.text.trim().isEmpty) {
+        _chatController.text = content;
+        _chatController.selection =
+            TextSelection.collapsed(offset: content.length);
+      }
+      _showToast(describeError(error));
     }
   }
 
@@ -720,11 +759,16 @@ class _RoomPageState extends State<RoomPage> {
   // ---------------- 退出 ----------------
 
   Future<void> _leave() async {
+    if (_leaving) return;
+    _leaving = true;
+    if (mounted) setState(() {});
     try {
       await ApiClient.instance
           .leaveRoom(session.roomCode, session.identity, session.memberToken);
     } catch (_) {}
-    await _lkRoom?.disconnect();
+    try {
+      await _lkRoom?.disconnect();
+    } catch (_) {}
     if (!mounted) return;
     Navigator.of(context)
         .pushReplacement(MaterialPageRoute(builder: (_) => const JoinPage()));
@@ -743,7 +787,7 @@ class _RoomPageState extends State<RoomPage> {
     _heartbeatTimer?.cancel();
     _stateTimer?.cancel();
     _clockTimer?.cancel();
-    _ws.disconnect();
+    _ws.dispose();
     _recordingGuard.stop();
     try {
       VolumeController().removeListener();
@@ -778,7 +822,7 @@ class _RoomPageState extends State<RoomPage> {
   Widget build(BuildContext context) {
     final state = _state;
     if (state == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(body: _buildInitialLoading());
     }
     if (_floating != null) {
       return PiPSwitcher(
@@ -788,6 +832,62 @@ class _RoomPageState extends State<RoomPage> {
     }
     if (Platform.isAndroid) return _wrapBackToPip(_buildFullView(state));
     return _buildFullView(state);
+  }
+
+  /// 首屏加载: 未获取到房间状态前显示加载或错误重试
+  Widget _buildInitialLoading() {
+    final error = _stateError;
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0A0E27), Color(0xFF05071C)],
+        ),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (error == null) ...[
+                const CircularProgressIndicator(),
+                const SizedBox(height: 20),
+                const Text('正在进入房间…',
+                    style: TextStyle(color: Colors.white70)),
+              ] else ...[
+                const Icon(Icons.cloud_off_outlined,
+                    size: 48, color: Colors.orangeAccent),
+                const SizedBox(height: 16),
+                const Text('房间状态获取失败',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 6),
+                Text(error,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    OutlinedButton(
+                        onPressed: _leaving ? null : _leave,
+                        child: const Text('退出房间')),
+                    const SizedBox(width: 12),
+                    FilledButton.icon(
+                      onPressed: _refreshState,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('重试'),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// 拦截系统返回键: 返回主界面时进入画中画悬浮窗, 而非直接退出 APP
@@ -997,7 +1097,8 @@ class _RoomPageState extends State<RoomPage> {
         offset: _uiHidden ? const Offset(0, -1) : Offset.zero,
         duration: const Duration(milliseconds: 220),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 40, 12, 12),
+          padding: EdgeInsets.fromLTRB(
+              12, MediaQuery.paddingOf(context).top + 8, 12, 12),
           decoration: const BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
@@ -1041,13 +1142,14 @@ class _RoomPageState extends State<RoomPage> {
                   _infoChip(Icons.access_time, _formatClock(_elapsedSeconds)),
                   const SizedBox(width: 6),
                   // 倒计时绿色显示, 最后 60 秒变红
-                  _infoChip(Icons.hourglass_bottom,
-                      '剩 ${_formatClock(_remainingSeconds)}',
-                      color: _remainingSeconds != null &&
-                              _remainingSeconds! <= 60
-                          ? Colors.red
-                          : Colors.green),
-                  const SizedBox(width: 6),
+                  if (_remainingSeconds != null) ...[
+                    _infoChip(Icons.hourglass_bottom,
+                        '剩 ${_formatClock(_remainingSeconds)}',
+                        color: _remainingSeconds! <= 60
+                            ? Colors.red
+                            : Colors.green),
+                    const SizedBox(width: 6),
+                  ],
                   _infoChip(Icons.favorite, '${state.likeCount}'),
                   const Spacer(),
                   _networkChip(),
@@ -1200,9 +1302,10 @@ class _RoomPageState extends State<RoomPage> {
                     icon: Icon(_liked ? Icons.favorite : Icons.favorite_border),
                   ),
                   IconButton.filled(
+                    tooltip: '离开会议',
                     style: IconButton.styleFrom(
                         backgroundColor: Colors.red.shade700),
-                    onPressed: _leave,
+                    onPressed: _leaving ? null : _leave,
                     icon: const Icon(Icons.call_end),
                   ),
                 ],
@@ -1294,7 +1397,9 @@ class _RoomPageState extends State<RoomPage> {
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
             const SizedBox(height: 20),
-            FilledButton(onPressed: _leave, child: const Text('退出房间')),
+            FilledButton(
+                onPressed: _leaving ? null : _leave,
+                child: const Text('退出房间')),
           ],
         ),
       ),
