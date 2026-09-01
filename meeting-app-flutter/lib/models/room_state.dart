@@ -26,6 +26,9 @@ class RoomState {
   /// 推流内容说明(视频文件名/摄像头/屏幕源名称)
   final String? castLabel;
 
+  /// 统一推流当前是否处于播放中(初始暂停)
+  final bool castPlaying;
+
   RoomState({
     required this.roomCode,
     required this.name,
@@ -44,6 +47,7 @@ class RoomState {
     this.maxMembers = 2,
     this.castType,
     this.castLabel,
+    this.castPlaying = false,
   });
 
   bool get running => status == 'RUNNING';
@@ -72,6 +76,7 @@ class RoomState {
         maxMembers: (json['maxMembers'] as num?)?.toInt() ?? 2,
         castType: json['castType'] as String?,
         castLabel: json['castLabel'] as String?,
+        castPlaying: json['castPlaying'] == true,
       );
 
   /// 可空字段(cast* 等)使用哨兵默认值, 支持显式传 null 清空
@@ -86,6 +91,7 @@ class RoomState {
     int? maxMembers,
     Object? castType = _unset,
     Object? castLabel = _unset,
+    bool? castPlaying,
     String? meetingStartAt,
     String? meetingEndAt,
   }) =>
@@ -109,5 +115,6 @@ class RoomState {
         maxMembers: maxMembers ?? this.maxMembers,
         castType: castType == _unset ? this.castType : castType as String?,
         castLabel: castLabel == _unset ? this.castLabel : castLabel as String?,
+        castPlaying: castPlaying ?? this.castPlaying,
       );
 }

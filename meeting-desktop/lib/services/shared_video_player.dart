@@ -31,9 +31,13 @@ class SharedVideoPlayer extends ChangeNotifier {
   /// 播放进程被外部关闭(如任务管理器结束)时回调, 用于同步停止统一推流
   Future<void> Function()? onClosedExternally;
 
-  /// 播放/暂停状态变化回调(用于向手机端广播统一播放状态)
+  /// 播放状态变化回调(播放/暂停切换、进度跳变时触发,
+  /// 用于向手机端广播统一播放状态)
   void Function(bool playing, int positionMs, int durationMs)?
       onPlayingChanged;
+
+  DateTime? _lastBroadcastAt;
+  int _lastBroadcastPositionMs = 0;
 
   /// 启动独立播放进程(初始暂停、后台窗口), 等待窗口就绪
   Future<void> start(String path) async {
@@ -79,6 +83,8 @@ class SharedVideoPlayer extends ChangeNotifier {
     fileName = path.split(RegExp(r'[\\/]')).last;
     started = true;
     playing = false;
+    _lastBroadcastAt = null;
+    _lastBroadcastPositionMs = 0;
     notifyListeners();
   }
 
@@ -141,8 +147,22 @@ class SharedVideoPlayer extends ChangeNotifier {
     this.positionMs = positionMs;
     this.durationMs = durationMs;
     notifyListeners();
-    if (playingChanged) {
+    // 进度跳变(seek)的判定: 与上次广播后自然播放应达到的位置偏差过大
+    final now = DateTime.now();
+    final lastAt = _lastBroadcastAt;
+    final elapsedMs =
+        lastAt == null ? 0 : now.difference(lastAt).inMilliseconds;
+    final expectedMs =
+        _lastBroadcastPositionMs + (this.playing ? elapsedMs : 0);
+    final seeked = (positionMs - expectedMs).abs() > 2000;
+    if (playingChanged || seeked) {
+      _lastBroadcastAt = now;
+      _lastBroadcastPositionMs = positionMs;
       onPlayingChanged?.call(playing, positionMs, durationMs);
+    } else {
+      // 未广播时也跟进基准, 避免长时间播放后误判为 seek
+      _lastBroadcastAt = now;
+      _lastBroadcastPositionMs = positionMs;
     }
   }
 
@@ -183,6 +203,8 @@ class SharedVideoPlayer extends ChangeNotifier {
     durationMs = 0;
     filePath = null;
     fileName = null;
+    _lastBroadcastAt = null;
+    _lastBroadcastPositionMs = 0;
     await _stdoutSub?.cancel();
     _stdoutSub = null;
     final socket = _controlSocket;
