@@ -54,18 +54,20 @@ public class RoomService {
         room.setMaxMembers(request.maxMembers() == null
                 ? properties.getRoom().getMaxClients() : request.maxMembers());
         room.setVideoCallEnabled(request.videoCallEnabled() == null || request.videoCallEnabled());
-        room.setCameraEnabled(request.cameraEnabled() == null || request.cameraEnabled());
+        // 摄像头权限默认关闭, 由 PC 端总览界面按房间开放
+        room.setCameraEnabled(Boolean.TRUE.equals(request.cameraEnabled()));
         room.setApprovalRequired(Boolean.TRUE.equals(request.approvalRequired()));
         room.setCreatedBy(createdBy);
         // 预约会议: 到达预约时间前不接受入会, 邀请二维码提前发放
         if (request.scheduledStartAt() != null && request.scheduledStartAt().isAfter(LocalDateTime.now())) {
             room.setScheduledStartAt(request.scheduledStartAt());
             room.setStatus(RoomStatus.SCHEDULED);
-        } else {
-            // 创建即进入缺人等待状态, 超过阈值(默认3分钟)后台亮红灯预警
-            room.setUnderstaffedSince(LocalDateTime.now());
         }
         roomRepository.save(room);
+        UnifiedCast cast = currentUnifiedCast();
+        if (cast != null) {
+            applyUnifiedCast(room, cast);
+        }
 
         createSeatInvites(room);
         eventLogService.log(room, RoomEventType.ROOM_CREATED,
@@ -81,7 +83,6 @@ public class RoomService {
     public void activateScheduledRooms(LocalDateTime now) {
         for (Room room : roomRepository.findByStatusAndScheduledStartAtBefore(RoomStatus.SCHEDULED, now)) {
             room.setStatus(RoomStatus.WAITING);
-            room.setUnderstaffedSince(now);
             roomRepository.save(room);
             eventLogService.log(room, RoomEventType.ROOM_ACTIVATED, "到达预约时间, 会议进入等待就位");
             notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_ACTIVATED", Map.of(
@@ -162,11 +163,11 @@ public class RoomService {
             }
             if (onlineCount >= request.maxMembers()) {
                 if (room.getStatus() == RoomStatus.WAITING) {
-                    startMeeting(room);
+                    startMeeting(room, "成员数上限调整后已满员");
                 }
                 room.setUnderstaffedAlert(false);
                 room.setUnderstaffedSince(null);
-            } else if (room.getUnderstaffedSince() == null) {
+            } else if (onlineCount > 0 && room.getUnderstaffedSince() == null) {
                 room.setUnderstaffedSince(LocalDateTime.now());
             }
         }
@@ -182,11 +183,24 @@ public class RoomService {
         return toResponse(room, latestInvite(room));
     }
 
-    /** 成员数上限调整后已满员的等待房间立即进入运行状态(计时以 PC 端首次推流为准) */
-    private void startMeeting(Room room) {
+    /**
+     * 全部手机端就位 -> 等待中的房间进入运行状态并开始会议倒计时
+     * (两人都扫码成功同时进房, 倒计时自此起算; 推流内容由 PC 端统一提供, 不影响计时)。
+     */
+    public void startMeeting(Room room, String reason) {
+        LocalDateTime now = LocalDateTime.now();
         room.setStatus(RoomStatus.RUNNING);
+        room.setUnderstaffedAlert(false);
+        room.setUnderstaffedSince(null);
+        if (room.getMeetingStartAt() == null) {
+            room.setMeetingStartAt(now);
+            room.setMeetingEndAt(now.plusMinutes(room.getDurationMinutes()));
+            room.setReminder5Sent(false);
+            room.setReminder1Sent(false);
+        }
+        roomRepository.save(room);
         eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                "成员数上限调整后已满员, 等待 PC 端首次推流开始计时");
+                reason + ", 会议开始计时 " + room.getDurationMinutes() + " 分钟");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
                 "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
                 "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
@@ -209,35 +223,24 @@ public class RoomService {
             throw new BusinessException(409,
                     "房间正在推流「" + castDescription(room) + "」, 请先停止当前推流后再开始新推流");
         }
-        // 会议计时以 PC 端首次点击播放/推流为起点
-        boolean firstCast = room.getMeetingStartAt() == null;
-        if (firstCast) {
-            room.setMeetingStartAt(LocalDateTime.now());
-            room.setMeetingEndAt(LocalDateTime.now().plusMinutes(room.getDurationMinutes()));
-            if (room.getStatus() == RoomStatus.WAITING) {
-                room.setStatus(RoomStatus.RUNNING);
-            }
-        }
-        room.setCastType(type);
-        room.setCastLabel(label);
-        room.setCastBy(operator);
+        // 推流不影响会议计时: 倒计时在全部手机端就位时开始
+        applyUnifiedCast(room, new UnifiedCast(type, label, operator));
+        return toResponse(room, latestInvite(room));
+    }
+
+    /** 登记推流内容到房间并通知房间内手机端与 PC 端 */
+    private void applyUnifiedCast(Room room, UnifiedCast cast) {
+        room.setCastType(cast.type());
+        room.setCastLabel(cast.label());
+        room.setCastBy(cast.operator());
         roomRepository.save(room);
         eventLogService.log(room, RoomEventType.CAST_STARTED,
-                operator + " 开始推流: " + castDescription(room));
+                cast.operator() + " 开始推流: " + castDescription(room));
         Map<String, Object> payload = new HashMap<>();
-        payload.put("castType", type.name());
-        payload.put("castLabel", label);
-        payload.put("operator", operator);
+        payload.put("castType", cast.type().name());
+        payload.put("castLabel", cast.label());
+        payload.put("operator", cast.operator());
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CAST_STARTED", payload);
-        if (firstCast) {
-            eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                    "PC 端首次推流, 会议开始计时");
-            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
-                    "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
-                    "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
-                    "durationMinutes", room.getDurationMinutes()));
-        }
-        return toResponse(room, latestInvite(room));
     }
 
     /** 停止当前推流: 清除房间推流状态 */
@@ -300,7 +303,7 @@ public class RoomService {
         room.setLikeCount(0L);
         room.setCameraEnabled(false);
         room.setUnderstaffedAlert(false);
-        room.setUnderstaffedSince(LocalDateTime.now());
+        room.setUnderstaffedSince(null);
         room.setCastType(null);
         room.setCastLabel(null);
         room.setCastBy(null);
@@ -309,7 +312,31 @@ public class RoomService {
         eventLogService.log(room, RoomEventType.ROOM_RESET, operator + " 手动结束会议, 房间已重置");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RESET", Map.of(
                 "roomId", room.getId(), "name", room.getName(), "operator", operator));
+        // 统一推流进行中: 重置后的房间回到"已推流、初始暂停"的初始状态, 继续接收同一内容
+        UnifiedCast cast = currentUnifiedCast();
+        if (cast != null) {
+            applyUnifiedCast(room, cast);
+        }
         return toResponse(room, latestInvite(room));
+    }
+
+    /** 当前统一推流内容(内存快照): 重置/新建的房间自动沿用, 停止统一推流后清除 */
+    private record UnifiedCast(CastType type, String label, String operator) {
+    }
+
+    private volatile UnifiedCast unifiedCast;
+
+    /** 服务重启后内存快照丢失: 从仍在推流的未关闭房间恢复统一推流内容 */
+    private UnifiedCast currentUnifiedCast() {
+        UnifiedCast cast = unifiedCast;
+        if (cast != null) {
+            return cast;
+        }
+        return roomRepository.findByStatusIn(List.of(RoomStatus.WAITING, RoomStatus.RUNNING)).stream()
+                .filter(room -> room.getCastType() != null)
+                .findFirst()
+                .map(room -> new UnifiedCast(room.getCastType(), room.getCastLabel(), room.getCastBy()))
+                .orElse(null);
     }
 
     /** 统一推流: 对全部未关闭房间登记同一推流内容(推流后初始暂停) */
@@ -317,6 +344,7 @@ public class RoomService {
     public synchronized List<RoomResponse> startCastAll(CastType type, String label, String operator) {
         playbackState.clear();
         playbackState.set(false, 0L, null);
+        unifiedCast = new UnifiedCast(type, label, operator);
         List<RoomResponse> result = new ArrayList<>();
         for (Room room : roomRepository.findAllByOrderByCreatedAtDesc()) {
             if (room.getStatus() == RoomStatus.CLOSED) {
@@ -331,6 +359,7 @@ public class RoomService {
     @Transactional
     public synchronized List<RoomResponse> stopCastAll(String operator) {
         playbackState.clear();
+        unifiedCast = null;
         List<RoomResponse> result = new ArrayList<>();
         for (Room room : roomRepository.findAllByOrderByCreatedAtDesc()) {
             if (room.getStatus() == RoomStatus.CLOSED || room.getCastType() == null) {

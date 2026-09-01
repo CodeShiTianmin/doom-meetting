@@ -39,22 +39,21 @@ class ApiClient {
 
   /// 把网络层异常转成可直接展示的提示文案
   static String _describe(DioException error) {
-    switch (error.type) {
-      case DioExceptionType.connectionTimeout:
-      case DioExceptionType.sendTimeout:
-      case DioExceptionType.receiveTimeout:
-        return '服务器响应超时, 请检查网络后重试';
-      case DioExceptionType.connectionError:
-        return '无法连接服务器, 请检查网络或服务器地址';
-      case DioExceptionType.badResponse:
-        return '服务器开小差了 (HTTP ${error.response?.statusCode})';
-      case DioExceptionType.cancel:
-        return '请求已取消';
-      case DioExceptionType.badCertificate:
-        return '服务器证书无效';
-      case DioExceptionType.unknown:
-        return '网络请求失败, 请稍后重试';
+    final type = error.type;
+    if (type == DioExceptionType.connectionTimeout ||
+        type == DioExceptionType.sendTimeout ||
+        type == DioExceptionType.receiveTimeout) {
+      return '服务器响应超时, 请检查网络后重试';
     }
+    if (type == DioExceptionType.connectionError) {
+      return '无法连接服务器, 请检查网络或服务器地址';
+    }
+    if (type == DioExceptionType.badResponse) {
+      return '服务器开小差了 (HTTP ${error.response?.statusCode})';
+    }
+    if (type == DioExceptionType.cancel) return '请求已取消';
+    if (type == DioExceptionType.badCertificate) return '服务器证书无效';
+    return '网络请求失败, 请稍后重试';
   }
 
   /// 校验统一响应包裹 {code,message,data}, 业务失败或响应形态不对时抛出 ApiException

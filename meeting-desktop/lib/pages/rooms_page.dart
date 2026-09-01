@@ -88,6 +88,8 @@ class _RoomsPageState extends State<RoomsPage> {
           _lastRefreshAt = DateTime.now();
         });
       }
+      // 结束会议重置/超时关闭的房间同步加入/退出统一推流
+      unawaited(CastManager.instance.syncRooms(rooms));
     } catch (error) {
       if (error is ApiException && error.unauthorized) {
         _logout(expired: true);

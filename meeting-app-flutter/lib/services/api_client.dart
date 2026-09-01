@@ -30,22 +30,21 @@ class ApiClient {
   ));
 
   static String _describeNetworkError(DioException error) {
-    switch (error.type) {
-      case DioExceptionType.connectionTimeout:
-      case DioExceptionType.sendTimeout:
-      case DioExceptionType.receiveTimeout:
-        return '网络超时, 请检查网络后重试';
-      case DioExceptionType.connectionError:
-        return '无法连接服务器, 请检查网络';
-      case DioExceptionType.badResponse:
-        return '服务器异常 (HTTP ${error.response?.statusCode ?? '?'})';
-      case DioExceptionType.cancel:
-        return '请求已取消';
-      case DioExceptionType.badCertificate:
-        return '服务器证书校验失败';
-      case DioExceptionType.unknown:
-        return '网络请求失败, 请稍后重试';
+    final type = error.type;
+    if (type == DioExceptionType.connectionTimeout ||
+        type == DioExceptionType.sendTimeout ||
+        type == DioExceptionType.receiveTimeout) {
+      return '网络超时, 请检查网络后重试';
     }
+    if (type == DioExceptionType.connectionError) {
+      return '无法连接服务器, 请检查网络';
+    }
+    if (type == DioExceptionType.badResponse) {
+      return '服务器异常 (HTTP ${error.response?.statusCode ?? '?'})';
+    }
+    if (type == DioExceptionType.cancel) return '请求已取消';
+    if (type == DioExceptionType.badCertificate) return '服务器证书校验失败';
+    return '网络请求失败, 请稍后重试';
   }
 
   Map<String, dynamic> _envelope(Response<dynamic> response) {
