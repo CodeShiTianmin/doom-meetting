@@ -16,6 +16,10 @@ class RoomState {
   final bool allMuted;
   final int likeCount;
 
+  /// 在线成员数/成员上限(双人匹配: 两人都扫码成功才同时进房)
+  final int onlineMemberCount;
+  final int maxMembers;
+
   /// PC 端当前推流类型: SCREEN/VIDEO/CAMERA, null 表示无推流
   final String? castType;
 
@@ -36,6 +40,8 @@ class RoomState {
     this.remainingSeconds,
     this.allMuted = false,
     required this.likeCount,
+    this.onlineMemberCount = 0,
+    this.maxMembers = 2,
     this.castType,
     this.castLabel,
   });
@@ -44,6 +50,9 @@ class RoomState {
   bool get closed => status == 'CLOSED';
   bool get casting => castType != null;
   bool get camAllowed => videoCallEnabled && cameraEnabled;
+
+  /// 全部成员就位(双人都扫码成功)
+  bool get allSeated => onlineMemberCount >= maxMembers;
 
   factory RoomState.fromJson(Map<String, dynamic> json) => RoomState(
         roomCode: json['roomCode'] as String,
@@ -59,6 +68,8 @@ class RoomState {
         remainingSeconds: (json['remainingSeconds'] as num?)?.toInt(),
         allMuted: json['allMuted'] == true,
         likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
+        onlineMemberCount: (json['onlineMemberCount'] as num?)?.toInt() ?? 0,
+        maxMembers: (json['maxMembers'] as num?)?.toInt() ?? 2,
         castType: json['castType'] as String?,
         castLabel: json['castLabel'] as String?,
       );
@@ -71,6 +82,8 @@ class RoomState {
     Object? remainingSeconds = _unset,
     bool? allMuted,
     int? likeCount,
+    int? onlineMemberCount,
+    int? maxMembers,
     Object? castType = _unset,
     Object? castLabel = _unset,
     String? meetingStartAt,
@@ -92,6 +105,8 @@ class RoomState {
             : remainingSeconds as int?,
         allMuted: allMuted ?? this.allMuted,
         likeCount: likeCount ?? this.likeCount,
+        onlineMemberCount: onlineMemberCount ?? this.onlineMemberCount,
+        maxMembers: maxMembers ?? this.maxMembers,
         castType: castType == _unset ? this.castType : castType as String?,
         castLabel: castLabel == _unset ? this.castLabel : castLabel as String?,
       );

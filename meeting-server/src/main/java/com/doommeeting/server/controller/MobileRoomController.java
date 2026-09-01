@@ -70,6 +70,14 @@ public class MobileRoomController {
         return ApiResponse.ok(chatService.recent(roomCode));
     }
 
+    /** 播放控制: 手机端控制统一推流的播放/暂停/进度(转发 PC 端执行) */
+    @PostMapping("/{roomCode}/cast/control")
+    public ApiResponse<Void> castControl(@PathVariable String roomCode,
+                                         @Valid @RequestBody CastControlRequest request) {
+        memberService.castControl(roomCode, request);
+        return ApiResponse.ok();
+    }
+
     /** 录屏检测上报(允许截屏, 禁止录制) */
     @PostMapping("/{roomCode}/report-recording")
     public ApiResponse<Void> reportRecording(@PathVariable String roomCode,

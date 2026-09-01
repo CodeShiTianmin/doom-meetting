@@ -25,7 +25,7 @@ class MeetingDesktopApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '投屏会议 - PC 投屏端',
+      title: '惊喜影视平台',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

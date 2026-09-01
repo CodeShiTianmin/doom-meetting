@@ -71,6 +71,10 @@ class _RoomPageState extends State<RoomPage> {
   bool _liked = false;
   bool _uiHidden = false;
   bool _landscape = false;
+
+  /// 统一推流播放状态(初始暂停, 由 PC 端/手机端控制播放/暂停)
+  bool _castPlaying = false;
+  bool _castControlPending = false;
   int _chatId = 0;
   final List<ChatMessageItem> _chatMessages = [];
   bool _chatInputVisible = false;
@@ -487,8 +491,12 @@ class _RoomPageState extends State<RoomPage> {
         _showToast('全部客户已就位, 会议开始');
         break;
       case 'CAST_STARTED':
+        setState(() => _castPlaying = false);
         _refreshState();
         _showToast('公司已开始推流: ${data['castLabel'] ?? ''}');
+        break;
+      case 'CAST_PLAYBACK':
+        setState(() => _castPlaying = data['playing'] == true);
         break;
       case 'COUNTDOWN_REMINDER':
         final minutes = data['remainingMinutes'];
@@ -610,6 +618,26 @@ class _RoomPageState extends State<RoomPage> {
         ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
         : [DeviceOrientation.portraitUp]);
     if (mounted) setState(() {});
+  }
+
+  /// 统一推流播放/暂停(经服务端转发给 PC 端执行, 全部房间同步)
+  Future<void> _togglePlayback() async {
+    if (_state?.casting != true) {
+      _showToast('当前没有推流内容');
+      return;
+    }
+    if (_castControlPending) return;
+    _castControlPending = true;
+    try {
+      await ApiClient.instance.castControl(session.roomCode, session.identity,
+          session.memberToken, 'playOrPause');
+    } on ApiException catch (e) {
+      _showToast(e.message);
+    } catch (_) {
+      _showToast('播放控制失败');
+    } finally {
+      _castControlPending = false;
+    }
   }
 
   Future<void> _like() async {
@@ -1008,10 +1036,13 @@ class _RoomPageState extends State<RoomPage> {
                 children: [
                   _infoChip(Icons.access_time, _formatClock(_elapsedSeconds)),
                   const SizedBox(width: 6),
+                  // 倒计时绿色显示, 最后 60 秒变红
                   _infoChip(Icons.hourglass_bottom,
                       '剩 ${_formatClock(_remainingSeconds)}',
-                      warning: _remainingSeconds != null &&
-                          _remainingSeconds! <= 300),
+                      color: _remainingSeconds != null &&
+                              _remainingSeconds! <= 60
+                          ? Colors.red
+                          : Colors.green),
                   const SizedBox(width: 6),
                   _infoChip(Icons.favorite, '${state.likeCount}'),
                   const Spacer(),
@@ -1025,23 +1056,21 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  Widget _infoChip(IconData icon, String text, {bool warning = false}) {
+  Widget _infoChip(IconData icon, String text, {Color? color}) {
+    final borderColor = color ?? Colors.white24;
+    final contentColor = color ?? Colors.white70;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: warning ? Colors.orange : Colors.white24, width: 1),
+        border: Border.all(color: borderColor, width: 1),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: warning ? Colors.orange : Colors.white70),
+          Icon(icon, size: 13, color: contentColor),
           const SizedBox(width: 3),
-          Text(text,
-              style: TextStyle(
-                  fontSize: 11,
-                  color: warning ? Colors.orange : Colors.white70)),
+          Text(text, style: TextStyle(fontSize: 11, color: contentColor)),
         ],
       ),
     );
@@ -1151,6 +1180,12 @@ class _RoomPageState extends State<RoomPage> {
                       }
                     },
                     icon: const Icon(Icons.chat_bubble_outline),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: _togglePlayback,
+                    icon: Icon(_castPlaying
+                        ? Icons.pause_circle_outline
+                        : Icons.play_circle_outline),
                   ),
                   IconButton.filled(
                     style: IconButton.styleFrom(

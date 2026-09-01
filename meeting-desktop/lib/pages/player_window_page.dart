@@ -67,6 +67,12 @@ final int Function(int, int, int, int, int, int, int) _setWindowPos =
         int Function(int, int, int, int, int, int, int)>('SetWindowPos');
 
 const int _gwlStyle = -16;
+const int _gwlExStyle = -20;
+const int _wsExToolWindow = 0x00000080;
+const int _wsExNoActivate = 0x08000000;
+const int _hwndBottom = 1;
+const int _swpNoActivate = 0x0010;
+const int _swpFrameChanged = 0x0020;
 const int _wsCaption = 0x00C00000;
 const int _wsThickFrame = 0x00040000;
 const int _wsMinimizeBox = 0x00020000;
@@ -88,6 +94,16 @@ void _removeWindowChrome(int hwnd) {
   _setWindowPos(hwnd, 0, 0, 0, 0, 0, _swpFrameChangedFlags);
 }
 
+/// 后台窗口模式(统一推流): 不进任务栏、不抢焦点、压到最底层,
+/// 推流时不弹出视频窗口干扰操作; 窗口仍可见(未最小化), 不影响窗口捕获
+void _applyBackgroundMode(int hwnd) {
+  final exStyle = _getWindowLongPtr(hwnd, _gwlExStyle);
+  _setWindowLongPtr(
+      hwnd, _gwlExStyle, exStyle | _wsExToolWindow | _wsExNoActivate);
+  _setWindowPos(hwnd, _hwndBottom, 0, 0, 1280, 720,
+      _swpNoActivate | _swpFrameChanged);
+}
+
 int _ownWindowHwnd = 0;
 
 int _enumProc(int hwnd, int lparam) {
@@ -103,7 +119,7 @@ int _enumProc(int hwnd, int lparam) {
 }
 
 /// 将本进程主窗口标题改为捕获标题, 主进程按该标题枚举窗口做捕获推流
-Future<bool> _applyWindowTitle(String title) async {
+Future<bool> _applyWindowTitle(String title, {bool background = false}) async {
   for (var attempt = 0; attempt < 40; attempt++) {
     _ownWindowHwnd = 0;
     _enumWindows(Pointer.fromFunction<_EnumWindowsProcC>(_enumProc, 1), 0);
@@ -112,6 +128,9 @@ Future<bool> _applyWindowTitle(String title) async {
       _setWindowText(_ownWindowHwnd, text);
       calloc.free(text);
       _removeWindowChrome(_ownWindowHwnd);
+      if (background) {
+        _applyBackgroundMode(_ownWindowHwnd);
+      }
       return true;
     }
     await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -134,7 +153,9 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
     super.initState();
     _player = Player();
     _videoController = VideoController(_player);
-    _player.open(Media(widget.params['path'] as String), play: true);
+    // 统一推流模式下初始暂停, 由 PC 端或手机端控制播放/暂停
+    _player.open(Media(widget.params['path'] as String),
+        play: widget.params['paused'] != true);
 
     _stdinSub = stdin
         .transform(utf8.decoder)
@@ -148,7 +169,8 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
 
   Future<void> _setup() async {
     await _connectControlChannel();
-    await _applyWindowTitle(_title);
+    await _applyWindowTitle(_title,
+        background: widget.params['background'] == true);
     _emit({'event': 'ready'});
   }
 
