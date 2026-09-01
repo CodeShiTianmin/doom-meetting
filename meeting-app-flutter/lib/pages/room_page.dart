@@ -275,12 +275,27 @@ class _RoomPageState extends State<RoomPage> {
         // 保持流畅, 带宽恢复后自动切回最高档
         adaptiveStream: false,
         dynacast: true,
+        // 手机摄像头仅在对方小窗展示, 降低采集/上行码率,
+        // 避免两人同房时双方上行挡塞下行推流带宽造成卡顿
+        defaultCameraCaptureOptions: lk.CameraCaptureOptions(
+          params: lk.VideoParametersPresets.h540_169,
+        ),
+        defaultVideoPublishOptions: lk.VideoPublishOptions(
+          simulcast: true,
+          videoEncoding: lk.VideoEncoding(
+            maxBitrate: 800 * 1000,
+            maxFramerate: 24,
+          ),
+          videoSimulcastLayers: [
+            lk.VideoParametersPresets.h180_169,
+          ],
+        ),
       ),
     );
     _lkRoom = room;
     _lkListener = room.createListener()
-      ..on<lk.TrackSubscribedEvent>(
-          (event) => _attachRemoteTrack(event.participant, event.track))
+      ..on<lk.TrackSubscribedEvent>((event) =>
+          _attachRemoteTrack(event.participant, event.publication, event.track))
       ..on<lk.TrackUnsubscribedEvent>(
           (event) => _detachRemoteTrack(event.participant, event.track))
       ..on<lk.ParticipantDisconnectedEvent>((event) {
@@ -333,7 +348,8 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
-  void _attachRemoteTrack(lk.RemoteParticipant participant, lk.Track track) {
+  void _attachRemoteTrack(lk.RemoteParticipant participant,
+      lk.RemoteTrackPublication publication, lk.Track track) {
     if (track is lk.AudioTrack) {
       // iOS: 订阅到远端音频后重申扬声器路由,
       // 避免音频会话被其他插件/系统改动后停留在听筒或静音类别
@@ -345,6 +361,11 @@ class _RoomPageState extends State<RoomPage> {
       if (participant.identity.startsWith(AppConfig.castIdentityPrefix)) {
         _castVideoTrack = track;
       } else {
+        // 对方客户画面只在小窗展示, 订阅中档即可,
+        // 省下的下行带宽留给主画面推流
+        unawaited(publication
+            .setVideoQuality(lk.VideoQuality.MEDIUM)
+            .catchError((_) {}));
         _peerVideoTrack = track;
       }
     });
@@ -571,6 +592,17 @@ class _RoomPageState extends State<RoomPage> {
     } catch (_) {}
   }
 
+  /// 点击空白处/侧边按钮: 呼出或隐藏上下菜单(横竖屏通用)
+  void _toggleUiHidden() {
+    setState(() {
+      _uiHidden = !_uiHidden;
+      if (_uiHidden) {
+        _chatInputVisible = false;
+        _chatFocus.unfocus();
+      }
+    });
+  }
+
   /// 横屏/竖屏切换
   Future<void> _toggleOrientation() async {
     _landscape = !_landscape;
@@ -778,11 +810,15 @@ class _RoomPageState extends State<RoomPage> {
           // iOS 画中画源视图(透明, 必须铺满屏幕才能触发 PiP), Android 为空占位
           if (_iosPip != null && lkRoom != null)
             Positioned.fill(child: LiveKitPipView(room: lkRoom)),
-          // 主画面: PC 实时推流 > 等待画面
+          // 主画面: PC 实时推流 > 等待画面; 点击空白处呼出/隐藏上下菜单
           Positioned.fill(
-            child: _castVideoTrack != null
-                ? lk.VideoTrackRenderer(_castVideoTrack!)
-                : _buildWaitingPlaceholder(state),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleUiHidden,
+              child: _castVideoTrack != null
+                  ? lk.VideoTrackRenderer(_castVideoTrack!)
+                  : _buildWaitingPlaceholder(state),
+            ),
           ),
           // 对方客户小窗
           if (state.camAllowed && _peerVideoTrack != null)
@@ -855,13 +891,7 @@ class _RoomPageState extends State<RoomPage> {
                   children: [
                     _sideCircleButton(
                       icon: hideIcon,
-                      onTap: () => setState(() {
-                        _uiHidden = !_uiHidden;
-                        if (_uiHidden) {
-                          _chatInputVisible = false;
-                          _chatFocus.unfocus();
-                        }
-                      }),
+                      onTap: _toggleUiHidden,
                     ),
                     const SizedBox(height: 10),
                     _sideCircleButton(

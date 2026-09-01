@@ -339,6 +339,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
       await ApiClient.instance.stopCast(widget.roomId);
     } on ApiException catch (error) {
       if (!silent) _showToast('停止推流登记失败: ${error.message}');
+    } catch (error) {
+      if (!silent) _showToast('停止推流登记失败: $error');
     }
     await _refreshRoom();
     if (!silent) _showToast('已停止推流');
@@ -617,11 +619,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
                               style: TextStyle(
                                   fontSize: 11, color: Colors.white38)),
                           value: room.videoCallEnabled,
-                          onChanged: (value) async {
-                            await ApiClient.instance.updateSettings(room.id,
-                                videoCallEnabled: value);
-                            _refreshRoom();
-                          },
+                          onChanged: (value) => _memberAction(() =>
+                              ApiClient.instance.updateSettings(room.id,
+                                  videoCallEnabled: value)),
                         ),
                         SwitchListTile(
                           dense: true,
@@ -631,11 +631,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
                               style: TextStyle(
                                   fontSize: 11, color: Colors.white38)),
                           value: room.cameraEnabled,
-                          onChanged: (value) async {
-                            await ApiClient.instance
-                                .updateSettings(room.id, cameraEnabled: value);
-                            _refreshRoom();
-                          },
+                          onChanged: (value) => _memberAction(() =>
+                              ApiClient.instance.updateSettings(room.id,
+                                  cameraEnabled: value)),
                         ),
                       ],
                     ),
