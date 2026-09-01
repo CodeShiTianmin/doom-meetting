@@ -75,6 +75,9 @@ class CastSession extends ChangeNotifier {
             maxFramerate: 30,
           ),
           simulcast: true,
+          // H264 走硬件编码: 多房并发时大幅降低 CPU/GPU 占用,
+          // 避免软编 VP8 算力不足时出现条纹/色块等编码伪影
+          videoCodec: 'H264',
         ),
         defaultScreenShareCaptureOptions: lk.ScreenShareCaptureOptions(
           maxFrameRate: 30,
@@ -200,6 +203,7 @@ class CastSession extends ChangeNotifier {
         videoTrack,
         publishOptions: const lk.VideoPublishOptions(
           simulcast: true,
+          videoCodec: 'H264',
           videoEncoding: lk.VideoEncoding(
             maxBitrate: 4 * 1000 * 1000,
             maxFramerate: 30,
@@ -208,19 +212,21 @@ class CastSession extends ChangeNotifier {
             lk.VideoParameters(
               dimensions: lk.VideoDimensionsPresets.h360_169,
               encoding: lk.VideoEncoding(
-                maxBitrate: 600 * 1000,
+                maxBitrate: 800 * 1000,
                 maxFramerate: 30,
               ),
             ),
             lk.VideoParameters(
               dimensions: lk.VideoDimensionsPresets.h720_169,
               encoding: lk.VideoEncoding(
-                maxBitrate: 1700 * 1000,
+                maxBitrate: 2200 * 1000,
                 maxFramerate: 30,
               ),
             ),
           ],
-          degradationPreference: lk.DegradationPreference.maintainFramerate,
+          // 保分辨率: 编码器算力/带宽吃紧时降帧率而非动态缩放分辨率,
+          // 非整数比例缩放屏幕/视频内容会产生横向条纹状锟齿波纹
+          degradationPreference: lk.DegradationPreference.maintainResolution,
         ),
       );
     } catch (error) {
@@ -495,10 +501,16 @@ class CastSession extends ChangeNotifier {
     final participant = _lkRoom?.localParticipant;
     if (participant != null) {
       for (final publication in participant.trackPublications.values.toList()) {
+        final track = publication.track;
         try {
           await participant
               .removePublishedTrack(publication.sid)
               .timeout(const Duration(seconds: 5));
+        } catch (_) {}
+        // 确保底层采集会话一定停止: 否则取消推流后屏幕/窗口捕获
+        // 仍在后台运行, 多房并发时持续占用显卡与 CPU
+        try {
+          await track?.stop();
         } catch (_) {}
       }
     }
