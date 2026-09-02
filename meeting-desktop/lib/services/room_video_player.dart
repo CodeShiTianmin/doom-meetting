@@ -5,15 +5,20 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
-/// 统一推流共享播放器:
+/// 单房间视频播放器:
 ///
-/// 全部房间共用这一个独立播放进程(后台窗口, 不弹出抢焦点/不进任务栏),
-/// 各房间会话对同一窗口做窗口捕获推流 —— 20 个房间只解码播放一路视频,
-/// 大幅降低多房并发时的显卡压力。
+/// 每个推流中的房间持有一个独立播放进程(后台窗口, 不弹出抢焦点/不进任务栏),
+/// 该房间的推流会话对自己的窗口做窗口捕获推流, 与其它房间完全隔离。
+/// 窗口标题带房号, 保证各房间捕获到自己的播放窗口。
 ///
-/// 推流后视频处于初始暂停状态, 由 PC 端或手机端统一控制播放/暂停/进度。
-class SharedVideoPlayer extends ChangeNotifier {
-  static const String windowTitle = '惊喜影视-统一推流';
+/// 推流后视频处于初始暂停状态, 由 PC 端或本房间手机端控制播放/暂停/进度。
+class RoomVideoPlayer extends ChangeNotifier {
+  final String roomCode;
+
+  RoomVideoPlayer({required this.roomCode});
+
+  /// 播放窗口标题(带房号定位, 方括号避免 1 号房误匹配 11 号房)
+  String get windowTitle => '惊喜影视推流 [房间 $roomCode]';
 
   Process? _process;
   StreamSubscription<String>? _stdoutSub;
@@ -28,11 +33,11 @@ class SharedVideoPlayer extends ChangeNotifier {
   int durationMs = 0;
   bool started = false;
 
-  /// 播放进程被外部关闭(如任务管理器结束)时回调, 用于同步停止统一推流
+  /// 播放进程被外部关闭(如任务管理器结束)时回调, 用于同步停止本房间推流
   Future<void> Function()? onClosedExternally;
 
   /// 播放状态变化回调(播放/暂停切换、进度跳变时触发,
-  /// 用于向手机端广播统一播放状态)
+  /// 用于向本房间手机端广播播放状态)
   void Function(bool playing, int positionMs, int durationMs)?
       onPlayingChanged;
 
@@ -82,7 +87,7 @@ class SharedVideoPlayer extends ChangeNotifier {
       await ready.future.timeout(const Duration(seconds: 15));
     } catch (_) {
       await close();
-      throw StateError('播放进程未就绪, 无法开始统一推流');
+      throw StateError('播放进程未就绪, 无法开始推流');
     } finally {
       _ready = null;
     }
@@ -95,7 +100,7 @@ class SharedVideoPlayer extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 等待共享播放窗口出现在可捕获窗口列表中
+  /// 等待本房间播放窗口出现在可捕获窗口列表中
   Future<webrtc.DesktopCapturerSource> waitWindowSource() async {
     for (var attempt = 0; attempt < 30; attempt++) {
       final sources = await webrtc.desktopCapturer.getSources(

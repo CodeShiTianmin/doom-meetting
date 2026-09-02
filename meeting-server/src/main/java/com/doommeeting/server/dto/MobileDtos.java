@@ -52,7 +52,7 @@ public class MobileDtos {
             @NotBlank(message = "成员凭证不能为空") String memberToken) {
     }
 
-    /** 手机端播放控制(统一推流的播放/暂停/进度) */
+    /** 手机端播放控制(本房间推流的播放/暂停/进度) */
     public record CastControlRequest(
             @NotBlank(message = "身份标识不能为空") String identity,
             @NotBlank(message = "成员凭证不能为空") String memberToken,

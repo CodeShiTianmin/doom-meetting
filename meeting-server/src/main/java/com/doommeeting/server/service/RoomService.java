@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 房间业务: 创建/查询/设置/投放/关闭。
@@ -64,10 +65,6 @@ public class RoomService {
             room.setStatus(RoomStatus.SCHEDULED);
         }
         roomRepository.save(room);
-        UnifiedCast cast = currentUnifiedCast();
-        if (cast != null) {
-            applyUnifiedCast(room, cast);
-        }
 
         createSeatInvites(room);
         eventLogService.log(room, RoomEventType.ROOM_CREATED,
@@ -209,7 +206,7 @@ public class RoomService {
 
     /**
      * PC 端登记开始实时推流(屏幕/本地视频/摄像头, 均走 LiveKit 实时流)。
-     * 不同房间独立推流并行, 不串音不串频。
+     * 每个房间独立手动推流, 互不影响, 不串音不串频。
      * 若房间已有投放且未确认替换(replace=false), 返回 409 提示先停止当前投放。
      */
     @Transactional
@@ -224,23 +221,20 @@ public class RoomService {
                     "房间正在推流「" + castDescription(room) + "」, 请先停止当前推流后再开始新推流");
         }
         // 推流不影响会议计时: 倒计时在全部手机端就位时开始
-        applyUnifiedCast(room, new UnifiedCast(type, label, operator));
-        return toResponse(room, latestInvite(room));
-    }
-
-    /** 登记推流内容到房间并通知房间内手机端与 PC 端 */
-    private void applyUnifiedCast(Room room, UnifiedCast cast) {
-        room.setCastType(cast.type());
-        room.setCastLabel(cast.label());
-        room.setCastBy(cast.operator());
+        room.setCastType(type);
+        room.setCastLabel(label);
+        room.setCastBy(operator);
         roomRepository.save(room);
+        // 新推流从头开始(初始暂停, 进度 0)
+        playbackStateOf(room).reset();
         eventLogService.log(room, RoomEventType.CAST_STARTED,
-                cast.operator() + " 开始推流: " + castDescription(room));
+                operator + " 开始推流: " + castDescription(room));
         Map<String, Object> payload = new HashMap<>();
-        payload.put("castType", cast.type().name());
-        payload.put("castLabel", cast.label());
-        payload.put("operator", cast.operator());
+        payload.put("castType", type.name());
+        payload.put("castLabel", label);
+        payload.put("operator", operator);
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "CAST_STARTED", payload);
+        return toResponse(room, latestInvite(room));
     }
 
     /** 停止当前推流: 清除房间推流状态 */
@@ -255,6 +249,7 @@ public class RoomService {
         room.setCastLabel(null);
         room.setCastBy(null);
         roomRepository.save(room);
+        playbackStates.remove(room.getId());
         eventLogService.log(room, RoomEventType.CAST_STOPPED,
                 operator + " 停止推流" + (previous == null ? "" : ": " + previous));
         Map<String, Object> payload = new HashMap<>();
@@ -283,8 +278,9 @@ public class RoomService {
 
     /**
      * 手动结束会议并重置固定房间:
-     * 下线全部成员 -> 旧凭证全部失效 -> 清空计时/点赞/成员记录 ->
-     * 签发新的客户码/服务码 -> 房间回到等待就位初始状态。
+     * 下线全部成员 -> 旧凭证全部失效 -> 清空计时/点赞/成员记录 -> 停止推流(进度归零) ->
+     * 签发新的客户码/服务码 -> 房间回到空闲初始状态。
+     * PC 端本地保留该房间已设置的视频文件, 下次手动推流从头播放。
      */
     @Transactional
     public RoomResponse resetRoom(Long id, String operator) {
@@ -312,67 +308,12 @@ public class RoomService {
         eventLogService.log(room, RoomEventType.ROOM_RESET, operator + " 手动结束会议, 房间已重置");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RESET", Map.of(
                 "roomId", room.getId(), "name", room.getName(), "operator", operator));
-        // 统一推流进行中: 重置后的房间回到"已推流、初始暂停"的初始状态, 继续接收同一内容
-        UnifiedCast cast = currentUnifiedCast();
-        if (cast != null) {
-            applyUnifiedCast(room, cast);
-        }
         return toResponse(room, latestInvite(room));
     }
 
-    /** 当前统一推流内容(内存快照): 重置/新建的房间自动沿用, 停止统一推流后清除 */
-    private record UnifiedCast(CastType type, String label, String operator) {
-    }
-
-    private volatile UnifiedCast unifiedCast;
-
-    /** 服务重启后内存快照丢失: 从仍在推流的未关闭房间恢复统一推流内容 */
-    private UnifiedCast currentUnifiedCast() {
-        UnifiedCast cast = unifiedCast;
-        if (cast != null) {
-            return cast;
-        }
-        return roomRepository.findByStatusIn(List.of(RoomStatus.WAITING, RoomStatus.RUNNING)).stream()
-                .filter(room -> room.getCastType() != null)
-                .findFirst()
-                .map(room -> new UnifiedCast(room.getCastType(), room.getCastLabel(), room.getCastBy()))
-                .orElse(null);
-    }
-
-    /** 统一推流: 对全部未关闭房间登记同一推流内容(推流后初始暂停) */
-    @Transactional
-    public synchronized List<RoomResponse> startCastAll(CastType type, String label, String operator) {
-        playbackState.clear();
-        playbackState.set(false, 0L, null);
-        unifiedCast = new UnifiedCast(type, label, operator);
-        List<RoomResponse> result = new ArrayList<>();
-        for (Room room : roomRepository.findAllByOrderByCreatedAtDesc()) {
-            if (room.getStatus() == RoomStatus.CLOSED) {
-                continue;
-            }
-            result.add(startCast(room.getId(), type, label, operator, true));
-        }
-        return result;
-    }
-
-    /** 统一停止推流: 清除全部未关闭房间的推流状态 */
-    @Transactional
-    public synchronized List<RoomResponse> stopCastAll(String operator) {
-        playbackState.clear();
-        unifiedCast = null;
-        List<RoomResponse> result = new ArrayList<>();
-        for (Room room : roomRepository.findAllByOrderByCreatedAtDesc()) {
-            if (room.getStatus() == RoomStatus.CLOSED || room.getCastType() == null) {
-                continue;
-            }
-            result.add(stopCast(room.getId(), operator));
-        }
-        return result;
-    }
-
     /**
-     * 统一播放状态(内存快照): 供后加入的手机端查询当前播放/暂停状态,
-     * 不落库 —— 播放状态由 PC 端播放进程持有, 服务重启后随下一次广播恢复
+     * 单房间播放状态(内存快照): 供后加入的手机端查询当前播放/暂停状态,
+     * 不落库 —— 播放状态由 PC 端该房间的播放进程持有, 服务重启后随下一次广播恢复
      */
     private static final class PlaybackState {
         private volatile Boolean playing;
@@ -389,19 +330,27 @@ public class RoomService {
             }
         }
 
-        void clear() {
-            playing = null;
-            positionMs = null;
+        void reset() {
+            playing = false;
+            positionMs = 0L;
             durationMs = null;
         }
     }
 
-    private final PlaybackState playbackState = new PlaybackState();
+    private final Map<Long, PlaybackState> playbackStates = new ConcurrentHashMap<>();
 
-    /** PC 端向全部未关闭房间广播统一播放状态(播放/暂停/进度) */
+    private PlaybackState playbackStateOf(Room room) {
+        return playbackStates.computeIfAbsent(room.getId(), id -> new PlaybackState());
+    }
+
+    /** PC 端向单个房间广播该房间的播放状态(播放/暂停/进度), 各房间互不影响 */
     @Transactional(readOnly = true)
-    public void broadcastPlayback(Boolean playing, Long positionMs, Long durationMs) {
-        playbackState.set(Boolean.TRUE.equals(playing), positionMs, durationMs);
+    public void broadcastPlayback(Long roomId, Boolean playing, Long positionMs, Long durationMs) {
+        Room room = getRoomById(roomId);
+        if (room.getStatus() == RoomStatus.CLOSED) {
+            return;
+        }
+        playbackStateOf(room).set(Boolean.TRUE.equals(playing), positionMs, durationMs);
         Map<String, Object> payload = new HashMap<>();
         payload.put("playing", Boolean.TRUE.equals(playing));
         if (positionMs != null) {
@@ -410,10 +359,7 @@ public class RoomService {
         if (durationMs != null) {
             payload.put("durationMs", durationMs);
         }
-        for (Room room : roomRepository.findByStatusIn(
-                List.of(RoomStatus.WAITING, RoomStatus.RUNNING))) {
-            notificationService.pushToRoom(room.getRoomCode(), "CAST_PLAYBACK", payload);
-        }
+        notificationService.pushToRoom(room.getRoomCode(), "CAST_PLAYBACK", payload);
     }
 
     /** 删除房间: 先关闭会议, 再删除房间及其成员/邀请/点赞/事件记录 */
@@ -450,6 +396,7 @@ public class RoomService {
         room.setCastLabel(null);
         room.setCastBy(null);
         roomRepository.save(room);
+        playbackStates.remove(room.getId());
 
         LocalDateTime now = LocalDateTime.now();
         for (RoomMember member : memberRepository.findByRoomAndOnlineTrue(room)) {
@@ -553,9 +500,10 @@ public class RoomService {
         state.put("castType", room.getCastType() == null ? null : room.getCastType().name());
         state.put("castLabel", room.getCastLabel());
         if (room.getCastType() != null) {
-            state.put("castPlaying", Boolean.TRUE.equals(playbackState.playing));
-            state.put("castPositionMs", playbackState.positionMs);
-            state.put("castDurationMs", playbackState.durationMs);
+            PlaybackState playback = playbackStateOf(room);
+            state.put("castPlaying", Boolean.TRUE.equals(playback.playing));
+            state.put("castPositionMs", playback.positionMs);
+            state.put("castDurationMs", playback.durationMs);
         }
         state.put("allMuted", room.getAllMuted());
         return state;

@@ -1,18 +1,18 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
 import '../models/room.dart';
 import 'api_client.dart';
 import 'cast_session.dart';
-import 'shared_video_player.dart';
+import 'room_video_player.dart';
 
-/// 统一推流管理(单例):
+/// 房间推流管理(单例):
 ///
-/// 全部固定房间(1-20)共用同一路推流内容 —— 任一房间发起本地视频推流,
-/// 其余房间同步推同一内容。实现方式:
-/// - 一个共享播放进程(后台窗口, 初始暂停)解码播放视频
-/// - 每个房间一个 CastSession(独立 LiveKit 连接), 全部捕获同一共享窗口
-/// - 播放/暂停/进度由 PC 端或手机端统一控制, 状态广播到全部手机端
+/// 每个房间独立设置视频文件、独立手动推流、独立播放控制, 互不影响:
+/// - 「设置文件」只记录该房间要推的本地视频路径, 不启动任何推流
+///   (总览的「统一设置文件」只是把同一文件批量设置到各房间)
+/// - 「开始推流」才启动该房间的播放进程(初始暂停)并发布到该房间
+/// - 播放/暂停/进度由 PC 端或该房间手机端控制, 状态只广播到该房间
+/// - 结束会议/停止推流后关闭播放进程(进度归零), 已设置的文件保留
 class CastManager extends ChangeNotifier {
   CastManager._();
 
@@ -20,26 +20,65 @@ class CastManager extends ChangeNotifier {
 
   final Map<int, CastSession> _sessions = {};
 
-  /// 共享播放器(统一推流进行中时非空)
-  SharedVideoPlayer? player;
+  /// 各房间已设置的本地视频文件路径(不随停止推流/结束会议清除)
+  final Map<int, String> _videoFiles = {};
 
-  /// 当前统一推流捕获的共享播放窗口(未推流时为空)
-  webrtc.DesktopCapturerSource? _source;
+  /// 正在启动/停止推流的房间 id, 防止重入与周期刷新误停
+  final Set<int> _transitioning = {};
 
-  /// 正在同步推流状态的房间 id, 避免周期刷新重入
-  final Set<int> _syncing = {};
+  /// 各房间最近一次开始推流的时间: 服务端登记后短时间内总览刷新可能仍是
+  /// 登记前的旧数据, 宽限期内不按旧数据误停本地推流
+  final Map<int, DateTime> _castStartedAt = {};
 
-  /// 统一推流启动中(逐房发布未完成), 期间不做房间状态同步
-  bool _starting = false;
-
-  /// 当前统一推流的视频文件名(未推流时为空)
-  String? get castFileName => player?.fileName;
-
-  bool get casting => player != null && player!.started;
+  static const Duration _syncGrace = Duration(seconds: 20);
 
   CastSession? sessionOf(int roomId) => _sessions[roomId];
 
   Iterable<CastSession> get sessions => _sessions.values;
+
+  /// 房间已设置的视频文件路径
+  String? videoFileOf(int roomId) => _videoFiles[roomId];
+
+  /// 房间已设置的视频文件名(完整文件名)
+  String? videoFileNameOf(int roomId) {
+    final path = _videoFiles[roomId];
+    return path == null ? null : fileNameOf(path);
+  }
+
+  static String fileNameOf(String path) => path.split(RegExp(r'[\\/]')).last;
+
+  /// 房间本地是否正在推流
+  bool isCasting(int roomId) => _sessions[roomId]?.publishing ?? false;
+
+  /// 房间正在推流的播放器(未推流时为空)
+  RoomVideoPlayer? playerOf(int roomId) => _sessions[roomId]?.player;
+
+  /// 是否有任一房间正在推流
+  bool get anyCasting => _sessions.values.any((s) => s.publishing);
+
+  bool isTransitioning(int roomId) => _transitioning.contains(roomId);
+
+  /// 设置房间视频文件(仅记录, 不推流)
+  void setVideoFile(int roomId, String path) {
+    _videoFiles[roomId] = path;
+    notifyListeners();
+  }
+
+  /// 批量设置视频文件到多个房间(仅记录, 不推流)。
+  /// 正在推流的房间跳过不改, 返回被跳过的房号
+  List<String> setVideoFileForRooms(Iterable<RoomModel> rooms, String path) {
+    final skipped = <String>[];
+    for (final room in rooms) {
+      if (room.closed) continue;
+      if (isCasting(room.id)) {
+        skipped.add(room.roomCode);
+        continue;
+      }
+      _videoFiles[room.id] = path;
+    }
+    notifyListeners();
+    return skipped;
+  }
 
   /// 获取或创建房间投放会话(懒连接: 首次使用时申请隐藏推流 Token 并连接)
   Future<CastSession> ensureSession(int roomId) async {
@@ -73,140 +112,96 @@ class CastManager extends ChangeNotifier {
     return session;
   }
 
-  /// 统一推流: 启动共享播放进程(初始暂停), 全部未关闭房间捕获同一窗口推流。
-  /// 返回推流失败的房号列表(单房失败不中断其余房间)。
-  Future<List<String>> startUnifiedVideoCast(
-      String path, List<RoomModel> rooms) async {
-    await stopUnifiedCast(notifyServer: false);
-
-    final sharedPlayer = SharedVideoPlayer();
-    player = sharedPlayer;
-    sharedPlayer.onClosedExternally = () async {
-      if (identical(player, sharedPlayer)) {
-        await stopUnifiedCast();
-      }
-    };
-    // 播放状态变化(播放/暂停)同步广播到全部手机端
-    sharedPlayer.onPlayingChanged = (playing, positionMs, durationMs) {
-      ApiClient.instance
-          .broadcastPlayback(
-              playing: playing,
-              positionMs: positionMs,
-              durationMs: durationMs)
-          .catchError((_) {});
-    };
-    sharedPlayer.addListener(notifyListeners);
-
-    _starting = true;
+  /// 手动开始本房间推流: 用已设置的视频文件启动播放进程(初始暂停),
+  /// 捕获其窗口发布到本房间, 并向服务端登记本房间推流
+  Future<void> startVideoCast(int roomId) async {
+    final path = _videoFiles[roomId];
+    if (path == null || path.isEmpty) {
+      throw StateError('请先为本房间选择视频文件');
+    }
+    if (!_transitioning.add(roomId)) {
+      throw StateError('本房间推流操作进行中, 请稍候');
+    }
     try {
-      await sharedPlayer.start(path);
-      final source = await sharedPlayer.waitWindowSource();
-      _source = source;
-      final failed = <String>[];
-      var succeeded = 0;
-      for (final room in rooms) {
-        if (room.closed) continue;
-        try {
-          await _castToRoom(room.id, source, sharedPlayer.fileName);
-          succeeded++;
-        } catch (_) {
-          failed.add(room.roomCode);
-        }
+      final session = await ensureSession(roomId);
+      await session.startVideoCast(
+        path,
+        onPlayingChanged: (playing, positionMs, durationMs) {
+          ApiClient.instance
+              .broadcastPlayback(roomId,
+                  playing: playing,
+                  positionMs: positionMs,
+                  durationMs: durationMs)
+              .catchError((_) {});
+        },
+        onClosedExternally: () => stopVideoCast(roomId),
+      );
+      try {
+        await ApiClient.instance
+            .startCast(roomId, 'VIDEO', label: fileNameOf(path));
+      } catch (_) {
+        await session.stopCast();
+        rethrow;
       }
-      if (succeeded == 0) {
-        throw StateError(failed.isEmpty
-            ? '没有可推流的房间(全部房间已关闭)'
-            : '全部房间推流失败, 请检查媒体服务连接');
-      }
-      await ApiClient.instance
-          .startCastAll('VIDEO', label: sharedPlayer.fileName);
-      notifyListeners();
-      return failed;
-    } catch (error) {
-      await stopUnifiedCast(notifyServer: false);
-      rethrow;
+      _castStartedAt[roomId] = DateTime.now();
     } finally {
-      _starting = false;
+      _transitioning.remove(roomId);
+      notifyListeners();
     }
   }
 
-  Future<void> _castToRoom(
-      int roomId, webrtc.DesktopCapturerSource source, String? label) async {
-    final session = await ensureSession(roomId);
-    await session.startWindowCast(source, label: label);
+  /// 停止本房间推流: 关闭播放进程(进度归零)并停止捕获轨, 已设置的文件保留
+  Future<void> stopVideoCast(int roomId, {bool notifyServer = true}) async {
+    _transitioning.add(roomId);
+    try {
+      final session = _sessions[roomId];
+      if (session != null) {
+        try {
+          await session.stopCast();
+        } catch (_) {}
+      }
+      if (notifyServer) {
+        try {
+          await ApiClient.instance.stopCast(roomId);
+        } catch (_) {}
+      }
+    } finally {
+      _transitioning.remove(roomId);
+      notifyListeners();
+    }
   }
 
-  /// 按总览最新房间状态同步统一推流:
-  /// - 已关闭的房间停止捕获推流, 释放编码资源
-  /// - 重置/恢复的房间(服务端已登记推流但本地未发布)重新加入统一推流
+  /// 按总览最新房间状态同步本地推流:
+  /// 服务端已结束会议/关闭/停止推流的房间, 本地同步停止播放进程与捕获轨
+  /// (视频状态归零, 已设置的文件保留)
   Future<void> syncRooms(List<RoomModel> rooms) async {
-    final sharedPlayer = player;
-    final source = _source;
-    if (_starting ||
-        sharedPlayer == null ||
-        !sharedPlayer.started ||
-        source == null) {
-      return;
-    }
+    final now = DateTime.now();
     for (final room in rooms) {
-      if (!identical(player, sharedPlayer)) return;
+      if (_transitioning.contains(room.id)) continue;
       final session = _sessions[room.id];
-      if (room.closed) {
-        if (session != null && session.publishing) {
-          try {
-            await session.stopCast();
-          } catch (_) {}
-        }
+      if (session == null || !session.publishing) continue;
+      final startedAt = _castStartedAt[room.id];
+      if (startedAt != null && now.difference(startedAt) < _syncGrace) {
         continue;
       }
-      if (!room.casting || (session?.publishing ?? false)) continue;
-      if (!_syncing.add(room.id)) continue;
-      try {
-        await _castToRoom(room.id, source, sharedPlayer.fileName);
-      } catch (_) {
-        // 单房重新加入失败不影响其余房间, 下次刷新重试
-      } finally {
-        _syncing.remove(room.id);
+      if (room.closed || !room.casting) {
+        await stopVideoCast(room.id, notifyServer: false);
       }
     }
   }
 
-  /// 停止统一推流: 关闭共享播放进程并停止全部房间的捕获轨
-  Future<void> stopUnifiedCast({bool notifyServer = true}) async {
-    final sharedPlayer = player;
-    player = null;
-    _source = null;
-    if (sharedPlayer != null) {
-      sharedPlayer.onClosedExternally = null;
-      sharedPlayer.onPlayingChanged = null;
-      sharedPlayer.removeListener(notifyListeners);
-      await sharedPlayer.close();
-      sharedPlayer.dispose();
-    }
-    for (final session in _sessions.values) {
-      try {
-        await session.stopCast();
-      } catch (_) {}
-    }
-    if (notifyServer) {
-      try {
-        await ApiClient.instance.stopCastAll();
-      } catch (_) {}
-    }
-    notifyListeners();
-  }
-
-  /// 手机端播放控制指令(经服务端 WS 转发到 PC 端执行)
-  Future<void> handleRemoteControl(Map<String, dynamic> payload) async {
-    final sharedPlayer = player;
-    if (sharedPlayer == null || !sharedPlayer.started) return;
+  /// 手机端播放控制指令(经服务端 WS 转发到 PC 端, 只作用于对应房间)
+  Future<void> handleRemoteControl(
+      int roomId, Map<String, dynamic> payload) async {
+    final player = playerOf(roomId);
+    if (player == null || !player.started) return;
     switch (payload['action']) {
       case 'playOrPause':
-        await sharedPlayer.playOrPause();
+        await player.playOrPause();
         break;
       case 'seek':
         final positionMs = (payload['positionMs'] as num?)?.toInt();
-        if (positionMs != null) await sharedPlayer.seek(positionMs);
+        if (positionMs != null) await player.seek(positionMs);
         break;
     }
   }
@@ -220,7 +215,6 @@ class CastManager extends ChangeNotifier {
   }
 
   Future<void> closeAll() async {
-    await stopUnifiedCast(notifyServer: false);
     for (final roomId in _sessions.keys.toList()) {
       try {
         await closeSession(roomId);
@@ -228,5 +222,6 @@ class CastManager extends ChangeNotifier {
         // 单个房间清理失败不中断其余房间清理
       }
     }
+    notifyListeners();
   }
 }

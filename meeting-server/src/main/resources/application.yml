@@ -40,7 +40,7 @@ app:
     # 单房间手机客户端上限(PC 投屏端为后台隐藏角色, 不计入)
     max-clients: 2
     # 固定房间数(1-N 号房, 启动时自动初始化)
-    fixed-room-count: ${APP_ROOM_FIXED_COUNT:20}
+    fixed-room-count: ${APP_ROOM_FIXED_COUNT:24}
     # 固定房间默认会议时长(分钟)
     default-duration-minutes: ${APP_ROOM_DEFAULT_DURATION_MINUTES:50}
     # 创建房间后缺人状态超过该分钟数, 后台亮红灯预警

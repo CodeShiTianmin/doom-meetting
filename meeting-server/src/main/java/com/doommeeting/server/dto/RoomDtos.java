@@ -119,7 +119,7 @@ public class RoomDtos {
     public record RoomEventResponse(Long id, String type, String detail, LocalDateTime createdAt) {
     }
 
-    /** PC 端统一播放状态广播(播放/暂停/进度) */
+    /** PC 端单房播放状态广播(播放/暂停/进度) */
     public record PlaybackStateRequest(
             @NotNull(message = "播放状态不能为空") Boolean playing,
             @PositiveOrZero(message = "播放进度不能为负数") Long positionMs,

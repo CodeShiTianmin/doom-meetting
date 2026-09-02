@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -11,9 +12,11 @@ import '../services/ws_service.dart';
 import 'login_page.dart';
 import 'room_cast_page.dart';
 
-/// 房间总览(固定 1-20 号房):
-/// 每张房卡显示房号/人员信息/点赞/房间状态/会议倒计时(绿色, 最后 60 秒变红),
+/// 房间总览(固定 1-24 号房):
+/// 每张房卡显示房号/人员名称/点赞/房间状态(未使用显示绿色空闲)/
+/// 会议倒计时(绿色, 最后 60 秒变红)/推流视频完整文件名(过长换行),
 /// 外置操作按钮: 手动结束会议(重置) / 摄像头权限(默认关闭) / 二维码获取。
+/// 顶栏「统一设置视频文件」仅批量设置各房间的推流文件, 推流由各房间手动独立发起。
 /// 点击房卡空白处进入单房推流页面。
 class RoomsPage extends StatefulWidget {
   const RoomsPage({super.key});
@@ -42,6 +45,7 @@ class _RoomsPageState extends State<RoomsPage> {
   void initState() {
     super.initState();
     _refresh();
+    CastManager.instance.addListener(_onCastChanged);
     _ws.connect(onDashboardEvent: _onDashboardEvent);
     _refreshTimer =
         Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
@@ -56,16 +60,26 @@ class _RoomsPageState extends State<RoomsPage> {
     _refreshTimer?.cancel();
     _tickTimer?.cancel();
     _ws.dispose();
+    CastManager.instance.removeListener(_onCastChanged);
     CastManager.instance.closeAll();
     super.dispose();
   }
 
+  void _onCastChanged() {
+    if (mounted) setState(() {});
+  }
+
   void _onDashboardEvent(Map<String, dynamic> event) {
-    // 手机端播放控制指令: 转发给统一播放器执行
+    // 手机端播放控制指令: 只转发给指令所属房间的播放器执行
     if (event['type'] == 'CAST_CONTROL') {
       final payload = event['payload'];
-      if (payload is Map<String, dynamic>) {
-        CastManager.instance.handleRemoteControl(payload);
+      final roomCode = event['roomCode'];
+      if (payload is Map<String, dynamic> && roomCode is String) {
+        final room =
+            _rooms.where((room) => room.roomCode == roomCode).firstOrNull;
+        if (room != null) {
+          CastManager.instance.handleRemoteControl(room.id, payload);
+        }
       }
       return;
     }
@@ -77,7 +91,7 @@ class _RoomsPageState extends State<RoomsPage> {
     _refreshing = true;
     try {
       final rooms = await ApiClient.instance.listRooms();
-      // 固定房号 1-20 按数字排序显示
+      // 固定房号 1-24 按数字排序显示
       rooms.sort((a, b) => (int.tryParse(a.roomCode) ?? 0)
           .compareTo(int.tryParse(b.roomCode) ?? 0));
       if (mounted) {
@@ -88,7 +102,7 @@ class _RoomsPageState extends State<RoomsPage> {
           _lastRefreshAt = DateTime.now();
         });
       }
-      // 结束会议重置/超时关闭的房间同步加入/退出统一推流
+      // 结束会议重置/超时关闭的房间同步停止本地推流(文件保留)
       unawaited(CastManager.instance.syncRooms(rooms));
     } catch (error) {
       if (error is ApiException && error.unauthorized) {
@@ -147,7 +161,8 @@ class _RoomsPageState extends State<RoomsPage> {
     }
   }
 
-  /// 手动结束会议: 恢复房间推流后的初始状态, 旧二维码凭证失效
+  /// 手动结束会议: 旧二维码凭证失效, 房间变为空闲;
+  /// 本房间推流停止、视频进度归零, 已设置的视频文件保留
   Future<void> _resetRoom(RoomModel room) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -156,7 +171,8 @@ class _RoomsPageState extends State<RoomsPage> {
             color: Colors.redAccent, size: 32),
         title: Text('结束会议 · ${room.roomCode} 号房间'),
         content: const Text(
-            '结束后房间恢复初始状态, 当前客户码/服务码将失效并重新签发, 在线成员会被移出。确定结束吗?'),
+            '结束后房间变为空闲, 当前客户码/服务码立即失效并重新签发, 在线成员会被移出;\n'
+            '本房间推流停止、视频进度归零, 已设置的视频文件保留。确定结束吗?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -171,9 +187,33 @@ class _RoomsPageState extends State<RoomsPage> {
     );
     if (confirmed != true || !mounted) return;
     await _runRoomAction(room, () async {
+      // 先停本地播放进程与捕获轨(进度归零), 服务端重置会一并清除推流登记
+      await CastManager.instance.stopVideoCast(room.id, notifyServer: false);
       await ApiClient.instance.resetRoom(room.id);
-      _showMessage('${room.roomCode} 号房间已结束会议并重新签发凭证');
+      _showMessage('${room.roomCode} 号房间已结束会议, 房间空闲, 凭证已重新签发');
     });
+  }
+
+  /// 统一设置视频文件: 仅批量设置各房间的推流文件, 不开始推流;
+  /// 推流由各房间在单房页面手动独立发起
+  Future<void> _setVideoFileForAll() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: RoomCastPage.videoExtensions,
+      dialogTitle: '选择视频文件(仅设置到全部房间, 不开始推流, 不上传服务器)',
+    );
+    final path = result?.files.single.path;
+    if (path == null || !mounted) return;
+    final skipped =
+        CastManager.instance.setVideoFileForRooms(_rooms, path);
+    final fileName = CastManager.fileNameOf(path);
+    if (skipped.isEmpty) {
+      _showMessage('已为全部房间设置视频文件「$fileName」, 请进入各房间手动开始推流');
+    } else {
+      _showMessage(
+          '已设置视频文件「$fileName」; 以下房间正在推流未更改: ${skipped.join('、')}',
+          error: true);
+    }
   }
 
   /// 摄像头权限开关(默认关闭, 在总览界面按房间开放)
@@ -190,8 +230,8 @@ class _RoomsPageState extends State<RoomsPage> {
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('退出登录'),
-          content: Text(CastManager.instance.casting
-              ? '当前正在统一推流, 退出登录将停止全部房间推流。确定退出吗?'
+          content: Text(CastManager.instance.anyCasting
+              ? '当前有房间正在推流, 退出登录将停止全部房间推流。确定退出吗?'
               : '确定退出当前管理员账号吗?'),
           actions: [
             TextButton(
@@ -223,6 +263,7 @@ class _RoomsPageState extends State<RoomsPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final runningCount = _rooms.where((room) => room.running).length;
+    final idleCount = _rooms.where(_isIdle).length;
     final onlineCount =
         _rooms.fold<int>(0, (sum, room) => sum + room.onlineMemberCount);
     final alertCount = _rooms.where((room) => room.understaffedAlert).length;
@@ -246,6 +287,8 @@ class _RoomsPageState extends State<RoomsPage> {
             _StatusPill(
                 color: scheme.primary, label: '运行中 $runningCount / ${_rooms.length}'),
             const SizedBox(width: 8),
+            _StatusPill(color: Colors.green, label: '空闲 $idleCount'),
+            const SizedBox(width: 8),
             _StatusPill(color: Colors.teal, label: '在线 $onlineCount 人'),
             if (alertCount > 0) ...[
               const SizedBox(width: 8),
@@ -253,6 +296,12 @@ class _RoomsPageState extends State<RoomsPage> {
             ],
             const SizedBox(width: 12),
           ],
+          TextButton.icon(
+            onPressed: _rooms.isEmpty ? null : _setVideoFileForAll,
+            icon: const Icon(Icons.video_file_outlined, size: 18),
+            label: const Text('统一设置视频文件'),
+          ),
+          const SizedBox(width: 4),
           IconButton(
             tooltip: '刷新',
             onPressed: _loading ? null : _refresh,
@@ -319,7 +368,7 @@ class _RoomsPageState extends State<RoomsPage> {
       padding: const EdgeInsets.all(16),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 360,
-        mainAxisExtent: 224,
+        mainAxisExtent: 272,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
       ),
@@ -329,6 +378,9 @@ class _RoomsPageState extends State<RoomsPage> {
         return _RoomCard(
           room: room,
           busy: _busyRooms.contains(room.id),
+          idle: _isIdle(room),
+          localFileName: CastManager.instance.videoFileNameOf(room.id),
+          localCasting: CastManager.instance.isCasting(room.id),
           remainingSeconds: _remainingSeconds(room),
           onOpen: () => Navigator.of(context)
               .push(MaterialPageRoute(
@@ -342,6 +394,14 @@ class _RoomsPageState extends State<RoomsPage> {
     );
   }
 }
+
+/// 空闲: 等待就位且无人在线、未推流的房间(未使用)
+bool _isIdle(RoomModel room) =>
+    !room.running &&
+    !room.closed &&
+    !room.scheduled &&
+    room.onlineMemberCount == 0 &&
+    !room.casting;
 
 class _StatusPill extends StatelessWidget {
   final Color color;
@@ -379,6 +439,13 @@ class _StatusPill extends StatelessWidget {
 class _RoomCard extends StatelessWidget {
   final RoomModel room;
   final bool busy;
+  final bool idle;
+
+  /// 本机为该房间设置的视频文件名(未设置为空)
+  final String? localFileName;
+
+  /// 本机是否正在向该房间推流
+  final bool localCasting;
   final int? remainingSeconds;
   final VoidCallback onOpen;
   final VoidCallback onShowQr;
@@ -388,6 +455,9 @@ class _RoomCard extends StatelessWidget {
   const _RoomCard({
     required this.room,
     required this.busy,
+    required this.idle,
+    required this.localFileName,
+    required this.localCasting,
     required this.remainingSeconds,
     required this.onOpen,
     required this.onShowQr,
@@ -405,7 +475,31 @@ class _RoomCard extends StatelessWidget {
     if (room.running) return (color: Colors.green, label: '正在运行');
     if (room.closed) return (color: Colors.grey, label: '已关闭');
     if (room.scheduled) return (color: Colors.lightBlue, label: '已预约');
+    // 未使用的房间显示绿色空闲; 已有人就位但未满员时提示等待就位
+    if (idle) return (color: Colors.green, label: '空闲');
     return (color: Colors.orange, label: '等待就位');
+  }
+
+  /// 推流文件行: 推流中显示服务端登记的完整文件名; 未推流但已设置文件时
+  /// 显示已设置的文件名(灰色); 否则提示未设置
+  ({IconData icon, Color color, String text}) _castLine(ColorScheme scheme) {
+    final serverLabel = room.castDescription;
+    if (room.casting && serverLabel != null) {
+      return (
+        icon: Icons.cast_connected,
+        color: localCasting ? scheme.primary : Colors.orange,
+        text: serverLabel,
+      );
+    }
+    final fileName = localFileName;
+    if (fileName != null && fileName.isNotEmpty) {
+      return (
+        icon: Icons.video_file_outlined,
+        color: Colors.white54,
+        text: fileName,
+      );
+    }
+    return (icon: Icons.cast, color: Colors.white38, text: '未设置视频文件');
   }
 
   @override
@@ -417,7 +511,12 @@ class _RoomCard extends StatelessWidget {
     // 倒计时绿色显示, 会议最后 60 秒字体变红
     final countdownColor =
         (remaining != null && remaining <= 60) ? Colors.red : Colors.green;
-    final onlineMembers = room.members.where((m) => m.online).toList();
+    final members = room.members.where((m) => !m.kicked).toList()
+      ..sort((a, b) {
+        if (a.online != b.online) return a.online ? -1 : 1;
+        return (a.seatNo ?? 99).compareTo(b.seatNo ?? 99);
+      });
+    final castLine = _castLine(scheme);
     final alert = room.understaffedAlert;
     return Card(
       shape: RoundedRectangleBorder(
@@ -474,19 +573,35 @@ class _RoomCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
+              // 人员信息: 就位人数 + 每位人员名称(在线绿点/离线灰点)
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.people, size: 14, color: Colors.white54),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 3),
+                    child:
+                        Icon(Icons.people, size: 14, color: Colors.white54),
+                  ),
                   const SizedBox(width: 4),
+                  Text('${room.onlineMemberCount}/${room.maxMembers} 就位',
+                      style: const TextStyle(fontSize: 12)),
+                  const SizedBox(width: 6),
                   Expanded(
-                    child: Text(
-                      onlineMembers.isEmpty
-                          ? '${room.onlineMemberCount}/${room.maxMembers} 就位'
-                          : '${room.onlineMemberCount}/${room.maxMembers} 就位 · '
-                              '${onlineMembers.map((m) => m.nickname).join('、')}',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
-                    ),
+                    child: members.isEmpty
+                        ? const Padding(
+                            padding: EdgeInsets.only(top: 1),
+                            child: Text('暂无人员',
+                                style: TextStyle(
+                                    fontSize: 12, color: Colors.white38)),
+                          )
+                        : Wrap(
+                            spacing: 4,
+                            runSpacing: 4,
+                            children: [
+                              for (final member in members)
+                                _MemberChip(member: member),
+                            ],
+                          ),
                   ),
                 ],
               ),
@@ -511,26 +626,34 @@ class _RoomCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
-              Row(
-                children: [
-                  Icon(room.casting ? Icons.cast_connected : Icons.cast,
-                      size: 13,
-                      color: room.casting ? scheme.primary : Colors.white38),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      room.castDescription ?? '暂无推流',
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: room.casting
-                              ? Colors.white
-                              : Colors.white54),
+              // 推流视频完整文件名, 过长自动换行
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child:
+                          Icon(castLine.icon, size: 13, color: castLine.color),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        castLine.text,
+                        softWrap: true,
+                        maxLines: 3,
+                        overflow: TextOverflow.fade,
+                        style: TextStyle(
+                            fontSize: 12,
+                            height: 1.3,
+                            color: room.casting
+                                ? Colors.white
+                                : castLine.color),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const Spacer(),
               Row(
                 children: [
                   IconButton(
@@ -574,6 +697,44 @@ class _RoomCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 房卡人员名称胶囊: 在线绿点, 离线灰点; 带座位号时显示「1号 张三」
+class _MemberChip extends StatelessWidget {
+  final MemberModel member;
+
+  const _MemberChip({required this.member});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = member.online ? Colors.green : Colors.white38;
+    final seatNo = member.seatNo;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            seatNo != null ? '$seatNo号 ${member.nickname}' : member.nickname,
+            style: TextStyle(
+                fontSize: 11.5,
+                color: member.online ? Colors.white : Colors.white54),
+          ),
+        ],
       ),
     );
   }

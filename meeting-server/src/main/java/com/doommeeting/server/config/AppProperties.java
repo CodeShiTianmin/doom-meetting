@@ -54,7 +54,7 @@ public class AppProperties {
         private int understaffedAlertMinutes = 3;
         private int heartbeatTimeoutSeconds = 60;
         /** 固定房间数(1-N 号房, 启动时自动初始化) */
-        private int fixedRoomCount = 20;
+        private int fixedRoomCount = 24;
         /** 固定房间默认会议时长(分钟) */
         private int defaultDurationMinutes = 50;
     }

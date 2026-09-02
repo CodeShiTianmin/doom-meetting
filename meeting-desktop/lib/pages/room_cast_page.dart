@@ -8,16 +8,29 @@ import '../models/room.dart';
 import '../services/api_client.dart';
 import '../services/cast_manager.dart';
 import '../services/cast_session.dart';
+import '../services/room_video_player.dart';
 
 /// 单房推流界面(正式版):
-/// 显示房号 / 推流内容(视频文件名) / 成员信息 / 会议倒计时,
-/// 提供本地视频推流按钮、播放控制(暂停/播放/进度条)、返回总览按钮。
-/// 本地视频为统一推流: 本房间发起后, 其它全部房间同步推同一内容,
-/// 视频初始暂停, 由 PC 端或手机端控制播放。
+/// 显示房号 / 推流内容(视频完整文件名) / 成员信息 / 会议倒计时,
+/// 提供选择视频文件、开始/停止推流、播放控制(暂停/播放/进度条)、返回总览按钮。
+/// 选择文件仅设置本房间要推的视频, 推流需手动点击开始; 每个房间独立推流、
+/// 独立控制, 视频初始暂停, 由 PC 端或本房间手机端控制播放。
 class RoomCastPage extends StatefulWidget {
   final int roomId;
 
   const RoomCastPage({super.key, required this.roomId});
+
+  static const List<String> videoExtensions = [
+    'mp4',
+    'mkv',
+    'avi',
+    'mov',
+    'wmv',
+    'flv',
+    'webm',
+    'm4v',
+    'ts',
+  ];
 
   @override
   State<RoomCastPage> createState() => _RoomCastPageState();
@@ -81,29 +94,20 @@ class _RoomCastPageState extends State<RoomCastPage> {
     return remaining > 0 ? remaining : 0;
   }
 
-  static const _videoExtensions = [
-    'mp4',
-    'mkv',
-    'avi',
-    'mov',
-    'wmv',
-    'flv',
-    'webm',
-    'm4v',
-    'ts',
-  ];
+  bool get _localCasting => CastManager.instance.isCasting(widget.roomId);
 
-  /// 本地视频推流(统一推流): 选择本地视频后全部房间同步推同一内容
-  Future<void> _pickLocalVideo() async {
+  /// 选择本房间视频文件(仅设置, 不推流); 推流中更换文件需先停止当前推流
+  Future<void> _pickVideoFile() async {
     if (_busy) return;
-    if (CastManager.instance.casting) {
+    if (_localCasting) {
+      final current = CastManager.instance.playerOf(widget.roomId)?.fileName;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
-          title: const Text('正在统一推流'),
-          content: Text('当前正在推流「${CastManager.instance.castFileName ?? ''}」。\n'
-              '需要先停止当前推流, 才能开始新推流。'),
+          title: const Text('本房间正在推流'),
+          content: Text('当前正在推流「${current ?? ''}」。\n'
+              '需要先停止当前推流, 才能更换视频文件。'),
           actions: [
             TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -118,40 +122,51 @@ class _RoomCastPageState extends State<RoomCastPage> {
     }
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: _videoExtensions,
-      dialogTitle: '选择本地视频文件(统一推流到全部房间, 不上传服务器)',
+      allowedExtensions: RoomCastPage.videoExtensions,
+      dialogTitle: '选择本房间视频文件(仅设置, 不上传服务器)',
     );
     final path = result?.files.single.path;
     if (path == null || !mounted || _busy) return;
 
     setState(() => _busy = true);
     try {
-      if (CastManager.instance.casting) {
-        await CastManager.instance.stopUnifiedCast();
+      if (_localCasting) {
+        await CastManager.instance.stopVideoCast(widget.roomId);
       }
-      final rooms = await ApiClient.instance.listRooms();
-      final failed =
-          await CastManager.instance.startUnifiedVideoCast(path, rooms);
-      if (failed.isEmpty) {
-        _showToast('已开始统一推流(初始暂停), 全部房间同步此内容');
-      } else {
-        _showToast('统一推流已开始, 以下房间推流失败: ${failed.join('、')}',
-            error: true);
-      }
-    } catch (error) {
-      _showToast('统一推流启动失败: ${describeError(error)}', error: true);
+      CastManager.instance.setVideoFile(widget.roomId, path);
+      _showToast('已设置视频文件「${CastManager.fileNameOf(path)}」, 点击「开始推流」后推到本房间');
     } finally {
       if (mounted) setState(() => _busy = false);
       await _refreshRoom();
     }
   }
 
+  /// 手动开始本房间推流(仅本房间, 初始暂停)
+  Future<void> _startCast() async {
+    if (_busy) return;
+    if (_room?.closed ?? false) {
+      _showToast('房间已关闭, 请先在总览重置房间', error: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await CastManager.instance.startVideoCast(widget.roomId);
+      _showToast('本房间已开始推流(初始暂停), 点击播放按钮开始播放');
+    } catch (error) {
+      _showToast('推流启动失败: ${describeError(error)}', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      await _refreshRoom();
+    }
+  }
+
+  /// 停止本房间推流: 播放进度归零, 已设置的视频文件保留
   Future<void> _stopCast() async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await CastManager.instance.stopUnifiedCast();
-      _showToast('已停止统一推流');
+      await CastManager.instance.stopVideoCast(widget.roomId);
+      _showToast('已停止本房间推流, 视频文件保留');
     } catch (error) {
       _showToast('停止推流失败: ${describeError(error)}', error: true);
     } finally {
@@ -326,9 +341,13 @@ class _RoomCastPageState extends State<RoomCastPage> {
     );
   }
 
-  /// 左侧: 推流预览 + 推流按钮 + 播放控制
+  /// 左侧: 推流预览 + 选文件/开始/停止推流按钮 + 播放控制
   Widget _buildMainPanel(
       CastManager manager, CastSession? session, ColorScheme scheme) {
+    // 服务端登记推流中但本机未推流(如重启前遗留)时也提供停止按钮清理登记
+    final casting = _localCasting || (_room?.casting ?? false);
+    final hasFile = manager.videoFileOf(widget.roomId) != null;
+    final player = manager.playerOf(widget.roomId);
     return Column(
       children: [
         Expanded(child: _buildPreview(session, scheme)),
@@ -338,27 +357,39 @@ class _RoomCastPageState extends State<RoomCastPage> {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            FilledButton.icon(
-              onPressed: _busy ? null : _pickLocalVideo,
-              icon: _busy
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.video_file_outlined),
-              label: Text(manager.casting ? '更换推流视频' : '本地视频推流(全部房间统一)'),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _pickVideoFile,
+              icon: const Icon(Icons.video_file_outlined),
+              label: Text(hasFile ? '更换视频文件' : '选择视频文件'),
             ),
-            if (manager.casting)
-              OutlinedButton.icon(
+            if (casting)
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
                 onPressed: _busy ? null : _stopCast,
-                icon: const Icon(Icons.stop_circle_outlined),
+                icon: _busy
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.stop_circle_outlined),
                 label: const Text('停止推流'),
+              )
+            else
+              FilledButton.icon(
+                onPressed: (_busy || !hasFile) ? null : _startCast,
+                icon: _busy
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.cast),
+                label: const Text('开始推流'),
               ),
           ],
         ),
-        if (manager.casting) ...[
+        if (casting && player != null) ...[
           const SizedBox(height: 12),
-          _buildPlayerControls(manager, scheme),
+          _buildPlayerControls(player, scheme),
         ],
       ],
     );
@@ -402,7 +433,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
                           : Colors.white24),
                   const SizedBox(height: 10),
                   Text(
-                      sessionError ?? '暂无推流 — 点击下方按钮选择本地视频',
+                      sessionError ??
+                          '暂无推流 — 先选择视频文件, 再点击「开始推流」',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           color: sessionError != null
@@ -415,10 +447,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
     );
   }
 
-  /// 播放控制: 暂停/播放 + 进度条(作用于统一共享播放器, 全部房间同步)
-  Widget _buildPlayerControls(CastManager manager, ColorScheme scheme) {
-    final player = manager.player;
-    if (player == null) return const SizedBox.shrink();
+  /// 播放控制: 暂停/播放 + 进度条(仅作用于本房间播放器)
+  Widget _buildPlayerControls(RoomVideoPlayer player, ColorScheme scheme) {
     final durationMs = player.durationMs;
     final positionMs = (_seekPreview ?? player.positionMs.toDouble())
         .clamp(0.0, double.infinity)
@@ -434,7 +464,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
       child: Row(
         children: [
           IconButton(
-            tooltip: player.playing ? '暂停(全部房间同步)' : '播放(全部房间同步)',
+            tooltip: player.playing ? '暂停(仅本房间)' : '播放(仅本房间)',
             onPressed: () => player.playOrPause(),
             icon: Icon(
                 player.playing
@@ -470,11 +500,28 @@ class _RoomCastPageState extends State<RoomCastPage> {
     );
   }
 
-  /// 推流内容: 类型 + 视频文件名 + 本房间推流状态
+  /// 推流内容: 视频完整文件名(过长换行) + 本房间推流状态
   Widget _buildCastInfoCard(RoomModel room, CastManager manager,
       CastSession? session, ColorScheme scheme) {
-    final fileName = manager.castFileName ?? room.castLabel;
-    final casting = manager.casting || room.casting;
+    final localCasting = _localCasting;
+    final localFileName = manager.videoFileNameOf(widget.roomId);
+    final casting = localCasting || room.casting;
+    // 推流中显示正在推的文件名(优先服务端登记), 否则显示本机已设置的文件名
+    final fileName = casting
+        ? (room.castDescription ??
+            manager.playerOf(widget.roomId)?.fileName ??
+            localFileName)
+        : localFileName;
+    final String statusText;
+    if (localCasting) {
+      statusText = '推流中(仅本房间)';
+    } else if (room.casting) {
+      statusText = '服务端登记为推流中, 本机未推流';
+    } else if (localFileName != null) {
+      statusText = '已设置视频文件, 尚未推流';
+    } else {
+      statusText = '未设置视频文件';
+    }
     final audioWarning = session?.audioCaptureWarning;
     final sessionError = session?.error;
     return Card(
@@ -498,32 +545,39 @@ class _RoomCastPageState extends State<RoomCastPage> {
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              casting ? '统一视频推流(全部房间同步)' : '暂无推流',
-              style: const TextStyle(fontSize: 13),
-            ),
-            if (casting && fileName != null && fileName.isNotEmpty) ...[
+            Text(statusText,
+                style: TextStyle(
+                    fontSize: 13,
+                    color: casting ? Colors.white : Colors.white70)),
+            if (fileName != null && fileName.isNotEmpty) ...[
               const SizedBox(height: 6),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.insert_drive_file_outlined,
-                      size: 14, color: Colors.white54),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Icon(Icons.insert_drive_file_outlined,
+                        size: 14, color: Colors.white54),
+                  ),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(fileName,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12, color: Colors.white70)),
+                        softWrap: true,
+                        style: TextStyle(
+                            fontSize: 12,
+                            height: 1.35,
+                            color: casting ? Colors.white : Colors.white70)),
                   ),
                 ],
               ),
             ],
-            if (manager.casting && session?.publishing != true) ...[
+            if (room.casting && !localCasting) ...[
               const SizedBox(height: 8),
               _InlineNotice(
                 icon: Icons.info_outline,
                 color: Colors.orange,
-                text: sessionError ?? '本房间未加入本次统一推流, 可停止后重新推流',
+                text: sessionError ??
+                    '本机未在推流该内容(可能为重启前遗留), 请停止后重新推流',
               ),
             ],
             if (audioWarning != null) ...[
