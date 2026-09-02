@@ -13,6 +13,7 @@ import com.doommeeting.server.enums.RoomStatus;
 import com.doommeeting.server.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
@@ -381,15 +382,21 @@ public class RoomService {
         deleteRoomInternal(room, operator);
     }
 
-    /** 清理固定 1-N 号房之外的全部房间(含历史手动创建的房间及缩减房间数后多出的固定房), 返回清理数量 */
-    @Transactional
-    public int purgeNonFixedRooms() {
-        List<Room> extras = roomRepository.findAll().stream()
+    /** 固定 1-N 号房之外的全部房间(含历史手动创建的房间及缩减房间数后多出的固定房) */
+    @Transactional(readOnly = true)
+    public List<Room> findNonFixedRooms() {
+        return roomRepository.findAll().stream()
                 .filter(room -> !isFixedRoom(room)).toList();
-        for (Room room : extras) {
-            deleteRoomInternal(room, "system");
+    }
+
+    /** 删除单个非固定房间(独立事务, 便于调用方逐间处理失败而不影响其余房间) */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void purgeRoom(Long roomId) {
+        Room room = getRoomById(roomId);
+        if (isFixedRoom(room)) {
+            return;
         }
-        return extras.size();
+        deleteRoomInternal(room, "system");
     }
 
     private void deleteRoomInternal(Room room, String operator) {
