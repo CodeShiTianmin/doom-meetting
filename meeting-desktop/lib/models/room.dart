@@ -1,8 +1,14 @@
 /// 房间(对应后端 RoomResponse)
 class RoomModel {
+  /// 后端默认固定房间数(旧版后端未返回 fixed 字段时的本地判定依据)
+  static const int defaultFixedRoomCount = 24;
+
   final int id;
   final String roomCode;
   final String name;
+
+  /// 是否为系统固定房间(1-N 号房), 总览仅展示固定房间
+  final bool fixed;
   final String status;
   final bool videoCallEnabled;
   final bool cameraEnabled;
@@ -30,6 +36,7 @@ class RoomModel {
     required this.id,
     required this.roomCode,
     required this.name,
+    required this.fixed,
     required this.status,
     required this.videoCallEnabled,
     required this.cameraEnabled,
@@ -75,6 +82,9 @@ class RoomModel {
         id: (json['id'] as num).toInt(),
         roomCode: json['roomCode'] as String,
         name: json['name'] as String,
+        fixed: json['fixed'] as bool? ??
+            _looksLikeFixedRoom(
+                json['roomCode'] as String, json['createdBy'] as String?),
         status: json['status'] as String,
         videoCallEnabled: json['videoCallEnabled'] == true,
         cameraEnabled: json['cameraEnabled'] == true,
@@ -103,6 +113,12 @@ class RoomModel {
             .map((item) => MemberModel.fromJson(item as Map<String, dynamic>))
             .toList(),
       );
+
+  static bool _looksLikeFixedRoom(String roomCode, String? createdBy) {
+    if (createdBy != 'system') return false;
+    final no = int.tryParse(roomCode);
+    return no != null && no >= 1 && no <= defaultFixedRoomCount;
+  }
 }
 
 class MemberModel {

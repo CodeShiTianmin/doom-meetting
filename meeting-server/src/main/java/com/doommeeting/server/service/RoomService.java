@@ -115,6 +115,15 @@ public class RoomService {
         }
     }
 
+    /** 是否为系统固定房间(1-N 号房, N 取当前配置的固定房间数) */
+    public boolean isFixedRoom(Room room) {
+        if (!"system".equals(room.getCreatedBy())) {
+            return false;
+        }
+        long no = roomCodeOrder(room);
+        return no >= 1 && no <= properties.getRoom().getFixedRoomCount();
+    }
+
     @Transactional(readOnly = true)
     public RoomResponse getRoom(Long id) {
         Room room = getRoomById(id);
@@ -369,6 +378,21 @@ public class RoomService {
         if ("system".equals(room.getCreatedBy())) {
             throw new BusinessException("固定房间不支持删除, 请使用手动结束会议重置房间");
         }
+        deleteRoomInternal(room, operator);
+    }
+
+    /** 清理固定 1-N 号房之外的全部房间(含历史手动创建的房间及缩减房间数后多出的固定房), 返回清理数量 */
+    @Transactional
+    public int purgeNonFixedRooms() {
+        List<Room> extras = roomRepository.findAll().stream()
+                .filter(room -> !isFixedRoom(room)).toList();
+        for (Room room : extras) {
+            deleteRoomInternal(room, "system");
+        }
+        return extras.size();
+    }
+
+    private void deleteRoomInternal(Room room, String operator) {
         closeRoomInternal(room, CloseReason.MANUAL);
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_DELETED", Map.of(
                 "roomId", room.getId(),
@@ -581,6 +605,7 @@ public class RoomService {
                 room.getId(),
                 room.getRoomCode(),
                 room.getName(),
+                isFixedRoom(room),
                 room.getStatus().name(),
                 room.getVideoCallEnabled(),
                 room.getCameraEnabled(),

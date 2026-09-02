@@ -39,6 +39,8 @@ public class RoomDtos {
             Long id,
             String roomCode,
             String name,
+            /** 是否为系统固定房间(1-N 号房), PC 总览仅展示固定房间 */
+            Boolean fixed,
             String status,
             Boolean videoCallEnabled,
             Boolean cameraEnabled,
