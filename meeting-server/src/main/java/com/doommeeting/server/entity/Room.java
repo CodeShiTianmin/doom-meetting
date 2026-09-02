@@ -48,9 +48,9 @@ public class Room {
     private Boolean videoCallEnabled = true;
 
     /** 手机端"摄像头"功能开关(PC 端按房间设置) */
-    @ColumnDefault("1")
+    @ColumnDefault("0")
     @Column(nullable = false)
-    private Boolean cameraEnabled = true;
+    private Boolean cameraEnabled = false;
 
     /** 允许截屏(固定放开) */
     @ColumnDefault("1")

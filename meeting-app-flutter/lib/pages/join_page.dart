@@ -395,9 +395,9 @@ class _JoinPageState extends State<JoinPage> {
                           _joining || _analyzingImage ? null : _pickImageAndScan,
                     ),
                     const SizedBox(height: 28),
-                    Text('版本 ${AppConfig.versionCode}',
+                    const Text('版本 ${AppConfig.versionCode}',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: Colors.white24, fontSize: 11)),
                   ],
                 ),

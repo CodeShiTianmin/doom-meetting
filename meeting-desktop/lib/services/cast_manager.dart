@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
 import '../models/room.dart';
 import 'api_client.dart';
@@ -21,6 +22,15 @@ class CastManager extends ChangeNotifier {
 
   /// 共享播放器(统一推流进行中时非空)
   SharedVideoPlayer? player;
+
+  /// 当前统一推流捕获的共享播放窗口(未推流时为空)
+  webrtc.DesktopCapturerSource? _source;
+
+  /// 正在同步推流状态的房间 id, 避免周期刷新重入
+  final Set<int> _syncing = {};
+
+  /// 统一推流启动中(逐房发布未完成), 期间不做房间状态同步
+  bool _starting = false;
 
   /// 当前统一推流的视频文件名(未推流时为空)
   String? get castFileName => player?.fileName;
@@ -87,17 +97,17 @@ class CastManager extends ChangeNotifier {
     };
     sharedPlayer.addListener(notifyListeners);
 
+    _starting = true;
     try {
       await sharedPlayer.start(path);
       final source = await sharedPlayer.waitWindowSource();
+      _source = source;
       final failed = <String>[];
       var succeeded = 0;
       for (final room in rooms) {
         if (room.closed) continue;
         try {
-          final session = await ensureSession(room.id);
-          await session.startWindowCast(source,
-              label: sharedPlayer.fileName);
+          await _castToRoom(room.id, source, sharedPlayer.fileName);
           succeeded++;
         } catch (_) {
           failed.add(room.roomCode);
@@ -115,6 +125,49 @@ class CastManager extends ChangeNotifier {
     } catch (error) {
       await stopUnifiedCast(notifyServer: false);
       rethrow;
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<void> _castToRoom(
+      int roomId, webrtc.DesktopCapturerSource source, String? label) async {
+    final session = await ensureSession(roomId);
+    await session.startWindowCast(source, label: label);
+  }
+
+  /// 按总览最新房间状态同步统一推流:
+  /// - 已关闭的房间停止捕获推流, 释放编码资源
+  /// - 重置/恢复的房间(服务端已登记推流但本地未发布)重新加入统一推流
+  Future<void> syncRooms(List<RoomModel> rooms) async {
+    final sharedPlayer = player;
+    final source = _source;
+    if (_starting ||
+        sharedPlayer == null ||
+        !sharedPlayer.started ||
+        source == null) {
+      return;
+    }
+    for (final room in rooms) {
+      if (!identical(player, sharedPlayer)) return;
+      final session = _sessions[room.id];
+      if (room.closed) {
+        if (session != null && session.publishing) {
+          try {
+            await session.stopCast();
+          } catch (_) {}
+        }
+        continue;
+      }
+      if (!room.casting || (session?.publishing ?? false)) continue;
+      if (!_syncing.add(room.id)) continue;
+      try {
+        await _castToRoom(room.id, source, sharedPlayer.fileName);
+      } catch (_) {
+        // 单房重新加入失败不影响其余房间, 下次刷新重试
+      } finally {
+        _syncing.remove(room.id);
+      }
     }
   }
 
@@ -122,6 +175,7 @@ class CastManager extends ChangeNotifier {
   Future<void> stopUnifiedCast({bool notifyServer = true}) async {
     final sharedPlayer = player;
     player = null;
+    _source = null;
     if (sharedPlayer != null) {
       sharedPlayer.onClosedExternally = null;
       sharedPlayer.onPlayingChanged = null;

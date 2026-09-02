@@ -308,22 +308,20 @@ public class MemberService {
                 "detail", request.detail() == null ? "" : request.detail()));
     }
 
-    /** 全部成员就位 -> 房间进入运行状态(计时以 PC 端首次推流为准); 运行中重新满员 -> 解除缺人预警 */
+    /**
+     * 全部成员就位 -> 房间进入运行状态并开始会议倒计时; 运行中重新满员 -> 解除缺人预警;
+     * 首位成员就位后仍缺人 -> 开始缺人计时(超时亮红灯), 空闲房间不计入缺人预警
+     */
     private void startOrRecoverIfFull(Room room, long onlineCount) {
         if (onlineCount < maxMembers(room)) {
+            if (onlineCount > 0 && room.getUnderstaffedSince() == null) {
+                room.setUnderstaffedSince(LocalDateTime.now());
+                roomRepository.save(room);
+            }
             return;
         }
         if (room.getStatus() == RoomStatus.WAITING) {
-            room.setStatus(RoomStatus.RUNNING);
-            room.setUnderstaffedAlert(false);
-            room.setUnderstaffedSince(null);
-            roomRepository.save(room);
-            eventLogService.log(room, RoomEventType.ROOM_RUNNING,
-                    maxMembers(room) + " 个手机客户端已就位, 等待 PC 端首次推流开始计时");
-            notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_RUNNING", Map.of(
-                    "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
-                    "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
-                    "durationMinutes", room.getDurationMinutes()));
+            roomService.startMeeting(room, maxMembers(room) + " 个手机客户端已就位");
         } else {
             clearUnderstaffed(room);
         }

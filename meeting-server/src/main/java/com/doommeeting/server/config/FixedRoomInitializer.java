@@ -13,8 +13,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
-
 /**
  * 固定房间初始化: 启动时确保 1-N 号固定房间存在(默认 20 间)。
  * 固定房间不支持删除, 只支持"手动结束会议"重置回初始状态。
@@ -50,7 +48,6 @@ public class FixedRoomInitializer {
                 room.setCameraEnabled(false);
                 room.setApprovalRequired(false);
                 room.setCreatedBy("system");
-                room.setUnderstaffedSince(LocalDateTime.now());
                 roomRepository.save(room);
                 roomService.createSeatInvites(room);
                 eventLogService.log(room, RoomEventType.ROOM_CREATED,

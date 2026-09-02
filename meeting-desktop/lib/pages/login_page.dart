@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../config/app_config.dart';
 import '../services/api_client.dart';
 import 'rooms_page.dart';
 
@@ -110,12 +109,6 @@ class _LoginPageState extends State<LoginPage> {
                                 .textTheme
                                 .headlineSmall
                                 ?.copyWith(fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 6),
-                        Text('PC 投屏端 · 20 房并发统一推流',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.white.withValues(alpha: 0.55))),
                         const SizedBox(height: 28),
                         TextField(
                           controller: _usernameController,
@@ -125,7 +118,7 @@ class _LoginPageState extends State<LoginPage> {
                           autofillHints: const [AutofillHints.username],
                           onSubmitted: (_) => _passwordFocus.requestFocus(),
                           decoration: const InputDecoration(
-                            labelText: '管理员账号',
+                            labelText: '管理员',
                             prefixIcon: Icon(Icons.person_outline),
                           ),
                         ),
@@ -186,15 +179,6 @@ class _LoginPageState extends State<LoginPage> {
                                   child: CircularProgressIndicator(
                                       strokeWidth: 2))
                               : const Text('登录'),
-                        ),
-                        const SizedBox(height: 18),
-                        Text(
-                          '服务器: ${AppConfig.apiBaseUrl}',
-                          textAlign: TextAlign.center,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.white.withValues(alpha: 0.35)),
                         ),
                       ],
                     ),

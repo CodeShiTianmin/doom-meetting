@@ -1074,15 +1074,9 @@ class _RoomPageState extends State<RoomPage> {
               size: 44, color: Color(0xFF5B8DEF)),
           const SizedBox(height: 8),
           Text(
-            state.castLabel != null ? '推流接入中: ${state.castLabel}' : '等待公司推流…',
+            state.castLabel != null ? '视频接入中: ${state.castLabel}' : '等待平台推流视频…',
             style: const TextStyle(color: Colors.white60),
           ),
-          if (state.meetingStartAt == null)
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: Text('公司首次推流后会议开始计时',
-                  style: TextStyle(color: Colors.white38, fontSize: 12)),
-            ),
         ],
       ),
     );
