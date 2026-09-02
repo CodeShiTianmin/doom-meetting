@@ -105,7 +105,7 @@ class _RoomsPageState extends State<RoomsPage> {
           _lastRefreshAt = DateTime.now();
         });
       }
-      // 结束会议重置/超时关闭的房间同步停止本地推流(文件保留)
+      // 结束会议重置/超时关闭的房间同步停止本地推流并清空已设置的文件
       unawaited(CastManager.instance.syncRooms(rooms));
     } catch (error) {
       if (error is ApiException && error.unauthorized) {
@@ -165,7 +165,7 @@ class _RoomsPageState extends State<RoomsPage> {
   }
 
   /// 手动结束会议: 旧二维码凭证失效, 房间变为空闲;
-  /// 本房间推流停止、视频进度归零, 已设置的视频文件保留
+  /// 本房间推流停止、视频进度归零, 已设置的视频文件一并清空
   Future<void> _resetRoom(RoomModel room) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -175,7 +175,7 @@ class _RoomsPageState extends State<RoomsPage> {
         title: Text('结束会议 · ${room.roomCode} 号房间'),
         content: const Text(
             '结束后房间变为空闲, 当前客户码/服务码立即失效并重新签发, 在线成员会被移出;\n'
-            '本房间推流停止、视频进度归零, 已设置的视频文件保留。确定结束吗?'),
+            '本房间推流停止、视频进度归零, 已设置的视频文件一并清空。确定结束吗?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -190,8 +190,9 @@ class _RoomsPageState extends State<RoomsPage> {
     );
     if (confirmed != true || !mounted) return;
     await _runRoomAction(room, () async {
-      // 先停本地播放进程与捕获轨(进度归零), 服务端重置会一并清除推流登记
-      await CastManager.instance.stopVideoCast(room.id, notifyServer: false);
+      // 先停本地播放进程与捕获轨(进度归零)并清空文件, 服务端重置会一并清除推流登记
+      await CastManager.instance
+          .stopVideoCast(room.id, notifyServer: false, clearFile: true);
       await ApiClient.instance.resetRoom(room.id);
       _showMessage('${room.roomCode} 号房间已结束会议, 房间空闲, 凭证已重新签发');
     });
