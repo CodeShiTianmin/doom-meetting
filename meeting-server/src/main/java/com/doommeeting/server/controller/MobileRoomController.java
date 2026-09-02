@@ -70,7 +70,7 @@ public class MobileRoomController {
         return ApiResponse.ok(chatService.recent(roomCode));
     }
 
-    /** 播放控制: 手机端控制统一推流的播放/暂停/进度(转发 PC 端执行) */
+    /** 播放控制: 手机端控制本房间推流的播放/暂停/进度(转发 PC 端该房间播放器执行) */
     @PostMapping("/{roomCode}/cast/control")
     public ApiResponse<Void> castControl(@PathVariable String roomCode,
                                          @Valid @RequestBody CastControlRequest request) {

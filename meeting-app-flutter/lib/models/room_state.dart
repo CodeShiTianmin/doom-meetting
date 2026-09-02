@@ -26,7 +26,7 @@ class RoomState {
   /// 推流内容说明(视频文件名/摄像头/屏幕源名称)
   final String? castLabel;
 
-  /// 统一推流当前是否处于播放中(初始暂停)
+  /// 本房间推流当前是否处于播放中(初始暂停)
   final bool castPlaying;
 
   RoomState({

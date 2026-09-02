@@ -135,7 +135,7 @@ class ApiClient {
     return _unwrap(response);
   }
 
-  /// 统一推流播放控制: 播放/暂停/进度(经服务端转发 PC 端执行)
+  /// 本房间推流播放控制: 播放/暂停/进度(经服务端转发 PC 端执行)
   /// action: playOrPause / seek
   Future<void> castControl(String roomCode, String identity,
       String memberToken, String action, {int? positionMs}) async {

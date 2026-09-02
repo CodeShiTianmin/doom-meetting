@@ -120,24 +120,11 @@ public class AdminRoomController {
         return ApiResponse.ok(roomService.stopCast(id, authentication.getName()));
     }
 
-    /** 统一推流: 全部未关闭房间登记同一推流内容 */
-    @PostMapping("/cast/start-all")
-    public ApiResponse<List<RoomResponse>> startCastAll(@Valid @RequestBody CastStartRequest request,
-                                                        Authentication authentication) {
-        return ApiResponse.ok(roomService.startCastAll(
-                request.type(), request.label(), authentication.getName()));
-    }
-
-    /** 统一停止推流: 清除全部未关闭房间的推流状态 */
-    @PostMapping("/cast/stop-all")
-    public ApiResponse<List<RoomResponse>> stopCastAll(Authentication authentication) {
-        return ApiResponse.ok(roomService.stopCastAll(authentication.getName()));
-    }
-
-    /** 统一播放状态广播: PC 端播放器状态同步到全部手机端 */
-    @PostMapping("/cast/playback")
-    public ApiResponse<Void> broadcastPlayback(@Valid @RequestBody PlaybackStateRequest request) {
-        roomService.broadcastPlayback(request.playing(), request.positionMs(), request.durationMs());
+    /** 单房播放状态广播: PC 端该房间播放器状态同步到该房间的手机端 */
+    @PostMapping("/{id}/cast/playback")
+    public ApiResponse<Void> broadcastPlayback(@PathVariable Long id,
+                                               @Valid @RequestBody PlaybackStateRequest request) {
+        roomService.broadcastPlayback(id, request.playing(), request.positionMs(), request.durationMs());
         return ApiResponse.ok();
     }
 

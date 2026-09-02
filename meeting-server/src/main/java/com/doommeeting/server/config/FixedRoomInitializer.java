@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 固定房间初始化: 启动时确保 1-N 号固定房间存在(默认 20 间)。
+ * 固定房间初始化: 启动时确保 1-N 号固定房间存在(默认 24 间)。
  * 固定房间不支持删除, 只支持"手动结束会议"重置回初始状态。
  * 摄像头权限默认关闭, 由 PC 端总览界面按房间开放。
  */

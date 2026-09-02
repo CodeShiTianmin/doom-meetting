@@ -2,14 +2,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 import 'package:livekit_client/livekit_client.dart' as lk;
 
+import 'room_video_player.dart';
+
 /// 单房间推流会话:
 ///
-/// 每个房间一个独立的 LiveKit RTC 连接(隐藏推流身份, 只发不收)。
-/// 统一推流模式下, 全部房间会话对同一个共享播放窗口做窗口捕获,
-/// 只解码播放一路视频, 各房间发布各自的捕获轨。
+/// 每个房间一个独立的 LiveKit RTC 连接(隐藏推流身份, 只发不收),
+/// 一个独立的本地视频播放进程, 本房间只捕获自己的播放窗口并发布,
+/// 与其它房间的播放/推流完全隔离。
 ///
 /// 捕获窗口时伴音按进程隔离采集(WASAPI, Win10 2004+):
-/// 只采共享播放进程的声音, 不混入系统其它声音。
+/// 只采本房间播放进程的声音, 不混入系统其它声音。
 class CastSession extends ChangeNotifier {
   final int roomId;
   final String roomCode;
@@ -18,6 +20,9 @@ class CastSession extends ChangeNotifier {
 
   lk.Room? _lkRoom;
   lk.EventsListener<lk.RoomEvent>? _roomListener;
+
+  /// 本房间播放器(推流中非空)
+  RoomVideoPlayer? player;
 
   /// 当前推流源名称(视频文件名)
   String? sourceLabel;
@@ -86,10 +91,46 @@ class CastSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 统一推流: 捕获共享播放窗口并发布到本房间
+  /// 本地视频推流: 启动本房间播放进程(初始暂停), 捕获其窗口并发布到本房间。
+  /// 任一环节失败则关闭播放进程, 不留孤儿窗口
+  Future<void> startVideoCast(String path,
+      {required void Function(bool playing, int positionMs, int durationMs)
+          onPlayingChanged,
+      required Future<void> Function() onClosedExternally}) async {
+    await stopCast();
+    _requireParticipant();
+    final videoPlayer = RoomVideoPlayer(roomCode: roomCode);
+    player = videoPlayer;
+    videoPlayer.onPlayingChanged = onPlayingChanged;
+    videoPlayer.onClosedExternally = () async {
+      if (identical(player, videoPlayer)) await onClosedExternally();
+    };
+    videoPlayer.addListener(notifyListeners);
+    try {
+      await videoPlayer.start(path);
+      final source = await videoPlayer.waitWindowSource();
+      await startWindowCast(source, label: videoPlayer.fileName);
+    } catch (_) {
+      await _closePlayer();
+      rethrow;
+    }
+  }
+
+  Future<void> _closePlayer() async {
+    final videoPlayer = player;
+    player = null;
+    if (videoPlayer == null) return;
+    videoPlayer.onClosedExternally = null;
+    videoPlayer.onPlayingChanged = null;
+    videoPlayer.removeListener(notifyListeners);
+    await videoPlayer.close();
+    videoPlayer.dispose();
+  }
+
+  /// 捕获指定窗口并发布到本房间
   Future<void> startWindowCast(webrtc.DesktopCapturerSource source,
       {String? label}) async {
-    await stopCast();
+    await _stopTracks();
     final participant = _requireParticipant();
     final bool hasCaptureAudio;
     try {
@@ -195,8 +236,14 @@ class CastSession extends ChangeNotifier {
     return participant;
   }
 
-  /// 停止推流: 任一环节失败/超时不阻塞后续清理, 保证本地状态一定复位
+  /// 停止推流: 关闭本房间播放进程并停止捕获轨(播放进度随进程归零)
   Future<void> stopCast() async {
+    await _closePlayer();
+    await _stopTracks();
+  }
+
+  /// 停止发布轨: 任一环节失败/超时不阻塞后续清理, 保证本地状态一定复位
+  Future<void> _stopTracks() async {
     final participant = _lkRoom?.localParticipant;
     if (participant != null) {
       for (final publication in participant.trackPublications.values.toList()) {

@@ -74,7 +74,7 @@ class _RoomPageState extends State<RoomPage> {
   bool _uiHidden = false;
   bool _landscape = false;
 
-  /// 统一推流播放状态(初始暂停, 由 PC 端/手机端控制播放/暂停)
+  /// 本房间推流播放状态(初始暂停, 由 PC 端/手机端控制播放/暂停)
   bool _castPlaying = false;
   bool _castControlPending = false;
   int _chatId = 0;
@@ -659,7 +659,7 @@ class _RoomPageState extends State<RoomPage> {
     if (mounted) setState(() {});
   }
 
-  /// 统一推流播放/暂停(经服务端转发给 PC 端执行, 全部房间同步)
+  /// 本房间推流播放/暂停(经服务端转发给 PC 端本房间播放器执行)
   Future<void> _togglePlayback() async {
     if (_state?.casting != true) {
       _showToast('当前没有推流内容');

@@ -59,17 +59,16 @@ class RoomModel {
   bool get scheduled => status == 'SCHEDULED';
   bool get casting => castType != null;
 
-  /// 推流状态描述(类型 + 源名称)
+  /// 推流内容描述: 视频推流只显示完整文件名, 其它类型显示类型名称
   String? get castDescription {
     if (castType == null) return null;
-    final typeName = switch (castType) {
+    final label = castLabel;
+    if (label != null && label.isNotEmpty) return label;
+    return switch (castType) {
       'SCREEN' => '屏幕共享',
-      'VIDEO' => '视频推流',
       'CAMERA' => '摄像头推流',
       _ => '推流中',
     };
-    final label = castLabel;
-    return label == null || label.isEmpty ? typeName : '$typeName($label)';
   }
 
   factory RoomModel.fromJson(Map<String, dynamic> json) => RoomModel(

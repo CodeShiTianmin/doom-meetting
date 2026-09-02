@@ -94,7 +94,7 @@ void _removeWindowChrome(int hwnd) {
   _setWindowPos(hwnd, 0, 0, 0, 0, 0, _swpFrameChangedFlags);
 }
 
-/// 后台窗口模式(统一推流): 不进任务栏、不抢焦点、压到最底层,
+/// 后台窗口模式(房间推流): 不进任务栏、不抢焦点、压到最底层,
 /// 推流时不弹出视频窗口干扰操作; 窗口仍可见(未最小化), 不影响窗口捕获
 void _applyBackgroundMode(int hwnd) {
   final exStyle = _getWindowLongPtr(hwnd, _gwlExStyle);
@@ -154,7 +154,7 @@ class _PlayerWindowAppState extends State<PlayerWindowApp> {
     super.initState();
     _player = Player();
     _videoController = VideoController(_player);
-    // 统一推流模式下初始暂停, 由 PC 端或手机端控制播放/暂停
+    // 推流初始暂停, 由 PC 端或本房间手机端控制播放/暂停
     _player.open(Media(widget.params['path'] as String),
         play: widget.params['paused'] != true);
 

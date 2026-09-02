@@ -271,7 +271,7 @@ public class MemberService {
         }
     }
 
-    /** 手机端播放控制: 转发给 PC 端统一播放器执行(播放/暂停/进度) */
+    /** 手机端播放控制: 转发给 PC 端本房间播放器执行(播放/暂停/进度) */
     @Transactional(readOnly = true)
     public void castControl(String roomCode, CastControlRequest request) {
         Room room = roomService.getRoomByCode(roomCode);

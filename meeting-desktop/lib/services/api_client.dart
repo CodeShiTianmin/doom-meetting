@@ -138,23 +138,25 @@ class ApiClient {
     return RoomModel.fromJson(_unwrap(response));
   }
 
-  /// 统一推流登记: 全部未关闭房间登记同一推流内容
-  Future<void> startCastAll(String type, {String? label}) async {
-    final response = await _dio.post('/api/admin/rooms/cast/start-all',
-        data: {'type': type, 'label': label, 'replace': true});
-    _ensureOk(response);
+  /// 单房推流登记(每个房间独立推流)
+  Future<RoomModel> startCast(int id, String type,
+      {String? label, bool replace = true}) async {
+    final response = await _dio.post('/api/admin/rooms/$id/cast/start',
+        data: {'type': type, 'label': label, 'replace': replace});
+    return RoomModel.fromJson(_unwrap(response));
   }
 
-  /// 统一停止推流登记
-  Future<void> stopCastAll() async {
-    final response = await _dio.post('/api/admin/rooms/cast/stop-all');
-    _ensureOk(response);
+  /// 单房停止推流登记
+  Future<RoomModel> stopCast(int id) async {
+    final response = await _dio.post('/api/admin/rooms/$id/cast/stop');
+    return RoomModel.fromJson(_unwrap(response));
   }
 
-  /// 统一播放状态广播(同步到全部手机端)
-  Future<void> broadcastPlayback(
+  /// 单房播放状态广播(同步到该房间的手机端)
+  Future<void> broadcastPlayback(int id,
       {required bool playing, int? positionMs, int? durationMs}) async {
-    final response = await _dio.post('/api/admin/rooms/cast/playback', data: {
+    final response =
+        await _dio.post('/api/admin/rooms/$id/cast/playback', data: {
       'playing': playing,
       'positionMs': positionMs,
       'durationMs': durationMs,
