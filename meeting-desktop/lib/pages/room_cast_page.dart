@@ -79,6 +79,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
           _lastRefreshAt = DateTime.now();
         });
       }
+      // 房间在服务端已退出(会议结束/关闭/重置)时, 本地同步停止推流并清空文件
+      unawaited(CastManager.instance.syncRooms([room]));
     } catch (error) {
       if (mounted && _room == null) {
         setState(() => _loadError = describeError(error));

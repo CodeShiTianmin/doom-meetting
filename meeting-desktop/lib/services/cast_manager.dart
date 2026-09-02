@@ -12,7 +12,8 @@ import 'room_video_player.dart';
 ///   (总览的「统一设置文件」只是把同一文件批量设置到各房间)
 /// - 「开始推流」才启动该房间的播放进程(初始暂停)并发布到该房间
 /// - 播放/暂停/进度由 PC 端或该房间手机端控制, 状态只广播到该房间
-/// - 结束会议/停止推流后关闭播放进程(进度归零), 已设置的文件保留
+/// - 手动停止推流后关闭播放进程(进度归零), 已设置的文件保留
+/// - 房间退出(结束会议重置/关闭/会议结束回到空闲)时停止推流并清空已设置的文件
 class CastManager extends ChangeNotifier {
   CastManager._();
 
@@ -20,8 +21,11 @@ class CastManager extends ChangeNotifier {
 
   final Map<int, CastSession> _sessions = {};
 
-  /// 各房间已设置的本地视频文件路径(不随停止推流/结束会议清除)
+  /// 各房间已设置的本地视频文件路径(手动停止推流不清除, 房间退出时清除)
   final Map<int, String> _videoFiles = {};
+
+  /// 各房间上次同步到的服务端状态, 用于识别“房间退出”的状态跃迁
+  final Map<int, String> _lastStatus = {};
 
   /// 正在启动/停止推流的房间 id, 防止重入与周期刷新误停
   final Set<int> _transitioning = {};
@@ -62,6 +66,11 @@ class CastManager extends ChangeNotifier {
   void setVideoFile(int roomId, String path) {
     _videoFiles[roomId] = path;
     notifyListeners();
+  }
+
+  /// 清空房间已设置的视频文件
+  void clearVideoFile(int roomId) {
+    if (_videoFiles.remove(roomId) != null) notifyListeners();
   }
 
   /// 批量设置视频文件到多个房间(仅记录, 不推流)。
@@ -150,9 +159,12 @@ class CastManager extends ChangeNotifier {
     }
   }
 
-  /// 停止本房间推流: 关闭播放进程(进度归零)并停止捕获轨, 已设置的文件保留
-  Future<void> stopVideoCast(int roomId, {bool notifyServer = true}) async {
+  /// 停止本房间推流: 关闭播放进程(进度归零)并停止捕获轨;
+  /// [clearFile] 为 true 时同时清空已设置的视频文件(房间退出时使用)
+  Future<void> stopVideoCast(int roomId,
+      {bool notifyServer = true, bool clearFile = false}) async {
     _transitioning.add(roomId);
+    if (clearFile) _videoFiles.remove(roomId);
     try {
       final session = _sessions[roomId];
       if (session != null) {
@@ -172,12 +184,23 @@ class CastManager extends ChangeNotifier {
   }
 
   /// 按总览最新房间状态同步本地推流:
-  /// 服务端已结束会议/关闭/停止推流的房间, 本地同步停止播放进程与捕获轨
-  /// (视频状态归零, 已设置的文件保留)
+  /// - 房间退出(运行中 -> 关闭/空闲, 或被关闭): 停止推流并清空已设置的文件
+  /// - 服务端已停止推流的房间: 本地同步停止播放进程与捕获轨(文件保留)
   Future<void> syncRooms(List<RoomModel> rooms) async {
     final now = DateTime.now();
     for (final room in rooms) {
       if (_transitioning.contains(room.id)) continue;
+      final previous = _lastStatus[room.id];
+      _lastStatus[room.id] = room.status;
+
+      final exited = previous != null &&
+          previous != room.status &&
+          (room.closed || (previous == 'RUNNING' && !room.running));
+      if (exited) {
+        await stopVideoCast(room.id, notifyServer: false, clearFile: true);
+        continue;
+      }
+
       final session = _sessions[room.id];
       if (session == null || !session.publishing) continue;
       final startedAt = _castStartedAt[room.id];
