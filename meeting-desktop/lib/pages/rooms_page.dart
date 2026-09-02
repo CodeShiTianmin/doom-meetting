@@ -16,7 +16,7 @@ import 'room_cast_page.dart';
 /// 每张房卡显示房号/人员名称/点赞/房间状态(未使用显示绿色空闲)/
 /// 会议倒计时(绿色, 最后 60 秒变红)/推流视频完整文件名(过长换行),
 /// 外置操作按钮: 手动结束会议(重置) / 摄像头权限(默认关闭) / 二维码获取。
-/// 顶栏「统一设置视频文件」仅批量设置各房间的推流文件, 推流由各房间手动独立发起。
+/// 顶栏「统一设置视频文件」仅批量设置各房间的推流文件, 进入各房间后自动开始推流。
 /// 点击房卡空白处进入单房推流页面。
 class RoomsPage extends StatefulWidget {
   const RoomsPage({super.key});
@@ -105,7 +105,7 @@ class _RoomsPageState extends State<RoomsPage> {
           _lastRefreshAt = DateTime.now();
         });
       }
-      // 结束会议重置/超时关闭的房间同步停止本地推流并清空已设置的文件
+      // 结束会议重置/超时关闭的房间同步停止本地推流(已设置的文件保留)
       unawaited(CastManager.instance.syncRooms(rooms));
     } catch (error) {
       if (error is ApiException && error.unauthorized) {
@@ -165,7 +165,7 @@ class _RoomsPageState extends State<RoomsPage> {
   }
 
   /// 手动结束会议: 旧二维码凭证失效, 房间变为空闲;
-  /// 本房间推流停止、视频进度归零, 已设置的视频文件一并清空
+  /// 本房间推流停止、状态初始化(视频进度归零), 已设置的视频文件保留
   Future<void> _resetRoom(RoomModel room) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -175,7 +175,7 @@ class _RoomsPageState extends State<RoomsPage> {
         title: Text('结束会议 · ${room.roomCode} 号房间'),
         content: const Text(
             '结束后房间变为空闲, 当前客户码/服务码立即失效并重新签发, 在线成员会被移出;\n'
-            '本房间推流停止、视频进度归零, 已设置的视频文件一并清空。确定结束吗?'),
+            '本房间推流停止、状态初始化, 已设置的视频文件保留。确定结束吗?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -190,16 +190,15 @@ class _RoomsPageState extends State<RoomsPage> {
     );
     if (confirmed != true || !mounted) return;
     await _runRoomAction(room, () async {
-      // 先停本地播放进程与捕获轨(进度归零)并清空文件, 服务端重置会一并清除推流登记
-      await CastManager.instance
-          .stopVideoCast(room.id, notifyServer: false, clearFile: true);
+      // 先停本地播放进程与捕获轨(进度归零), 服务端重置会一并清除推流登记
+      await CastManager.instance.stopVideoCast(room.id, notifyServer: false);
       await ApiClient.instance.resetRoom(room.id);
       _showMessage('${room.roomCode} 号房间已结束会议, 房间空闲, 凭证已重新签发');
     });
   }
 
   /// 统一设置视频文件: 仅批量设置各房间的推流文件, 不开始推流;
-  /// 推流由各房间在单房页面手动独立发起
+  /// 进入各房间单房页面后自动开始推流
   Future<void> _setVideoFileForAll() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -212,7 +211,7 @@ class _RoomsPageState extends State<RoomsPage> {
         CastManager.instance.setVideoFileForRooms(_rooms, path);
     final fileName = CastManager.fileNameOf(path);
     if (skipped.isEmpty) {
-      _showMessage('已为全部房间设置视频文件「$fileName」, 请进入各房间手动开始推流');
+      _showMessage('已为全部房间设置视频文件「$fileName」, 进入各房间后自动开始推流');
     } else {
       _showMessage(
           '已设置视频文件「$fileName」; 以下房间正在推流未更改: ${skipped.join('、')}',

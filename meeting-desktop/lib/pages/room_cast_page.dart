@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -13,8 +14,9 @@ import '../services/room_video_player.dart';
 /// 单房推流界面(正式版):
 /// 显示房号 / 推流内容(视频完整文件名) / 成员信息 / 会议倒计时,
 /// 提供选择视频文件、开始/停止推流、播放控制(暂停/播放/进度条)、返回总览按钮。
-/// 选择文件仅设置本房间要推的视频, 推流需手动点击开始; 每个房间独立推流、
-/// 独立控制, 视频初始暂停, 由 PC 端或本房间手机端控制播放。
+/// 本房间已设置视频文件时, 进入页面或选择文件后直接开始推流(视频暂停在 0 秒),
+/// 推流中不再显示选择文件/开始推流按钮; 文件不存在时弹窗提示并保留按钮。
+/// 每个房间独立推流、独立控制, 由 PC 端或本房间手机端控制播放。
 class RoomCastPage extends StatefulWidget {
   final int roomId;
 
@@ -44,6 +46,9 @@ class _RoomCastPageState extends State<RoomCastPage> {
   Timer? _tickTimer;
   double? _seekPreview;
   DateTime _lastRefreshAt = DateTime.now();
+
+  /// 进入页面后仅自动推流一次, 周期刷新不重复触发
+  bool _autoStartAttempted = false;
 
   @override
   void initState() {
@@ -79,8 +84,12 @@ class _RoomCastPageState extends State<RoomCastPage> {
           _lastRefreshAt = DateTime.now();
         });
       }
-      // 房间在服务端已退出(会议结束/关闭/重置)时, 本地同步停止推流并清空文件
+      // 房间在服务端已退出(会议结束/关闭/重置)时, 本地同步停止推流
       unawaited(CastManager.instance.syncRooms([room]));
+      if (!_autoStartAttempted) {
+        _autoStartAttempted = true;
+        unawaited(_autoStartCast());
+      }
     } catch (error) {
       if (mounted && _room == null) {
         setState(() => _loadError = describeError(error));
@@ -98,7 +107,34 @@ class _RoomCastPageState extends State<RoomCastPage> {
 
   bool get _localCasting => CastManager.instance.isCasting(widget.roomId);
 
-  /// 选择本房间视频文件(仅设置, 不推流); 推流中更换文件需先停止当前推流
+  /// 已设置视频文件且尚未推流时, 进入页面直接开始推流(视频暂停在 0 秒)
+  Future<void> _autoStartCast() async {
+    if (!mounted || _busy || _localCasting) return;
+    if (_room?.closed ?? false) return;
+    if (CastManager.instance.videoFileOf(widget.roomId) == null) return;
+    await _startCast();
+  }
+
+  /// 视频文件不存在时弹窗提示, 文件设置保留, 下方按钮照常显示
+  Future<void> _showFileMissingDialog(String path) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.error_outline, color: Colors.redAccent),
+        title: const Text('文件不存在'),
+        content: Text('本房间设置的视频文件不存在, 无法推流:\n$path\n\n'
+            '请重新选择视频文件。'),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了')),
+        ],
+      ),
+    );
+  }
+
+  /// 选择本房间视频文件并直接开始推流; 推流中更换文件需先停止当前推流
   Future<void> _pickVideoFile() async {
     if (_busy) return;
     if (_localCasting) {
@@ -125,7 +161,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: RoomCastPage.videoExtensions,
-      dialogTitle: '选择本房间视频文件(仅设置, 不上传服务器)',
+      dialogTitle: '选择本房间视频文件(不上传服务器)',
     );
     final path = result?.files.single.path;
     if (path == null || !mounted || _busy) return;
@@ -136,24 +172,32 @@ class _RoomCastPageState extends State<RoomCastPage> {
         await CastManager.instance.stopVideoCast(widget.roomId);
       }
       CastManager.instance.setVideoFile(widget.roomId, path);
-      _showToast('已设置视频文件「${CastManager.fileNameOf(path)}」, 点击「开始推流」后推到本房间');
     } finally {
       if (mounted) setState(() => _busy = false);
-      await _refreshRoom();
     }
+    await _startCast();
   }
 
-  /// 手动开始本房间推流(仅本房间, 初始暂停)
+  /// 开始本房间推流(仅本房间, 视频暂停在 0 秒); 文件不存在时弹窗提示
   Future<void> _startCast() async {
     if (_busy) return;
     if (_room?.closed ?? false) {
       _showToast('房间已关闭, 请先在总览重置房间', error: true);
       return;
     }
+    final path = CastManager.instance.videoFileOf(widget.roomId);
+    if (path == null || path.isEmpty) {
+      _showToast('请先为本房间选择视频文件', error: true);
+      return;
+    }
+    if (!File(path).existsSync()) {
+      await _showFileMissingDialog(path);
+      return;
+    }
     setState(() => _busy = true);
     try {
       await CastManager.instance.startVideoCast(widget.roomId);
-      _showToast('本房间已开始推流(初始暂停), 点击播放按钮开始播放');
+      _showToast('本房间已开始推流(视频暂停在 0 秒), 点击播放按钮开始播放');
     } catch (error) {
       _showToast('推流启动失败: ${describeError(error)}', error: true);
     } finally {
@@ -343,7 +387,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
     );
   }
 
-  /// 左侧: 推流预览 + 选文件/开始/停止推流按钮 + 播放控制
+  /// 左侧: 推流预览 + 按钮 + 播放控制;
+  /// 推流中不显示选择文件/开始推流按钮, 仅保留停止推流与播放控制
   Widget _buildMainPanel(
       CastManager manager, CastSession? session, ColorScheme scheme) {
     // 服务端登记推流中但本机未推流(如重启前遗留)时也提供停止按钮清理登记
@@ -359,11 +404,12 @@ class _RoomCastPageState extends State<RoomCastPage> {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _pickVideoFile,
-              icon: const Icon(Icons.video_file_outlined),
-              label: Text(hasFile ? '更换视频文件' : '选择视频文件'),
-            ),
+            if (!casting)
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _pickVideoFile,
+                icon: const Icon(Icons.video_file_outlined),
+                label: Text(hasFile ? '更换视频文件' : '选择视频文件'),
+              ),
             if (casting)
               FilledButton.icon(
                 style: FilledButton.styleFrom(backgroundColor: Colors.red),
@@ -436,7 +482,7 @@ class _RoomCastPageState extends State<RoomCastPage> {
                   const SizedBox(height: 10),
                   Text(
                       sessionError ??
-                          '暂无推流 — 先选择视频文件, 再点击「开始推流」',
+                          '暂无推流 — 选择视频文件后自动开始推流',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           color: sessionError != null

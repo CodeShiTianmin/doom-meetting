@@ -7,13 +7,15 @@ import 'room_video_player.dart';
 
 /// 房间推流管理(单例):
 ///
-/// 每个房间独立设置视频文件、独立手动推流、独立播放控制, 互不影响:
-/// - 「设置文件」只记录该房间要推的本地视频路径, 不启动任何推流
-///   (总览的「统一设置文件」只是把同一文件批量设置到各房间)
-/// - 「开始推流」才启动该房间的播放进程(初始暂停)并发布到该房间
+/// 每个房间独立设置视频文件、独立推流、独立播放控制, 互不影响:
+/// - 「设置文件」只记录该房间要推的本地视频路径, 本身不启动推流
+///   (总览的「统一设置文件」只是把同一文件批量设置到各房间,
+///   进入单房页面后自动开始推流)
+/// - 「开始推流」启动该房间的播放进程(暂停在 0 秒)并发布到该房间
 /// - 播放/暂停/进度由 PC 端或该房间手机端控制, 状态只广播到该房间
-/// - 手动停止推流后关闭播放进程(进度归零), 已设置的文件保留
-/// - 房间退出(结束会议重置/关闭/会议结束回到空闲)时停止推流并清空已设置的文件
+/// - 停止推流后关闭播放进程(进度归零), 已设置的文件保留
+/// - 房间退出(结束会议重置/关闭/会议结束回到空闲)时停止推流并初始化状态,
+///   已设置的文件保留, 下次进入该房间可直接推流
 class CastManager extends ChangeNotifier {
   CastManager._();
 
@@ -21,7 +23,7 @@ class CastManager extends ChangeNotifier {
 
   final Map<int, CastSession> _sessions = {};
 
-  /// 各房间已设置的本地视频文件路径(手动停止推流不清除, 房间退出时清除)
+  /// 各房间已设置的本地视频文件路径(停止推流/房间退出均不清除)
   final Map<int, String> _videoFiles = {};
 
   /// 各房间上次同步到的服务端状态, 用于识别“房间退出”的状态跃迁
@@ -121,7 +123,7 @@ class CastManager extends ChangeNotifier {
     return session;
   }
 
-  /// 手动开始本房间推流: 用已设置的视频文件启动播放进程(初始暂停),
+  /// 开始本房间推流: 用已设置的视频文件启动播放进程(暂停在 0 秒),
   /// 捕获其窗口发布到本房间, 并向服务端登记本房间推流
   Future<void> startVideoCast(int roomId) async {
     final path = _videoFiles[roomId];
@@ -159,12 +161,9 @@ class CastManager extends ChangeNotifier {
     }
   }
 
-  /// 停止本房间推流: 关闭播放进程(进度归零)并停止捕获轨;
-  /// [clearFile] 为 true 时同时清空已设置的视频文件(房间退出时使用)
-  Future<void> stopVideoCast(int roomId,
-      {bool notifyServer = true, bool clearFile = false}) async {
+  /// 停止本房间推流: 关闭播放进程(进度归零)并停止捕获轨, 已设置的视频文件保留
+  Future<void> stopVideoCast(int roomId, {bool notifyServer = true}) async {
     _transitioning.add(roomId);
-    if (clearFile) _videoFiles.remove(roomId);
     try {
       final session = _sessions[roomId];
       if (session != null) {
@@ -184,7 +183,7 @@ class CastManager extends ChangeNotifier {
   }
 
   /// 按总览最新房间状态同步本地推流:
-  /// - 房间退出(运行中 -> 关闭/空闲, 或被关闭): 停止推流并清空已设置的文件
+  /// - 房间退出(运行中 -> 关闭/空闲, 或被关闭): 停止推流并初始化状态(文件保留)
   /// - 服务端已停止推流的房间: 本地同步停止播放进程与捕获轨(文件保留)
   Future<void> syncRooms(List<RoomModel> rooms) async {
     final now = DateTime.now();
@@ -197,7 +196,7 @@ class CastManager extends ChangeNotifier {
           previous != room.status &&
           (room.closed || (previous == 'RUNNING' && !room.running));
       if (exited) {
-        await stopVideoCast(room.id, notifyServer: false, clearFile: true);
+        await stopVideoCast(room.id, notifyServer: false);
         continue;
       }
 
