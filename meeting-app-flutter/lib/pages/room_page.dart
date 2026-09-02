@@ -25,7 +25,8 @@ import 'join_page.dart';
 /// 会议房间页:
 /// - PC 隐藏推流(屏幕/本地视频/摄像头)为主画面, 两客户互看小窗(受 PC 端开关控制)
 /// - 明暗/音量本地调节
-/// - 会议已进行时长 + 剩余倒计时, 点赞飘心, 心跳保活
+/// - 剩余倒计时, 点赞飘心, 心跳保活
+/// - 视频中间的暂停/播放按钮控制 PC 端本房间推流的播放
 /// - 允许截屏, 禁止录制: 检测 -> 遮挡 -> 上报, 全屏水印
 class RoomPage extends StatefulWidget {
   final JoinSession session;
@@ -62,7 +63,6 @@ class _RoomPageState extends State<RoomPage> {
   lk.ConnectionQuality _networkQuality = lk.ConnectionQuality.unknown;
   double _brightness = 0.7;
   double _volume = 0.8;
-  int? _elapsedSeconds;
   int? _remainingSeconds;
   bool _recordingBlocked = false;
   String? _closedReason;
@@ -255,25 +255,10 @@ class _RoomPageState extends State<RoomPage> {
   void _tickClock() {
     final state = _state;
     if (state == null || !state.running) return;
-    int? elapsed = _elapsedSeconds;
-    final startAt = state.meetingStartAt;
-    if (startAt != null) {
-      final start = DateTime.tryParse(startAt);
-      if (start != null) {
-        elapsed = DateTime.now().difference(start).inSeconds;
-      }
-    }
-    int? remaining = _remainingSeconds;
-    if (remaining != null && remaining > 0) {
-      remaining = remaining - 1;
-    }
-    // 仅在数值变化时重建, 避免每秒全页 setState
-    if (elapsed != _elapsedSeconds || remaining != _remainingSeconds) {
-      setState(() {
-        _elapsedSeconds = elapsed;
-        _remainingSeconds = remaining;
-      });
-    }
+    final remaining = _remainingSeconds;
+    // 倒计时归零后不再重建, 避免每秒全页 setState
+    if (remaining == null || remaining <= 0) return;
+    setState(() => _remainingSeconds = remaining - 1);
   }
 
   // ---------------- LiveKit ----------------
@@ -993,6 +978,10 @@ class _RoomPageState extends State<RoomPage> {
                 ),
               ),
             ),
+          // 视频中间的暂停/播放按钮: 控制 PC 端本房间推流的播放;
+          // 暂停时常显, 播放中随上下菜单一起隐藏
+          if (state.casting && (!_uiHidden || !_castPlaying))
+            Center(child: _buildCenterPlaybackButton()),
           // 上下菜单可隐藏, 专注观看投屏与聊天
           _buildTopBar(state),
           FloatingHearts(hearts: _hearts),
@@ -1044,6 +1033,24 @@ class _RoomPageState extends State<RoomPage> {
           if (_recordingBlocked) _buildRecordingOverlay(),
           if (_closedReason != null) _buildClosedOverlay(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCenterPlaybackButton() {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.45),
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: _togglePlayback,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Icon(
+              _castPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 48),
+        ),
       ),
     );
   }
@@ -1100,41 +1107,19 @@ class _RoomPageState extends State<RoomPage> {
               colors: [Color(0xD905071C), Colors.transparent],
             ),
           ),
-          // 两行布局: 第一行为会议状态+房间名, 第二行为时长/倒计时/点赞/网络
+          // 两行布局: 第一行为房间名, 第二行为倒计时/点赞/网络
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Chip(
-                    visualDensity: VisualDensity.compact,
-                    backgroundColor:
-                        state.running ? Colors.green.shade700 : Colors.blueGrey,
-                    label: Text(
-                      state.running
-                          ? '会议进行中'
-                          : state.closed
-                              ? '已结束'
-                              : '等待就位',
-                      style: const TextStyle(fontSize: 11, color: Colors.white),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${state.name} · ${state.roomCode}',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
+              Text(
+                '${state.name} · ${state.roomCode}',
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  _infoChip(Icons.access_time, _formatClock(_elapsedSeconds)),
-                  const SizedBox(width: 6),
                   // 倒计时绿色显示, 最后 60 秒变红
                   if (_remainingSeconds != null) ...[
                     _infoChip(Icons.hourglass_bottom,
@@ -1280,12 +1265,6 @@ class _RoomPageState extends State<RoomPage> {
                       }
                     },
                     icon: const Icon(Icons.chat_bubble_outline),
-                  ),
-                  IconButton.filledTonal(
-                    onPressed: _togglePlayback,
-                    icon: Icon(_castPlaying
-                        ? Icons.pause_circle_outline
-                        : Icons.play_circle_outline),
                   ),
                   IconButton.filled(
                     style: IconButton.styleFrom(
