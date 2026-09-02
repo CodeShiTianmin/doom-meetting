@@ -90,7 +90,10 @@ class _RoomsPageState extends State<RoomsPage> {
     if (_refreshing) return;
     _refreshing = true;
     try {
-      final rooms = await ApiClient.instance.listRooms();
+      // 总览仅展示系统固定房间(1-24 号房), 后台手动创建的其它房间不在此显示
+      final rooms = (await ApiClient.instance.listRooms())
+          .where((room) => room.fixed)
+          .toList();
       // 固定房号 1-24 按数字排序显示
       rooms.sort((a, b) => (int.tryParse(a.roomCode) ?? 0)
           .compareTo(int.tryParse(b.roomCode) ?? 0));

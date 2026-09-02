@@ -115,6 +115,15 @@ public class RoomService {
         }
     }
 
+    /** 是否为系统固定房间(1-N 号房, N 取当前配置的固定房间数) */
+    private boolean isFixedRoom(Room room) {
+        if (!"system".equals(room.getCreatedBy())) {
+            return false;
+        }
+        long no = roomCodeOrder(room);
+        return no >= 1 && no <= properties.getRoom().getFixedRoomCount();
+    }
+
     @Transactional(readOnly = true)
     public RoomResponse getRoom(Long id) {
         Room room = getRoomById(id);
@@ -581,6 +590,7 @@ public class RoomService {
                 room.getId(),
                 room.getRoomCode(),
                 room.getName(),
+                isFixedRoom(room),
                 room.getStatus().name(),
                 room.getVideoCallEnabled(),
                 room.getCameraEnabled(),
