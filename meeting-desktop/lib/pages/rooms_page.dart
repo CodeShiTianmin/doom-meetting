@@ -657,17 +657,9 @@ class _RoomCard extends StatelessWidget {
                   ],
                 ),
               ),
+              // 底部操作栏: 左侧摄像头/二维码, 右侧手动结束会议大按钮
               Row(
                 children: [
-                  IconButton(
-                    tooltip: room.closed
-                        ? '重置房间(重新签发凭证)'
-                        : '手动结束会议(恢复初始状态)',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: busy ? null : onReset,
-                    icon: const Icon(Icons.stop_circle_outlined, size: 20),
-                    color: Colors.redAccent,
-                  ),
                   IconButton(
                     tooltip: room.cameraEnabled ? '关闭摄像头权限' : '开放摄像头权限',
                     visualDensity: VisualDensity.compact,
@@ -687,14 +679,25 @@ class _RoomCard extends StatelessWidget {
                     icon: const Icon(Icons.qr_code, size: 20),
                   ),
                   const Spacer(),
-                  if (busy)
-                    const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                  else
-                    const Icon(Icons.chevron_right,
-                        size: 18, color: Colors.white38),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.redAccent,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      textStyle: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                    onPressed: busy ? null : onReset,
+                    icon: busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.stop_circle_outlined, size: 22),
+                    label: Text(room.closed ? '重置房间' : '结束会议'),
+                  ),
                 ],
               ),
             ],
