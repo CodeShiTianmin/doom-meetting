@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -16,7 +17,8 @@ import 'room_cast_page.dart';
 /// 每张房卡显示房号/人员名称/点赞/房间状态(未使用显示绿色空闲)/
 /// 会议倒计时(绿色, 最后 60 秒变红)/推流视频完整文件名(过长换行),
 /// 外置操作按钮: 手动结束会议(重置) / 摄像头权限(默认关闭) / 二维码获取。
-/// 顶栏「统一设置视频文件」仅批量设置各房间的推流文件, 进入各房间后自动开始推流。
+/// 顶栏「统一设置视频文件」批量设置各房间的推流文件并直接开始推流(视频暂停在 0 秒),
+/// 各房间手机端随即可看到画面。
 /// 点击房卡空白处进入单房推流页面。
 class RoomsPage extends StatefulWidget {
   const RoomsPage({super.key});
@@ -40,6 +42,10 @@ class _RoomsPageState extends State<RoomsPage> {
 
   /// 最近一次刷新到的剩余秒数, 由本地秒级递减驱动倒计时显示
   DateTime _lastRefreshAt = DateTime.now();
+
+  /// 统一推流进度: null 表示未在进行, 否则为已处理房间数
+  int? _castAllProgress;
+  int _castAllTotal = 0;
 
   @override
   void initState() {
@@ -197,26 +203,77 @@ class _RoomsPageState extends State<RoomsPage> {
     });
   }
 
-  /// 统一设置视频文件: 仅批量设置各房间的推流文件, 不开始推流;
-  /// 进入各房间单房页面后自动开始推流
+  /// 统一设置视频文件: 批量设置各房间的推流文件后逐房直接开始推流
+  /// (视频暂停在 0 秒, 手机端随即可看到画面);
+  /// 正在推流的房间跳过不改, 文件不存在时弹窗提示不处理
   Future<void> _setVideoFileForAll() async {
+    if (_castAllProgress != null) return;
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: RoomCastPage.videoExtensions,
-      dialogTitle: '选择视频文件(仅设置到全部房间, 不开始推流, 不上传服务器)',
+      dialogTitle: '选择视频文件(设置到全部房间并开始推流, 不上传服务器)',
     );
     final path = result?.files.single.path;
     if (path == null || !mounted) return;
-    final skipped =
-        CastManager.instance.setVideoFileForRooms(_rooms, path);
+    if (!File(path).existsSync()) {
+      await _showFileMissingDialog(path);
+      return;
+    }
+    final skipped = CastManager.instance.setVideoFileForRooms(_rooms, path);
     final fileName = CastManager.fileNameOf(path);
-    if (skipped.isEmpty) {
-      _showMessage('已为全部房间设置视频文件「$fileName」, 进入各房间后自动开始推流');
+    final targets = _rooms
+        .where((room) =>
+            !room.closed && CastManager.instance.videoFileOf(room.id) == path)
+        .toList();
+    setState(() {
+      _castAllProgress = 0;
+      _castAllTotal = targets.length;
+    });
+    final failed = <String>[];
+    try {
+      // 逐房启动播放进程并发布, 避免同时拉起大量进程
+      for (final room in targets) {
+        if (!mounted) return;
+        if (!CastManager.instance.isCasting(room.id)) {
+          try {
+            await CastManager.instance.startVideoCast(room.id);
+          } catch (_) {
+            failed.add(room.roomCode);
+          }
+        }
+        if (mounted) setState(() => _castAllProgress = _castAllProgress! + 1);
+      }
+    } finally {
+      if (mounted) setState(() => _castAllProgress = null);
+    }
+    unawaited(_refresh());
+    final notes = <String>[];
+    if (skipped.isNotEmpty) notes.add('正在推流未更改: ${skipped.join('、')}');
+    if (failed.isNotEmpty) notes.add('推流失败: ${failed.join('、')}');
+    if (notes.isEmpty) {
+      _showMessage('已为全部房间设置「$fileName」并开始推流(视频暂停在 0 秒)');
     } else {
-      _showMessage(
-          '已设置视频文件「$fileName」; 以下房间正在推流未更改: ${skipped.join('、')}',
+      _showMessage('已设置「$fileName」并推流; ${notes.join('; ')}',
           error: true);
     }
+  }
+
+  /// 视频文件不存在时弹窗提示
+  Future<void> _showFileMissingDialog(String path) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.error_outline, color: Colors.redAccent),
+        title: const Text('文件不存在'),
+        content: Text('选择的视频文件不存在, 无法设置与推流:\n$path\n\n请重新选择视频文件。'),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了')),
+        ],
+      ),
+    );
   }
 
   /// 摄像头权限开关(默认关闭, 在总览界面按房间开放)
@@ -300,9 +357,18 @@ class _RoomsPageState extends State<RoomsPage> {
             const SizedBox(width: 12),
           ],
           TextButton.icon(
-            onPressed: _rooms.isEmpty ? null : _setVideoFileForAll,
-            icon: const Icon(Icons.video_file_outlined, size: 18),
-            label: const Text('统一设置视频文件'),
+            onPressed: _rooms.isEmpty || _castAllProgress != null
+                ? null
+                : _setVideoFileForAll,
+            icon: _castAllProgress != null
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.video_file_outlined, size: 18),
+            label: Text(_castAllProgress != null
+                ? '统一推流中 $_castAllProgress / $_castAllTotal'
+                : '统一设置视频文件'),
           ),
           const SizedBox(width: 4),
           IconButton(
