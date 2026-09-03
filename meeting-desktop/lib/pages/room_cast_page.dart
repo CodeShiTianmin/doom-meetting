@@ -110,6 +110,8 @@ class _RoomCastPageState extends State<RoomCastPage> {
   /// 已设置视频文件且尚未推流时, 进入页面直接开始推流(视频暂停在 0 秒)
   Future<void> _autoStartCast() async {
     if (!mounted || _busy || _localCasting) return;
+    // 总览「统一设置视频文件」正在为本房间启动推流时不重复发起
+    if (CastManager.instance.isTransitioning(widget.roomId)) return;
     if (_room?.closed ?? false) return;
     if (CastManager.instance.videoFileOf(widget.roomId) == null) return;
     await _startCast();

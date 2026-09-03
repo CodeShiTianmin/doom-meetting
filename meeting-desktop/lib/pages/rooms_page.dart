@@ -234,7 +234,9 @@ class _RoomsPageState extends State<RoomsPage> {
       // 逐房启动播放进程并发布, 避免同时拉起大量进程
       for (final room in targets) {
         if (!mounted) return;
-        if (!CastManager.instance.isCasting(room.id)) {
+        // 已在推流或单房页面正在启动推流的房间跳过
+        if (!CastManager.instance.isCasting(room.id) &&
+            !CastManager.instance.isTransitioning(room.id)) {
           try {
             await CastManager.instance.startVideoCast(room.id);
           } catch (_) {

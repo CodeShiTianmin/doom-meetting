@@ -36,6 +36,9 @@ class CastSession extends ChangeNotifier {
   /// 系统伴音采集失败时的提示(推流仅有画面无声音)
   String? audioCaptureWarning;
 
+  /// 媒体连接断开(推流中断)时回调, 由管理器停止本房间推流并关闭播放进程
+  VoidCallback? onDisconnected;
+
   /// 连接 LiveKit(隐藏推流身份)
   Future<void> connect(String wsUrl, String token) async {
     if (connected) return;
@@ -85,6 +88,7 @@ class CastSession extends ChangeNotifier {
         sourceLabel = null;
         error = '媒体连接已断开';
         notifyListeners();
+        onDisconnected?.call();
       });
     connected = true;
     error = null;

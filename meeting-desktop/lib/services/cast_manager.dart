@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/room.dart';
@@ -108,6 +110,9 @@ class CastManager extends ChangeNotifier {
     if (existing == null) {
       // 会话状态(连接/推流/错误)变化同步通知页面刷新
       session.addListener(notifyListeners);
+      // 媒体连接断开时推流已中断: 关闭播放进程并同步服务端停止推流登记,
+      // 避免后台孤儿播放窗口与房卡“推流中”假状态
+      session.onDisconnected = () => unawaited(stopVideoCast(roomId));
     }
     _sessions[roomId] = session;
     try {
@@ -162,7 +167,8 @@ class CastManager extends ChangeNotifier {
 
   /// 停止本房间推流: 关闭播放进程(进度归零)并停止捕获轨, 已设置的视频文件保留
   Future<void> stopVideoCast(int roomId, {bool notifyServer = true}) async {
-    _transitioning.add(roomId);
+    // 开始推流过程中被停止(如播放进程中途退出)时, 过渡标记由开始流程自行清除
+    final added = _transitioning.add(roomId);
     try {
       final session = _sessions[roomId];
       if (session != null) {
@@ -176,7 +182,7 @@ class CastManager extends ChangeNotifier {
         } catch (_) {}
       }
     } finally {
-      _transitioning.remove(roomId);
+      if (added) _transitioning.remove(roomId);
       notifyListeners();
     }
   }
