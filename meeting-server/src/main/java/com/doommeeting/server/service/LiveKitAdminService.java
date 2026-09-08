@@ -83,6 +83,9 @@ public class LiveKitAdminService {
     }
 
     private String httpUrl() {
+        if (livekit.getApiUrl() != null && !livekit.getApiUrl().isBlank()) {
+            return livekit.getApiUrl();
+        }
         String wsUrl = livekit.getWsUrl();
         if (wsUrl.startsWith("wss://")) {
             return "https://" + wsUrl.substring(6);

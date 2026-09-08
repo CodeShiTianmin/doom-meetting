@@ -6,9 +6,10 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# 无域名部署: 直接指向公网 IP + Nginx 端口(见 deploy/windows/README.md)
 env:
-  API_BASE_URL: https://meet.ja4.club
-  WS_URL: wss://meet.ja4.club/ws
+  API_BASE_URL: http://61.145.190.188:8000
+  WS_URL: ws://61.145.190.188:8000/ws
 
 jobs:
   android:

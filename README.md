@@ -10,7 +10,7 @@
 | `meeting-admin/` | 公司管理系统(PC 端) | Vite + React 18 + Material UI |
 | `meeting-app-flutter/` | 手机客户端 App | Flutter 3 + livekit_client + STOMP |
 | `meeting-desktop/` | 公司 PC 投屏端(Windows) | Flutter Desktop + livekit_client + flutter_webrtc + media_kit |
-| `deploy/` | 一键部署 | Docker Compose(Nginx + Spring Boot + LiveKit(内置 TURN) + MySQL) |
+| `deploy/` | 一键部署 | Docker Compose(Nginx + Spring Boot + LiveKit(内置 TURN) + MySQL); `deploy/windows/` 为 Windows 原生服务部署脚本 |
 
 ## 核心功能
 
@@ -43,8 +43,19 @@ cd meeting-desktop && flutter pub get && flutter run -d windows \
   --dart-define=WS_URL=ws://<后端地址>:8080/ws
 
 # 或 Docker Compose 一键部署
-cd deploy && docker compose up -d
+cd deploy && cp .env.example .env && docker compose up -d
+
+# 或 Windows 原生部署(无 Docker, 所有组件注册为 Windows 服务), 见 deploy/windows/README.md
 ```
+
+### 无域名 / 纯 IP 部署
+
+运营商通常封锁家宽与商宽的 80/443 入站, 项目支持不依赖域名与 TLS 直接以 `IP:高位端口` 对外服务:
+
+- Nginx 宿主端口通过 `deploy/.env` 的 `NGINX_HTTP_PORT`/`NGINX_HTTPS_PORT` 配置(默认示例 `8000`/`8443`), 管理后台与 API 统一走 `http://<公网IP>:8000`。
+- `LIVEKIT_WS_URL=ws://<公网IP>:7880` 下发给客户端; 服务端调 LiveKit 管理接口可用 `LIVEKIT_API_URL` 单独指定内网地址。
+- Android/iOS 已放行明文 HTTP/WS, 客户端打包参数: `--dart-define=API_BASE_URL=http://<公网IP>:8000 --dart-define=WS_URL=ws://<公网IP>:8000/ws`。
+- 代价: 登录密码与 JWT 在网络上明文传输(音视频媒体仍由 DTLS-SRTP 加密), 仅建议内部/测试使用; 正式对外建议加域名 + TLS。
 
 ### 部署网络要求(WebRTC 连通性)
 
