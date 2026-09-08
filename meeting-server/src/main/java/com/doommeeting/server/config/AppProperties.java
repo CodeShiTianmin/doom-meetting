@@ -76,6 +76,8 @@ public class AppProperties {
         private String apiKey;
         private String apiSecret;
         private String wsUrl;
+        /** 服务端调用 LiveKit 管理 API 的内网地址, 为空时由 wsUrl 推导 */
+        private String apiUrl;
         private int tokenTtlMinutes = 180;
     }
 }

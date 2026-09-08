@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS invite_token (
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
     room_id    BIGINT      NOT NULL,
     token      VARCHAR(64) NOT NULL,
-    expire_at  DATETIME    NOT NULL,
+    expire_at  DATETIME    NULL COMMENT 'NULL 表示随房间关闭统一撤销',
     seat_no    INT,
     max_uses   INT         NOT NULL DEFAULT 2,
     used_count INT         NOT NULL DEFAULT 0,

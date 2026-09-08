@@ -39,7 +39,10 @@ services:
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-devsecret-devsecret-devsecret-32}
+      # 下发给客户端的 LiveKit 地址, 必须是客户端可达地址; 无域名/无 TLS 时用 ws://<公网IP>:7880
       LIVEKIT_WS_URL: ${LIVEKIT_WS_URL:-wss://your-domain:7880}
+      # 服务端调用 LiveKit 管理 API 的地址, 为空时由 LIVEKIT_WS_URL 推导; LiveKit 跑在宿主机(Windows)时填 http://host.docker.internal:7880
+      LIVEKIT_API_URL: ${LIVEKIT_API_URL:-}
       APP_JWT_SECRET: ${APP_JWT_SECRET:-ZG9vbS1tZWV0aW5nLXNlcnZlci1qd3Qtc2VjcmV0LWtleS0yMDI2LXZlcnktbG9uZw==}
       DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-jxys1}
       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
@@ -71,9 +74,10 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ../meeting-admin/dist:/usr/share/nginx/html:ro
+    # 运营商封禁 80/443 入站(国内家宽/商宽常见)时, 在 .env 中改为高位端口, 如 NGINX_HTTP_PORT=8000
     ports:
-      - "80:80"
-      - "443:443"
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
 
 volumes:
   mysql-data:

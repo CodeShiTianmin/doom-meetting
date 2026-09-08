@@ -52,6 +52,8 @@ app:
     api-key: ${LIVEKIT_API_KEY:devkey}
     api-secret: ${LIVEKIT_API_SECRET:devsecret-devsecret-devsecret-32}
     ws-url: ${LIVEKIT_WS_URL:wss://localhost:7880}
+    # 服务端调用 LiveKit 管理 API 的地址(如 http://host.docker.internal:7880), 为空时由 ws-url 推导
+    api-url: ${LIVEKIT_API_URL:}
     token-ttl-minutes: 180
   mobile-app:
     # 手机 App 版本检查与 APK 私发下载(不上架应用商店)
