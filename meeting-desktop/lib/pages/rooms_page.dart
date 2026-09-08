@@ -9,6 +9,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../models/room.dart';
 import '../services/api_client.dart';
 import '../services/cast_manager.dart';
+import '../services/qr_clipboard.dart';
 import '../services/ws_service.dart';
 import 'login_page.dart';
 import 'room_cast_page.dart';
@@ -89,7 +90,52 @@ class _RoomsPageState extends State<RoomsPage> {
       }
       return;
     }
+    if (event['type'] == 'UNDERSTAFFED_ALERT') {
+      _notifyUnderstaffed(event);
+    }
     _refresh();
+  }
+
+  /// 缺人红灯预警: 总览底部红色横幅 + 系统提示音, 房卡随后刷新为红灯
+  void _notifyUnderstaffed(Map<String, dynamic> event) {
+    if (!mounted) return;
+    final payload = event['payload'];
+    final data = payload is Map<String, dynamic> ? payload : const {};
+    final name = data['name'];
+    final nickname = data['nickname'];
+    final online = data['onlineCount'];
+    final max = data['maxMembers'];
+    final title = name is String && name.isNotEmpty
+        ? name
+        : '房间 ${event['roomCode'] ?? ''}';
+    final text = StringBuffer('红灯预警: $title 缺人');
+    if (online != null && max != null) text.write(' ($online/$max 人在线)');
+    if (nickname is String && nickname.isNotEmpty) {
+      text.write(', $nickname 已退出');
+    }
+    unawaited(SystemSound.play(SystemSoundType.alert));
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      duration: const Duration(seconds: 12),
+      backgroundColor: const Color(0xFF7F1D1D),
+      content: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Colors.white),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(text.toString(),
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+      action: SnackBarAction(
+        label: '知道了',
+        textColor: Colors.white,
+        onPressed: messenger.hideCurrentSnackBar,
+      ),
+    ));
   }
 
   Future<void> _refresh() async {
@@ -815,7 +861,7 @@ class _MemberChip extends StatelessWidget {
 }
 
 /// 单房二维码获取界面:
-/// 显示房号, 二维码上方备注「客户码1」「服务码2」, 各配复制按钮。
+/// 显示房号, 二维码上方备注「客户码1」「服务码2」, 各配复制按钮(复制二维码图片)。
 /// 关闭对话框不影响凭证有效性, 可反复调取; 仅手动结束会议后失效。
 class _QrDialog extends StatelessWidget {
   final RoomModel room;
@@ -832,12 +878,29 @@ class _QrDialog extends StatelessWidget {
     return index < _seatLabels.length ? _seatLabels[index] : '凭证${index + 1}';
   }
 
+  /// 复制二维码图片到剪贴板(可直接粘贴到微信/QQ 发送);
+  /// 不支持图片复制或失败时退回为复制链接文字
   Future<void> _copy(BuildContext context, String label, String url) async {
-    await Clipboard.setData(ClipboardData(text: url));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
+    final messenger = ScaffoldMessenger.of(context);
+    String message;
+    try {
+      final image = await QrClipboard.render(url,
+          caption: '$label · ${room.roomCode} 号房间');
+      final copied = await QrClipboard.copy(image);
+      image.dispose();
+      if (copied) {
+        message = '$label 二维码图片已复制, 可直接粘贴发送';
+      } else {
+        await Clipboard.setData(ClipboardData(text: url));
+        message = '当前系统不支持复制图片, 已复制 $label 链接';
+      }
+    } catch (_) {
+      await Clipboard.setData(ClipboardData(text: url));
+      message = '复制二维码图片失败, 已复制 $label 链接';
+    }
+    messenger
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text('$label 链接已复制')));
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -924,10 +987,13 @@ class _QrDialog extends StatelessWidget {
                   style: TextStyle(color: Colors.black54, fontSize: 12)),
         ),
         const SizedBox(height: 8),
-        TextButton.icon(
-          onPressed: url == null ? null : () => _copy(context, label, url),
-          icon: const Icon(Icons.copy, size: 16),
-          label: Text('复制$label'),
+        Tooltip(
+          message: '复制二维码图片到剪贴板',
+          child: TextButton.icon(
+            onPressed: url == null ? null : () => _copy(context, label, url),
+            icon: const Icon(Icons.copy, size: 16),
+            label: Text('复制$label'),
+          ),
         ),
       ],
     );

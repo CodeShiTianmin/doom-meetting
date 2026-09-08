@@ -203,13 +203,7 @@ public class MemberService {
                 "nickname", member.getNickname(),
                 "onlineCount", onlineCount));
 
-        // 进入缺人状态, 开始计时(超过阈值后台亮红灯)
-        if (room.getStatus() != RoomStatus.CLOSED
-                && onlineCount < maxMembers(room)
-                && room.getUnderstaffedSince() == null) {
-            room.setUnderstaffedSince(LocalDateTime.now());
-            roomRepository.save(room);
-        }
+        onMemberExit(room, member, onlineCount, LocalDateTime.now());
     }
 
     @Transactional
@@ -263,11 +257,38 @@ public class MemberService {
                     "onlineCount", onlineCount,
                     "reason", "HEARTBEAT_TIMEOUT"));
 
-            if (onlineCount < maxMembers(room)
-                    && room.getUnderstaffedSince() == null) {
-                room.setUnderstaffedSince(now);
-                roomRepository.save(room);
-            }
+            onMemberExit(room, member, onlineCount, now);
+        }
+    }
+
+    /**
+     * 成员退出(离会/心跳超时/被移出)后的缺人处理:
+     * 运行中的房间有人退出即缺人, 立即红灯预警并推送 PC 总览;
+     * 尚未运行(等待就位)的房间进入缺人计时, 超阈值后由调度亮红灯。
+     */
+    public void onMemberExit(Room room, RoomMember member, long onlineCount, LocalDateTime now) {
+        if (room.getStatus() == RoomStatus.CLOSED || onlineCount >= maxMembers(room)) {
+            return;
+        }
+        if (room.getUnderstaffedSince() == null) {
+            room.setUnderstaffedSince(now);
+        }
+        boolean alertNow = room.getStatus() == RoomStatus.RUNNING
+                && !Boolean.TRUE.equals(room.getUnderstaffedAlert());
+        if (alertNow) {
+            room.setUnderstaffedAlert(true);
+        }
+        roomRepository.save(room);
+        if (alertNow) {
+            eventLogService.log(room, RoomEventType.UNDERSTAFFED_ALERT,
+                    member.getNickname() + " 退出房间, 房间缺人, 红灯预警");
+            notificationService.pushToAdmin("UNDERSTAFFED_ALERT", room.getRoomCode(), Map.of(
+                    "roomId", room.getId(),
+                    "name", room.getName(),
+                    "nickname", member.getNickname(),
+                    "onlineCount", onlineCount,
+                    "maxMembers", maxMembers(room),
+                    "understaffedSince", String.valueOf(room.getUnderstaffedSince())));
         }
     }
 
