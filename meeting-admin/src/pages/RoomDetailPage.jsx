@@ -94,6 +94,68 @@ async function copyText(text) {
   document.body.removeChild(textarea)
 }
 
+/** 二维码 SVG -> PNG 图片写入剪贴板(可直接粘贴到微信/QQ 发送); 浏览器不支持时抛错 */
+async function copyQrImage(svg, scale = 3) {
+  if (!svg || typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+    throw new Error('clipboard image unsupported')
+  }
+  const size = Number(svg.getAttribute('width') || svg.clientWidth || 160) * scale
+  const padding = Math.round(size / 12)
+  const xml = new XMLSerializer().serializeToString(svg)
+  const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }))
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image()
+      image.onload = () => resolve(image)
+      image.onerror = () => reject(new Error('svg render failed'))
+      image.src = url
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = size + padding * 2
+    canvas.height = size + padding * 2
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, padding, padding, size, size)
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png')
+    })
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+/** 二维码 + 「复制二维码」按钮: 复制图片到剪贴板, 浏览器不支持时退回复制链接 */
+function InviteQrCode({ value, size, onToast, onError, sx }) {
+  const svgRef = useRef(null)
+  const copy = async () => {
+    try {
+      await copyQrImage(svgRef.current)
+      onToast('二维码图片已复制, 可直接粘贴发送')
+      return
+    } catch {
+      // 退回复制链接
+    }
+    try {
+      await copyText(value)
+      onToast('当前浏览器不支持复制图片, 已复制邀请链接')
+    } catch {
+      onError('复制失败, 请手动复制链接')
+    }
+  }
+  return (
+    <Stack alignItems="center" spacing={0.5}>
+      <Box sx={{ display: 'inline-block', p: 1, bgcolor: '#fff', borderRadius: 2, ...sx }}>
+        <QRCodeSVG ref={svgRef} value={value} size={size} />
+      </Box>
+      <Button size="small" startIcon={<ContentCopyIcon sx={{ fontSize: 14 }} />} onClick={copy}>
+        复制二维码
+      </Button>
+    </Stack>
+  )
+}
+
 function MetricCard({ label, children }) {
   return (
     <Card sx={{ height: '100%' }}>
@@ -799,9 +861,7 @@ export default function RoomDetailPage() {
                             <Chip size="small" label={invite.used ? '已使用' : '待扫码'} color={invite.used ? 'default' : 'primary'} variant="outlined" />
                           </Stack>
                           {invite.inviteUrl && (
-                            <Box sx={{ display: 'inline-block', p: 1, bgcolor: '#fff', borderRadius: 2 }}>
-                              <QRCodeSVG value={invite.inviteUrl} size={132} />
-                            </Box>
+                            <InviteQrCode value={invite.inviteUrl} size={132} onToast={setToast} onError={setError} />
                           )}
                           {invite.inviteUrl && (
                             <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} sx={{ mt: 0.5 }}>
@@ -826,9 +886,13 @@ export default function RoomDetailPage() {
               )}
               {!closed && invites.length === 0 && room.qrContent && (
                 <Box>
-                  <Box sx={{ display: 'inline-block', p: 1.5, bgcolor: '#fff', borderRadius: 3, border: '1px solid rgba(79, 70, 229, 0.25)' }}>
-                    <QRCodeSVG value={room.qrContent} size={168} />
-                  </Box>
+                  <InviteQrCode
+                    value={room.qrContent}
+                    size={168}
+                    onToast={setToast}
+                    onError={setError}
+                    sx={{ p: 1.5, borderRadius: 3, border: '1px solid rgba(79, 70, 229, 0.25)' }}
+                  />
                   {room.inviteUrl && (
                     <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} sx={{ mt: 1 }}>
                       <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 220 }} title={room.inviteUrl}>

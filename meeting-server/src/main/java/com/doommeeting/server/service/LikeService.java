@@ -31,6 +31,13 @@ public class LikeService {
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
 
+    /** 客户码座位号: 座位 1 为客户码, 其余座位为服务码 */
+    public static final int CUSTOMER_SEAT_NO = 1;
+
+    public static boolean isCustomerSeat(Integer seatNo) {
+        return seatNo != null && seatNo == CUSTOMER_SEAT_NO;
+    }
+
     @Transactional
     public long like(String roomCode, String identity, String memberToken) {
         // 行锁串行化同一房间的点赞计数, 避免并发 read-increment-write 丢失更新
@@ -40,6 +47,9 @@ public class LikeService {
             throw new BusinessException("房间已关闭, 无法点赞");
         }
         RoomMember member = memberService.requireOnlineMember(room, identity, memberToken);
+        if (!isCustomerSeat(member.getSeatNo())) {
+            throw new BusinessException(403, "仅客户码可点赞");
+        }
         if (likeRepository.countByRoomAndMemberIdentity(room, member.getIdentity()) > 0) {
             throw new BusinessException(409, "每人仅可点赞一次");
         }

@@ -89,6 +89,9 @@ class _RoomPageState extends State<RoomPage> {
 
   JoinSession get session => widget.session;
 
+  /// 仅客户码(座位 1)可点赞, 服务码不显示点赞按钮(服务端同样校验)
+  bool get _canLike => session.seatNo == 1;
+
   @override
   void initState() {
     super.initState();
@@ -1266,14 +1269,16 @@ class _RoomPageState extends State<RoomPage> {
                     },
                     icon: const Icon(Icons.chat_bubble_outline),
                   ),
-                  IconButton.filled(
-                    style: IconButton.styleFrom(
-                        backgroundColor: _liked
-                            ? Colors.grey.shade700
-                            : Colors.pink.shade400),
-                    onPressed: _like,
-                    icon: Icon(_liked ? Icons.favorite : Icons.favorite_border),
-                  ),
+                  if (_canLike)
+                    IconButton.filled(
+                      style: IconButton.styleFrom(
+                          backgroundColor: _liked
+                              ? Colors.grey.shade700
+                              : Colors.pink.shade400),
+                      onPressed: _like,
+                      icon:
+                          Icon(_liked ? Icons.favorite : Icons.favorite_border),
+                    ),
                   IconButton.filled(
                     tooltip: '离开会议',
                     style: IconButton.styleFrom(

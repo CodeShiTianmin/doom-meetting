@@ -39,10 +39,12 @@ public class MemberManagementService {
     public void kick(Long roomId, String identity, String operator) {
         Room room = roomService.getRoomById(roomId);
         RoomMember member = requireExistingMember(room, identity);
+        boolean wasOnline = Boolean.TRUE.equals(member.getOnline());
+        LocalDateTime now = LocalDateTime.now();
         member.setKicked(true);
         member.setOnline(false);
-        member.setLeftAt(LocalDateTime.now());
-        memberService.settleOnlineSeconds(member, LocalDateTime.now());
+        member.setLeftAt(now);
+        memberService.settleOnlineSeconds(member, now);
         // 轮换凭证, 防止被踢成员继续使用旧凭证调用接口
         member.setMemberToken(UUID.randomUUID().toString().replace("-", ""));
         revokeInviteAndReissueSeat(room, member);
@@ -54,6 +56,10 @@ public class MemberManagementService {
                 "identity", member.getIdentity(),
                 "nickname", member.getNickname()));
         liveKitAdminService.removeParticipant(room.getRoomCode(), member.getIdentity());
+        if (wasOnline) {
+            memberService.onMemberExit(room, member,
+                    memberRepository.countByRoomAndOnlineTrue(room), now);
+        }
     }
 
     /** 单人静音/取消静音 */
