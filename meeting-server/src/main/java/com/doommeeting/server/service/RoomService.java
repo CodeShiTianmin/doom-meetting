@@ -279,6 +279,32 @@ public class RoomService {
                 ? typeName : typeName + "(" + room.getCastLabel() + ")";
     }
 
+    /**
+     * 仅复位会议计时(不结束会议、不影响成员/推流/凭证):
+     * 运行中的房间从 00:00 重新开始计时, 倒计时提醒重新生效。
+     */
+    @Transactional
+    public RoomResponse resetTimer(Long id, String operator) {
+        Room room = getRoomById(id);
+        if (room.getStatus() != RoomStatus.RUNNING) {
+            throw new BusinessException("房间未在运行中, 无需复位计时");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        room.setMeetingStartAt(now);
+        room.setMeetingEndAt(now.plusMinutes(room.getDurationMinutes()));
+        room.setReminder5Sent(false);
+        room.setReminder1Sent(false);
+        roomRepository.save(room);
+        eventLogService.log(room, RoomEventType.TIMER_RESET,
+                operator + " 手动复位会议计时, 重新计时 " + room.getDurationMinutes() + " 分钟");
+        notificationService.pushToRoomAndAdmin(room.getRoomCode(), "TIMER_RESET", Map.of(
+                "operator", operator,
+                "meetingStartAt", String.valueOf(room.getMeetingStartAt()),
+                "meetingEndAt", String.valueOf(room.getMeetingEndAt()),
+                "durationMinutes", room.getDurationMinutes()));
+        return toResponse(room, latestInvite(room));
+    }
+
     /** 手动结束会议 */
     @Transactional
     public void closeRoom(Long id) {
@@ -521,6 +547,20 @@ public class RoomService {
         state.put("durationMinutes", room.getDurationMinutes());
         state.put("maxMembers", room.getMaxMembers());
         state.put("onlineMemberCount", memberRepository.countByRoomAndOnlineTrue(room));
+        // 房间成员名单(含离线成员, 手机端显示人名并区分在线/离线)
+        List<Map<String, Object>> members = new ArrayList<>();
+        for (RoomMember member : memberRepository.findByRoomOrderByJoinedAtAsc(room)) {
+            if (Boolean.TRUE.equals(member.getKicked()) || !Boolean.TRUE.equals(member.getApproved())) {
+                continue;
+            }
+            Map<String, Object> item = new HashMap<>();
+            item.put("identity", member.getIdentity());
+            item.put("nickname", member.getNickname());
+            item.put("seatNo", member.getSeatNo());
+            item.put("online", member.getOnline());
+            members.add(item);
+        }
+        state.put("members", members);
         state.put("meetingStartAt", room.getMeetingStartAt());
         state.put("meetingEndAt", room.getMeetingEndAt());
         if (room.getStatus() == RoomStatus.RUNNING && room.getMeetingEndAt() != null) {

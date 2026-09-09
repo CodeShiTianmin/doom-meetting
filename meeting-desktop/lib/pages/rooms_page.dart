@@ -33,6 +33,9 @@ class _RoomsPageState extends State<RoomsPage> {
   List<RoomModel> _rooms = [];
   bool _loading = true;
   bool _refreshing = false;
+
+  /// 刷新进行中收到新事件时标记, 刷新结束后立即再刷一次, 避免漏掉成员进出变化
+  bool _refreshPending = false;
   bool _loggingOut = false;
   String? _error;
   Timer? _refreshTimer;
@@ -90,56 +93,42 @@ class _RoomsPageState extends State<RoomsPage> {
       }
       return;
     }
-    if (event['type'] == 'UNDERSTAFFED_ALERT') {
-      _notifyUnderstaffed(event);
+    // 成员退出/离线先本地置灰, 不等接口刷新
+    if (event['type'] == 'MEMBER_LEFT') {
+      _applyMemberLeft(event);
     }
+    // 红灯预警仅在房卡上以红框 + 警报图标展示, 不弹窗打断操作
     _refresh();
   }
 
-  /// 缺人红灯预警: 总览底部红色横幅 + 系统提示音, 房卡随后刷新为红灯
-  void _notifyUnderstaffed(Map<String, dynamic> event) {
-    if (!mounted) return;
+  /// 收到成员退出事件时立即将该成员标为离线(名字变灰), 随后再以接口数据校正
+  void _applyMemberLeft(Map<String, dynamic> event) {
+    final roomCode = event['roomCode'];
     final payload = event['payload'];
-    final data = payload is Map<String, dynamic> ? payload : const {};
-    final name = data['name'];
-    final nickname = data['nickname'];
-    final online = data['onlineCount'];
-    final max = data['maxMembers'];
-    final title = name is String && name.isNotEmpty
-        ? name
-        : '房间 ${event['roomCode'] ?? ''}';
-    final text = StringBuffer('红灯预警: $title 缺人');
-    if (online != null && max != null) text.write(' ($online/$max 人在线)');
-    if (nickname is String && nickname.isNotEmpty) {
-      text.write(', $nickname 已退出');
-    }
-    unawaited(SystemSound.play(SystemSoundType.alert));
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(SnackBar(
-      duration: const Duration(seconds: 12),
-      backgroundColor: const Color(0xFF7F1D1D),
-      content: Row(
-        children: [
-          const Icon(Icons.warning_amber_rounded, color: Colors.white),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(text.toString(),
-                style: const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-      action: SnackBarAction(
-        label: '知道了',
-        textColor: Colors.white,
-        onPressed: messenger.hideCurrentSnackBar,
-      ),
-    ));
+    if (roomCode is! String || payload is! Map<String, dynamic>) return;
+    final identity = payload['identity'];
+    if (identity is! String) return;
+    final index = _rooms.indexWhere((room) => room.roomCode == roomCode);
+    if (index < 0) return;
+    final room = _rooms[index];
+    if (!room.members.any((m) => m.identity == identity && m.online)) return;
+    final members = room.members
+        .map((m) => m.identity == identity ? m.copyWith(online: false) : m)
+        .toList();
+    final onlineCount = members.where((m) => m.online && !m.kicked).length;
+    if (!mounted) return;
+    setState(() {
+      _rooms = List.of(_rooms)
+        ..[index] =
+            room.copyWith(members: members, onlineMemberCount: onlineCount);
+    });
   }
 
   Future<void> _refresh() async {
-    if (_refreshing) return;
+    if (_refreshing) {
+      _refreshPending = true;
+      return;
+    }
     _refreshing = true;
     try {
       // 总览仅展示系统固定房间(1-24 号房), 后台手动创建的其它房间不在此显示
@@ -173,6 +162,10 @@ class _RoomsPageState extends State<RoomsPage> {
       }
     } finally {
       _refreshing = false;
+      if (_refreshPending && mounted) {
+        _refreshPending = false;
+        unawaited(_refresh());
+      }
     }
   }
 
@@ -247,6 +240,47 @@ class _RoomsPageState extends State<RoomsPage> {
       await ApiClient.instance.resetRoom(room.id);
       _showMessage('${room.roomCode} 号房间已结束会议, 房间空闲, 凭证已重新签发');
     });
+  }
+
+  /// 计时复位: 仅将运行中房间的会议计时回到 00:00 重新开始,
+  /// 不结束会议, 成员/推流/二维码均不受影响
+  Future<void> _resetTimer(RoomModel room) async {
+    final elapsed = _elapsedSeconds(room);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.restart_alt, color: Colors.orange, size: 32),
+        title: Text('计时复位 · ${room.roomCode} 号房间'),
+        content: Text(
+            '会议已进行 ${elapsed == null ? '--' : _RoomCard._formatRemaining(elapsed)}, '
+            '复位后从 00:00 重新计时(时长 ${room.durationMinutes ?? '--'} 分钟)。\n'
+            '不结束会议, 成员/推流/二维码均不受影响。确定复位吗?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('复位到 00:00'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _runRoomAction(room, () async {
+      await ApiClient.instance.resetTimer(room.id);
+      _showMessage('${room.roomCode} 号房间计时已复位, 从 00:00 重新计时');
+    });
+  }
+
+  /// 本地推算的已进行秒数(会议时长 - 剩余)
+  int? _elapsedSeconds(RoomModel room) {
+    final remaining = _remainingSeconds(room);
+    final duration = room.durationMinutes;
+    if (remaining == null || duration == null) return null;
+    final elapsed = duration * 60 - remaining;
+    return elapsed > 0 ? elapsed : 0;
   }
 
   /// 统一设置视频文件: 批量设置各房间的推流文件后逐房直接开始推流
@@ -379,7 +413,7 @@ class _RoomsPageState extends State<RoomsPage> {
       appBar: AppBar(
         title: Row(
           children: [
-            const Text('惊喜影视平台 — 房间总览'),
+            const Text('漫映网络科技 — 房间总览'),
             const SizedBox(width: 14),
             ValueListenableBuilder<bool>(
               valueListenable: _ws.connected,
@@ -499,12 +533,14 @@ class _RoomsPageState extends State<RoomsPage> {
           localFileName: CastManager.instance.videoFileNameOf(room.id),
           localCasting: CastManager.instance.isCasting(room.id),
           remainingSeconds: _remainingSeconds(room),
+          elapsedSeconds: _elapsedSeconds(room),
           onOpen: () => Navigator.of(context)
               .push(MaterialPageRoute(
                   builder: (_) => RoomCastPage(roomId: room.id)))
               .then((_) => _refresh()),
           onShowQr: () => _showQr(room),
           onReset: () => _resetRoom(room),
+          onResetTimer: () => _resetTimer(room),
           onToggleCamera: () => _toggleCamera(room),
         );
       },
@@ -564,9 +600,11 @@ class _RoomCard extends StatelessWidget {
   /// 本机是否正在向该房间推流
   final bool localCasting;
   final int? remainingSeconds;
+  final int? elapsedSeconds;
   final VoidCallback onOpen;
   final VoidCallback onShowQr;
   final VoidCallback onReset;
+  final VoidCallback onResetTimer;
   final VoidCallback onToggleCamera;
 
   const _RoomCard({
@@ -576,9 +614,11 @@ class _RoomCard extends StatelessWidget {
     required this.localFileName,
     required this.localCasting,
     required this.remainingSeconds,
+    required this.elapsedSeconds,
     required this.onOpen,
     required this.onShowQr,
     required this.onReset,
+    required this.onResetTimer,
     required this.onToggleCamera,
   });
 
@@ -625,6 +665,7 @@ class _RoomCard extends StatelessWidget {
     final status = _status;
     final statusColor = status.color;
     final remaining = remainingSeconds;
+    final elapsed = elapsedSeconds;
     // 倒计时绿色显示, 会议最后 60 秒字体变红
     final countdownColor =
         (remaining != null && remaining <= 60) ? Colors.red : Colors.green;
@@ -681,9 +722,9 @@ class _RoomCard extends StatelessWidget {
                     Tooltip(
                       message: '缺人红灯预警: 成员未全部就位',
                       child: Padding(
-                        padding: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.only(right: 8),
                         child: Icon(Icons.warning_amber_rounded,
-                            size: 18, color: Colors.red.shade400),
+                            size: 30, color: Colors.red.shade400),
                       ),
                     ),
                   _StatusPill(color: statusColor, label: status.label),
@@ -739,6 +780,27 @@ class _RoomCard extends StatelessWidget {
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
                             color: countdownColor)),
+                    if (elapsed != null) ...[
+                      const SizedBox(width: 6),
+                      Text('已进行 ${_formatRemaining(elapsed)}',
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.white54)),
+                    ],
+                    const SizedBox(width: 2),
+                    // 计时复位: 仅重置会议计时到 00:00, 不结束会议
+                    Tooltip(
+                      message: '计时复位: 会议计时回到 00:00 重新开始(不结束会议)',
+                      child: InkWell(
+                        onTap: busy ? null : onResetTimer,
+                        borderRadius: BorderRadius.circular(6),
+                        child: Padding(
+                          padding: const EdgeInsets.all(3),
+                          child: Icon(Icons.restart_alt,
+                              size: 18,
+                              color: busy ? Colors.white24 : Colors.orange),
+                        ),
+                      ),
+                    ),
                   ],
                 ],
               ),

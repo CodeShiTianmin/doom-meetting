@@ -4,11 +4,11 @@ import 'dart:io';
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:livekit_pip/livekit_pip.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:screen_brightness/screen_brightness.dart';
-import 'package:volume_controller/volume_controller.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../config/app_config.dart';
@@ -19,7 +19,6 @@ import '../services/recording_guard.dart';
 import '../services/ws_service.dart';
 import '../widgets/chat_overlay.dart';
 import '../widgets/floating_hearts.dart';
-import '../widgets/watermark.dart';
 import 'join_page.dart';
 
 /// 会议房间页:
@@ -27,7 +26,7 @@ import 'join_page.dart';
 /// - 明暗/音量本地调节
 /// - 剩余倒计时, 点赞飘心, 心跳保活
 /// - 视频中间的暂停/播放按钮控制 PC 端本房间推流的播放
-/// - 允许截屏, 禁止录制: 检测 -> 遮挡 -> 上报, 全屏水印
+/// - 允许截屏, 禁止录制: 检测 -> 遮挡 -> 上报
 class RoomPage extends StatefulWidget {
   final JoinSession session;
 
@@ -62,7 +61,11 @@ class _RoomPageState extends State<RoomPage> {
   bool _speakerOn = true;
   lk.ConnectionQuality _networkQuality = lk.ConnectionQuality.unknown;
   double _brightness = 0.7;
-  double _volume = 0.8;
+
+  /// 播放音量(0~1): 直接作用于已订阅的远端音频轨, 与系统媒体音量无关
+  /// (WebRTC 通话模式下走的是通话音量流, 调整媒体音量对推流声音无效)
+  double _volume = 1.0;
+  final Set<lk.RemoteAudioTrack> _remoteAudioTracks = {};
   int? _remainingSeconds;
   bool _recordingBlocked = false;
   String? _closedReason;
@@ -191,19 +194,6 @@ class _RoomPageState extends State<RoomPage> {
       final current = await ScreenBrightness().current;
       _brightness = current;
     } catch (_) {}
-    // iOS: volume_controller 的 getVolume 会以默认类别激活 AVAudioSession,
-    // 干扰 WebRTC 音频会话导致播放无声, 仅在 Android 读取系统音量
-    if (!Platform.isIOS) {
-      try {
-        VolumeController().showSystemUI = false;
-        final current = await VolumeController().getVolume();
-        _volume = current;
-        // 硬件音量键调节时同步滑条, 避免显示与实际音量不一致
-        VolumeController().listener((value) {
-          if (mounted) setState(() => _volume = value);
-        });
-      } catch (_) {}
-    }
     if (mounted) setState(() {});
   }
 
@@ -355,6 +345,10 @@ class _RoomPageState extends State<RoomPage> {
   void _attachRemoteTrack(lk.RemoteParticipant participant,
       lk.RemoteTrackPublication publication, lk.Track track) {
     if (track is lk.AudioTrack) {
+      if (track is lk.RemoteAudioTrack) {
+        _remoteAudioTracks.add(track);
+        unawaited(_applyTrackVolume(track, _volume));
+      }
       // iOS: 订阅到远端音频后重申扬声器路由,
       // 避免音频会话被其他插件/系统改动后停留在听筒或静音类别
       _applySpeakerRoute();
@@ -376,6 +370,10 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   void _detachRemoteTrack(lk.RemoteParticipant participant, lk.Track track) {
+    if (track is lk.RemoteAudioTrack) {
+      _remoteAudioTracks.remove(track);
+      return;
+    }
     if (track is! lk.VideoTrack || !mounted) return;
     setState(() {
       if (participant.identity.startsWith(AppConfig.castIdentityPrefix)) {
@@ -580,8 +578,20 @@ class _RoomPageState extends State<RoomPage> {
         _showToast('预约会议已开始, 等待全员就位');
         break;
       case 'MEMBER_JOINED':
-      case 'MEMBER_LEFT':
         _refreshState();
+        break;
+      case 'MEMBER_LEFT':
+        // 退出成员的名字立即变灰, 再以接口数据校正
+        final identity = data['identity'];
+        final current = _state;
+        if (identity is String && current != null && mounted) {
+          setState(() => _state = current.withMemberOffline(identity));
+        }
+        _refreshState();
+        break;
+      case 'TIMER_RESET':
+        _refreshState();
+        _showToast('会议计时已复位, 重新开始计时');
         break;
       case 'ROOM_RESET':
       case 'ROOM_DELETED':
@@ -622,8 +632,16 @@ class _RoomPageState extends State<RoomPage> {
 
   Future<void> _setVolume(double value) async {
     setState(() => _volume = value);
+    for (final track in _remoteAudioTracks.toList()) {
+      await _applyTrackVolume(track, value);
+    }
+  }
+
+  /// 设置单条远端音频轨的播放增益(0 静音 ~ 1 原始音量)
+  Future<void> _applyTrackVolume(
+      lk.RemoteAudioTrack track, double value) async {
     try {
-      VolumeController().setVolume(value, showSystemUI: false);
+      await rtc.Helper.setVolume(value.clamp(0.0, 1.0), track.mediaStreamTrack);
     } catch (_) {}
   }
 
@@ -777,9 +795,7 @@ class _RoomPageState extends State<RoomPage> {
     _clockTimer?.cancel();
     _ws.dispose();
     _recordingGuard.stop();
-    try {
-      VolumeController().removeListener();
-    } catch (_) {}
+    _remoteAudioTracks.clear();
     _chatController.dispose();
     _chatFocus.dispose();
     _lkListener?.dispose();
@@ -1029,10 +1045,6 @@ class _RoomPageState extends State<RoomPage> {
               ),
             );
           }),
-          Positioned.fill(
-              child: Watermark(
-                  identityText:
-                      '${session.roomCode}-${session.identity.substring(session.identity.length > 8 ? session.identity.length - 8 : 0)}')),
           if (_recordingBlocked) _buildRecordingOverlay(),
           if (_closedReason != null) _buildClosedOverlay(),
         ],
@@ -1120,6 +1132,17 @@ class _RoomPageState extends State<RoomPage> {
                 style:
                     const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
               ),
+              if (state.members.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                // 房间内人名: 在线绿点白字, 退出/离线灰点灰字
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final member in state.members) _memberChip(member),
+                  ],
+                ),
+              ],
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -1140,6 +1163,43 @@ class _RoomPageState extends State<RoomPage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _memberChip(RoomMemberInfo member) {
+    final self = member.identity == session.identity;
+    final dotColor = member.online ? Colors.greenAccent : Colors.white38;
+    final textColor = member.online ? Colors.white : Colors.white38;
+    final seat = member.seatNo;
+    final label = seat != null ? '$seat号 ${member.nickname}' : member.nickname;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+            color: self ? Colors.white38 : Colors.transparent, width: 0.8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            self ? '$label(我)' : label,
+            style: TextStyle(
+              fontSize: 12,
+              color: textColor,
+              decoration: member.online ? null : TextDecoration.lineThrough,
+              decorationColor: Colors.white38,
+            ),
+          ),
+        ],
       ),
     );
   }

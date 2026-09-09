@@ -61,6 +61,37 @@ class RoomModel {
     required this.members,
   });
 
+  /// 实时事件到达时本地先行更新成员状态, 不等接口刷新
+  RoomModel copyWith({List<MemberModel>? members, int? onlineMemberCount}) =>
+      RoomModel(
+        id: id,
+        roomCode: roomCode,
+        name: name,
+        fixed: fixed,
+        status: status,
+        videoCallEnabled: videoCallEnabled,
+        cameraEnabled: cameraEnabled,
+        durationMinutes: durationMinutes,
+        meetingStartAt: meetingStartAt,
+        meetingEndAt: meetingEndAt,
+        remainingSeconds: remainingSeconds,
+        castType: castType,
+        castLabel: castLabel,
+        castBy: castBy,
+        likeCount: likeCount,
+        understaffedAlert: understaffedAlert,
+        maxMembers: maxMembers,
+        onlineMemberCount: onlineMemberCount ?? this.onlineMemberCount,
+        inviteUrl: inviteUrl,
+        qrContent: qrContent,
+        inviteExpireAt: inviteExpireAt,
+        scheduledStartAt: scheduledStartAt,
+        approvalRequired: approvalRequired,
+        allMuted: allMuted,
+        invites: invites,
+        members: members ?? this.members,
+      );
+
   bool get running => status == 'RUNNING';
   bool get closed => status == 'CLOSED';
   bool get scheduled => status == 'SCHEDULED';
@@ -145,6 +176,19 @@ class MemberModel {
     this.kicked = false,
     this.approved = true,
   });
+
+  MemberModel copyWith({bool? online}) => MemberModel(
+        id: id,
+        identity: identity,
+        nickname: nickname,
+        online: online ?? this.online,
+        joinedAt: joinedAt,
+        seatNo: seatNo,
+        muted: muted,
+        cameraDisabled: cameraDisabled,
+        kicked: kicked,
+        approved: approved,
+      );
 
   factory MemberModel.fromJson(Map<String, dynamic> json) => MemberModel(
         id: (json['id'] as num).toInt(),

@@ -13,7 +13,7 @@ import '../services/api_client.dart';
 import '../services/ws_service.dart';
 import 'room_page.dart';
 
-/// 惊喜影视入口页: 填写微信名或QQ名字后扫码入会。
+/// 漫映网络科技入口页: 填写微信名或QQ名字后扫码入会。
 /// 扫码成功后不直接进房, 停留在匹配等待页显示「正在匹配中」,
 /// 直到两人都扫码成功才同时进入房间。
 class JoinPage extends StatefulWidget {
@@ -335,7 +335,7 @@ class _JoinPageState extends State<JoinPage> {
                           size: 42, color: Colors.white),
                     ),
                     const SizedBox(height: 16),
-                    Text('惊喜影视',
+                    Text('漫映网络科技',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.headlineSmall),
                     const SizedBox(height: 4),

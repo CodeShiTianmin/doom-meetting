@@ -119,7 +119,7 @@ export default function MainLayout() {
             <CastConnectedIcon sx={{ fontSize: 20, color: '#fff' }} />
           </Box>
           <Box>
-            <Typography variant="subtitle2" sx={{ color: '#fff', lineHeight: 1.2 }}>投屏会议</Typography>
+            <Typography variant="subtitle2" sx={{ color: '#fff', lineHeight: 1.2 }}>漫映网络科技</Typography>
             <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>管理系统</Typography>
           </Box>
         </Box>
@@ -187,7 +187,7 @@ export default function MainLayout() {
           )}
           {!isMobile && <CastConnectedIcon sx={{ mr: 1.5 }} />}
           <Typography variant="h6" noWrap sx={{ flexGrow: 1, fontSize: { xs: 16, sm: 20 } }}>
-            {isMobile ? '投屏会议管理' : '多房并发投屏会议 · 管理系统'}
+            {isMobile ? '漫映网络科技' : '漫映网络科技 · 管理系统'}
           </Typography>
           <Tooltip title="消息通知">
             <IconButton color="inherit" onClick={openNotifications} sx={{ mr: { xs: 0.5, sm: 2 } }} aria-label="消息通知">

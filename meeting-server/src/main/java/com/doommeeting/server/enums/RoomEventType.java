@@ -25,5 +25,6 @@ public enum RoomEventType {
     JOIN_APPROVED,
     JOIN_REJECTED,
     ROOM_RESET,
+    TIMER_RESET,
     CAST_CONTROL
 }

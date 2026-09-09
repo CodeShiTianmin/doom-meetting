@@ -24,6 +24,6 @@ class AppConfig {
   static const int versionCode =
       int.fromEnvironment('APP_VERSION_CODE', defaultValue: 1);
 
-  static const Duration heartbeatInterval = Duration(seconds: 10);
+  static const Duration heartbeatInterval = Duration(seconds: 5);
   static const Duration stateRefreshInterval = Duration(seconds: 15);
 }
