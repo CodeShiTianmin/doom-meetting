@@ -44,7 +44,7 @@ class MeetingDesktopApp extends StatelessWidget {
       surface: _surface,
     );
     return MaterialApp(
-      title: '惊喜影视平台',
+      title: '漫映网络科技',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

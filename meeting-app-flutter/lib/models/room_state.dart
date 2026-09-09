@@ -29,6 +29,9 @@ class RoomState {
   /// 本房间推流当前是否处于播放中(初始暂停)
   final bool castPlaying;
 
+  /// 房间成员名单(含已离线成员, 按入房顺序)
+  final List<RoomMemberInfo> members;
+
   RoomState({
     required this.roomCode,
     required this.name,
@@ -48,6 +51,7 @@ class RoomState {
     this.castType,
     this.castLabel,
     this.castPlaying = false,
+    this.members = const [],
   });
 
   bool get running => status == 'RUNNING';
@@ -77,7 +81,23 @@ class RoomState {
         castType: json['castType'] as String?,
         castLabel: json['castLabel'] as String?,
         castPlaying: json['castPlaying'] == true,
+        members: ((json['members'] as List<dynamic>?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(RoomMemberInfo.fromJson)
+            .toList(),
       );
+
+  /// 成员退出/离线事件到达时本地先置灰, 不等接口刷新
+  RoomState withMemberOffline(String identity) {
+    if (!members.any((m) => m.identity == identity && m.online)) return this;
+    final updated = members
+        .map((m) => m.identity == identity ? m.copyWith(online: false) : m)
+        .toList();
+    return copyWith(
+      members: updated,
+      onlineMemberCount: updated.where((m) => m.online).length,
+    );
+  }
 
   /// 可空字段(cast* 等)使用哨兵默认值, 支持显式传 null 清空
   RoomState copyWith({
@@ -94,6 +114,7 @@ class RoomState {
     bool? castPlaying,
     String? meetingStartAt,
     String? meetingEndAt,
+    List<RoomMemberInfo>? members,
   }) =>
       RoomState(
         roomCode: roomCode,
@@ -116,5 +137,35 @@ class RoomState {
         castType: castType == _unset ? this.castType : castType as String?,
         castLabel: castLabel == _unset ? this.castLabel : castLabel as String?,
         castPlaying: castPlaying ?? this.castPlaying,
+        members: members ?? this.members,
+      );
+}
+
+/// 房间内成员(人名/座位/在线状态)
+class RoomMemberInfo {
+  final String identity;
+  final String nickname;
+  final int? seatNo;
+  final bool online;
+
+  const RoomMemberInfo({
+    required this.identity,
+    required this.nickname,
+    this.seatNo,
+    required this.online,
+  });
+
+  factory RoomMemberInfo.fromJson(Map<String, dynamic> json) => RoomMemberInfo(
+        identity: json['identity'] as String? ?? '',
+        nickname: json['nickname'] as String? ?? '',
+        seatNo: (json['seatNo'] as num?)?.toInt(),
+        online: json['online'] == true,
+      );
+
+  RoomMemberInfo copyWith({bool? online}) => RoomMemberInfo(
+        identity: identity,
+        nickname: nickname,
+        seatNo: seatNo,
+        online: online ?? this.online,
       );
 }

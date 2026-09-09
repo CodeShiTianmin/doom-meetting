@@ -135,6 +135,13 @@ public class AdminRoomController {
         return ApiResponse.ok(roomService.resetRoom(id, authentication.getName()));
     }
 
+    /** 仅复位会议计时到 00:00(不结束会议, 成员/推流/凭证均不受影响) */
+    @PostMapping("/{id}/timer/reset")
+    public ApiResponse<RoomResponse> resetTimer(@PathVariable Long id,
+                                                Authentication authentication) {
+        return ApiResponse.ok(roomService.resetTimer(id, authentication.getName()));
+    }
+
     @PostMapping("/{id}/close")
     public ApiResponse<Void> closeRoom(@PathVariable Long id) {
         roomService.closeRoom(id);

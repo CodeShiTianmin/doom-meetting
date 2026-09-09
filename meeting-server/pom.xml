@@ -15,7 +15,7 @@
     <artifactId>meeting-server</artifactId>
     <version>1.0.0</version>
     <name>meeting-server</name>
-    <description>多房并发投屏会议软件 - 后端业务与信令服务</description>
+    <description>漫映网络科技 投屏会议 - 后端业务与信令服务</description>
 
     <properties>
         <java.version>17</java.version>

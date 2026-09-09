@@ -18,7 +18,7 @@ class RoomVideoPlayer extends ChangeNotifier {
   RoomVideoPlayer({required this.roomCode});
 
   /// 播放窗口标题(带房号定位, 方括号避免 1 号房误匹配 11 号房)
-  String get windowTitle => '惊喜影视推流 [房间 $roomCode]';
+  String get windowTitle => '漫映网络科技推流 [房间 $roomCode]';
 
   Process? _process;
   StreamSubscription<String>? _stdoutSub;

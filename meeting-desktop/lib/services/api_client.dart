@@ -170,6 +170,12 @@ class ApiClient {
     return RoomModel.fromJson(_unwrap(response));
   }
 
+  /// 仅复位会议计时到 00:00(不结束会议)
+  Future<RoomModel> resetTimer(int id) async {
+    final response = await _dio.post('/api/admin/rooms/$id/timer/reset');
+    return RoomModel.fromJson(_unwrap(response));
+  }
+
   /// 隐藏推流身份 Token(只发不收, 不出现在成员列表)
   Future<Map<String, dynamic>> getPublisherToken(int roomId) async {
     final response = await _dio.get('/api/admin/rooms/$roomId/publisher-token');

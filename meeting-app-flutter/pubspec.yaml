@@ -1,5 +1,5 @@
 name: meeting_app
-description: 多房并发投屏会议系统 - 手机客户端 (Flutter)
+description: 漫映网络科技 - 投屏会议手机客户端 (Flutter)
 publish_to: "none"
 version: 1.0.0+1
 
@@ -12,6 +12,8 @@ dependencies:
     sdk: flutter
   # 媒体: LiveKit SFU 客户端 (WebRTC, DTLS-SRTP 加密)
   livekit_client: ^2.2.4
+  # 远端音频轨音量(Helper.setVolume), 版本由 livekit_client 约束
+  flutter_webrtc: ">=0.11.6 <2.0.0"
   # 业务信令: STOMP over WebSocket
   stomp_dart_client: ^2.0.0
   # HTTP 客户端
@@ -29,8 +31,6 @@ dependencies:
   # 离开 APP 时推流画面画中画(iOS, vendored)
   livekit_pip:
     path: packages/livekit_pip
-  # 本地音量调节
-  volume_controller: ^2.0.7
   # 本地亮度调节
   screen_brightness: ^1.0.1
   cupertino_icons: ^1.0.8

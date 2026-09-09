@@ -76,10 +76,10 @@ export default function LoginPage() {
       >
         <Box sx={{ flex: 1, color: '#fff', display: { xs: 'none', md: 'block' } }}>
           <Typography variant="overline" sx={{ letterSpacing: 3, opacity: 0.8 }}>
-            DOOM MEETING
+            漫映网络科技
           </Typography>
           <Typography variant="h3" sx={{ fontWeight: 800, lineHeight: 1.15, mt: 1 }}>
-            多房并发投屏
+            漫映网络科技
             <br />
             会议管理系统
           </Typography>

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import 'rooms_page.dart';
 
-/// 管理员登录(惊喜影视平台 PC 端)
+/// 管理员登录(漫映网络科技 PC 端)
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -103,7 +103,7 @@ class _LoginPageState extends State<LoginPage> {
                               size: 36, color: Colors.white),
                         ),
                         const SizedBox(height: 16),
-                        Text('惊喜影视平台',
+                        Text('漫映网络科技',
                             textAlign: TextAlign.center,
                             style: Theme.of(context)
                                 .textTheme
