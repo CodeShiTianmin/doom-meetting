@@ -316,6 +316,12 @@ rtc:
   port_range_end: 50200
   use_external_ip: false
   node_ip: $PublicIp
+  # 下行带宽估算保底 6Mbps: 避免同房某台手机因估算偏低被长时间切到低档层(说明见 deploy/livekit/livekit.yaml)
+  congestion_control:
+    enabled: true
+    allow_pause: false
+    stream_allocator:
+      min_channel_capacity: 6000000
 turn:
   enabled: true
   udp_port: 3478

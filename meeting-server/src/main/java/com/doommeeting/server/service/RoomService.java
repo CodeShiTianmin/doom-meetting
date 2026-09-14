@@ -10,8 +10,10 @@ import com.doommeeting.server.enums.CastType;
 import com.doommeeting.server.enums.CloseReason;
 import com.doommeeting.server.enums.RoomEventType;
 import com.doommeeting.server.enums.RoomStatus;
+import com.doommeeting.server.event.RoomClosedEvent;
 import com.doommeeting.server.repository.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +47,7 @@ public class RoomService {
     private final RoomLikeRepository likeRepository;
     private final EventLogService eventLogService;
     private final NotificationService notificationService;
+    private final ApplicationEventPublisher eventPublisher;
     private final AppProperties properties;
 
     @Transactional
@@ -322,6 +325,9 @@ public class RoomService {
     public RoomResponse resetRoom(Long id, String operator) {
         Room room = getRoomById(id);
         closeRoomInternal(room, CloseReason.MANUAL);
+        // 房间此前已是 CLOSED 时 closeRoomInternal 直接返回, 这里再发一次保证
+        // 关闭后到重置前落入的内存状态(如聊天记录)也被清掉, 新一场会议从空白开始
+        eventPublisher.publishEvent(new RoomClosedEvent(room.getId(), room.getRoomCode()));
         likeRepository.deleteByRoom(room);
         memberRepository.deleteByRoom(room);
         room.setStatus(RoomStatus.WAITING);
@@ -474,6 +480,7 @@ public class RoomService {
                 reason == CloseReason.MANUAL ? "PC 端手动结束会议" : "会议时长到期自动关闭");
         notificationService.pushToRoomAndAdmin(room.getRoomCode(), "ROOM_CLOSED",
                 Map.of("reason", reason.name()));
+        eventPublisher.publishEvent(new RoomClosedEvent(room.getId(), room.getRoomCode()));
     }
 
     /** 重新生成入会二维码(旧凭证全部失效) */

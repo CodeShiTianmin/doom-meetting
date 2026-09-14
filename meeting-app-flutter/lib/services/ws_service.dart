@@ -15,7 +15,8 @@ class RoomWsService {
   void connect(String roomCode, String identity, String memberToken,
       void Function(Map<String, dynamic>) onEvent) {
     disconnect();
-    final client = StompClient(
+    late final StompClient client;
+    client = StompClient(
       config: StompConfig(
         url: AppConfig.wsUrl,
         reconnectDelay: const Duration(seconds: 5),
@@ -27,8 +28,10 @@ class RoomWsService {
           'memberToken': memberToken,
         },
         onConnect: (frame) {
+          // 旧连接在被替换后才完成握手: 不订阅也不改状态
+          if (!identical(client, _client)) return;
           connected.value = true;
-          _client?.subscribe(
+          client.subscribe(
             destination: '/topic/rooms/$roomCode',
             callback: (frame) {
               final body = frame.body;
@@ -42,14 +45,18 @@ class RoomWsService {
             },
           );
         },
-        onDisconnect: (_) => connected.value = false,
-        onWebSocketDone: () => connected.value = false,
-        onWebSocketError: (_) => connected.value = false,
-        onStompError: (_) => connected.value = false,
+        onDisconnect: (_) => _markDisconnected(client),
+        onWebSocketDone: () => _markDisconnected(client),
+        onWebSocketError: (_) => _markDisconnected(client),
+        onStompError: (_) => _markDisconnected(client),
       ),
     );
     _client = client;
     client.activate();
+  }
+
+  void _markDisconnected(StompClient client) {
+    if (identical(client, _client)) connected.value = false;
   }
 
   void disconnect() {

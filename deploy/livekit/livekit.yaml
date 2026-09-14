@@ -8,6 +8,15 @@ rtc:
   use_external_ip: true
   # 云主机(NAT 公网 IP)若 STUN 探测结果不正确, 取消注释并填写服务器公网 IP:
   # node_ip: YOUR_PUBLIC_IP
+  # 下行拥塞控制: SFU 按每台手机各自估算的下行带宽选择 simulcast 层。带宽估算在入会
+  # 初期/网络抖动时偶发偏低, 会让同房两台手机中的某一台长时间停在低档层。
+  # 这里给估算值一个保底(6Mbps, 高于推流顶层 4Mbps + 语音), 保证普通 4G/WiFi 下两台
+  # 手机始终收到同一档高清画面; 拥塞控制本身仍开启, 下行丢包严重时依旧会切低档层。
+  congestion_control:
+    enabled: true
+    allow_pause: false
+    stream_allocator:
+      min_channel_capacity: 6000000
 # 内置 TURN 中继(UDP 3478): 客户端侧防火墙拦截 UDP 高端口时经 TURN 保底连通,
 # 凭证由 LiveKit 随入会 Token 自动下发, 客户端无需额外配置
 turn:

@@ -63,9 +63,12 @@ class _RoomPageState extends State<RoomPage> {
   double _brightness = 0.7;
 
   /// 播放音量(0~1): 直接作用于已订阅的远端音频轨, 与系统媒体音量无关
-  /// (WebRTC 通话模式下走的是通话音量流, 调整媒体音量对推流声音无效)
-  double _volume = 1.0;
-  final Set<lk.RemoteAudioTrack> _remoteAudioTracks = {};
+  /// (WebRTC 通话模式下走的是通话音量流, 调整媒体音量对推流声音无效)。
+  /// PC 推流伴音与对方语音分开调节, 互不影响
+  double _castVolume = 1.0;
+  double _voiceVolume = 1.0;
+  final Set<lk.RemoteAudioTrack> _castAudioTracks = {};
+  final Set<lk.RemoteAudioTrack> _voiceAudioTracks = {};
   int? _remainingSeconds;
   bool _recordingBlocked = false;
   String? _closedReason;
@@ -80,7 +83,9 @@ class _RoomPageState extends State<RoomPage> {
   /// 本房间推流播放状态(初始暂停, 由 PC 端/手机端控制播放/暂停)
   bool _castPlaying = false;
   bool _castControlPending = false;
-  int _chatId = 0;
+
+  /// 聊天消息(时间正序), 按 [ChatMessageItem.key] 去重:
+  /// 发送成功后的 REST 回应、STOMP 实时事件、历史拉取三个来源可能重叠
   final List<ChatMessageItem> _chatMessages = [];
   bool _chatInputVisible = false;
   final TextEditingController _chatController = TextEditingController();
@@ -106,6 +111,7 @@ class _RoomPageState extends State<RoomPage> {
     _refreshState();
     _loadChatHistory();
     _connectLiveKit();
+    _ws.connected.addListener(_onWsConnectionChanged);
     _ws.connect(
         session.roomCode, session.identity, session.memberToken, _onRoomEvent);
     _heartbeatTimer = Timer.periodic(AppConfig.heartbeatInterval, (_) {
@@ -342,12 +348,23 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
+  /// PC 推流身份(隐藏参与者), 其音视频轨为投屏画面/伴音; 其余为对方手机的语音/摄像头
+  static bool _isCastParticipant(lk.RemoteParticipant participant) =>
+      participant.identity.startsWith(AppConfig.castIdentityPrefix);
+
   void _attachRemoteTrack(lk.RemoteParticipant participant,
       lk.RemoteTrackPublication publication, lk.Track track) {
     if (track is lk.AudioTrack) {
       if (track is lk.RemoteAudioTrack) {
-        _remoteAudioTracks.add(track);
-        unawaited(_applyTrackVolume(track, _volume));
+        final isCast = _isCastParticipant(participant) ||
+            publication.source == lk.TrackSource.screenShareAudio;
+        if (isCast) {
+          _castAudioTracks.add(track);
+          unawaited(_applyTrackVolume(track, _castVolume));
+        } else {
+          _voiceAudioTracks.add(track);
+          unawaited(_applyTrackVolume(track, _voiceVolume));
+        }
       }
       // iOS: 订阅到远端音频后重申扬声器路由,
       // 避免音频会话被其他插件/系统改动后停留在听筒或静音类别
@@ -356,7 +373,11 @@ class _RoomPageState extends State<RoomPage> {
     }
     if (track is! lk.VideoTrack || !mounted) return;
     setState(() {
-      if (participant.identity.startsWith(AppConfig.castIdentityPrefix)) {
+      if (_isCastParticipant(participant)) {
+        // 推流主画面始终订阅最高档(重新订阅/重连后同样重申)
+        unawaited(publication
+            .setVideoQuality(lk.VideoQuality.HIGH)
+            .catchError((_) {}));
         _castVideoTrack = track;
       } else {
         // 对方客户画面只在小窗展示, 订阅中档即可,
@@ -371,12 +392,13 @@ class _RoomPageState extends State<RoomPage> {
 
   void _detachRemoteTrack(lk.RemoteParticipant participant, lk.Track track) {
     if (track is lk.RemoteAudioTrack) {
-      _remoteAudioTracks.remove(track);
+      _castAudioTracks.remove(track);
+      _voiceAudioTracks.remove(track);
       return;
     }
     if (track is! lk.VideoTrack || !mounted) return;
     setState(() {
-      if (participant.identity.startsWith(AppConfig.castIdentityPrefix)) {
+      if (_isCastParticipant(participant)) {
         if (_castVideoTrack == track) _castVideoTrack = null;
       } else {
         if (_peerVideoTrack == track) _peerVideoTrack = null;
@@ -482,17 +504,7 @@ class _RoomPageState extends State<RoomPage> {
     final data = (event['payload'] as Map<String, dynamic>?) ?? const {};
     switch (type) {
       case 'CHAT':
-        setState(() {
-          _chatMessages.add(ChatMessageItem(
-            id: ++_chatId,
-            sender: (data['sender'] as String?) ?? '匿名',
-            content: (data['content'] as String?) ?? '',
-            fromAdmin: data['fromAdmin'] == true,
-          ));
-          if (_chatMessages.length > 50) {
-            _chatMessages.removeRange(0, _chatMessages.length - 50);
-          }
-        });
+        _appendChatMessages([ChatMessageItem.fromJson(data)]);
         break;
       case 'CAST_STOPPED':
         _refreshState();
@@ -614,10 +626,23 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
+  /// 实时通道(重)连接成功: 断线期间错过的消息和房间变化靠一次全量拉取补齐
+  void _onWsConnectionChanged() {
+    if (!_ws.connected.value || !mounted || _closedReason != null) return;
+    _loadChatHistory();
+    _refreshState();
+  }
+
   void _onRoomClosed(String reason) {
     if (_closedReason != null) return;
     _closedReason = reason;
-    if (mounted) setState(() {});
+    // 会议结束后不再保留本场聊天内容, 也关闭输入框
+    _chatMessages.clear();
+    _chatInputVisible = false;
+    if (mounted) {
+      _chatFocus.unfocus();
+      setState(() {});
+    }
     _lkRoom?.disconnect();
   }
 
@@ -630,9 +655,18 @@ class _RoomPageState extends State<RoomPage> {
     } catch (_) {}
   }
 
-  Future<void> _setVolume(double value) async {
-    setState(() => _volume = value);
-    for (final track in _remoteAudioTracks.toList()) {
+  /// 推流伴音音量, 不影响对方语音
+  Future<void> _setCastVolume(double value) async {
+    setState(() => _castVolume = value);
+    for (final track in _castAudioTracks.toList()) {
+      await _applyTrackVolume(track, value);
+    }
+  }
+
+  /// 对方语音音量, 不影响推流伴音
+  Future<void> _setVoiceVolume(double value) async {
+    setState(() => _voiceVolume = value);
+    for (final track in _voiceAudioTracks.toList()) {
       await _applyTrackVolume(track, value);
     }
   }
@@ -707,30 +741,59 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
+  static const int _maxChatMessages = 50;
+
+  /// 追加聊天消息(已存在的跳过), 保留最近 50 条
+  void _appendChatMessages(Iterable<ChatMessageItem> items) {
+    if (!mounted || _closedReason != null) return;
+    final existing = _chatMessages.map((item) => item.key).toSet();
+    final fresh = items.where((item) => existing.add(item.key)).toList();
+    if (fresh.isEmpty) return;
+    setState(() {
+      _chatMessages.addAll(fresh);
+      if (_chatMessages.length > _maxChatMessages) {
+        _chatMessages.removeRange(
+            0, _chatMessages.length - _maxChatMessages);
+      }
+    });
+  }
+
+  /// 拉取服务端历史并与本地已有消息合并: 历史中没有的本地消息(拉取期间
+  /// 刚由 STOMP/发送回应到达的)接在历史之后保留, 不会被覆盖丢失
   Future<void> _loadChatHistory() async {
     try {
       final records = await ApiClient.instance.fetchChat(session.roomCode);
-      if (!mounted) return;
+      if (!mounted || _closedReason != null) return;
+      final history = records.map(ChatMessageItem.fromJson).toList();
+      final keys = history.map((item) => item.key).toSet();
+      final local =
+          _chatMessages.where((item) => !keys.contains(item.key)).toList();
       setState(() {
         _chatMessages
           ..clear()
-          ..addAll(records.map((item) => ChatMessageItem(
-                id: ++_chatId,
-                sender: (item['sender'] as String?) ?? '匿名',
-                content: (item['content'] as String?) ?? '',
-                fromAdmin: item['fromAdmin'] == true,
-              )));
+          ..addAll(history)
+          ..addAll(local);
+        if (_chatMessages.length > _maxChatMessages) {
+          _chatMessages.removeRange(
+              0, _chatMessages.length - _maxChatMessages);
+        }
       });
     } catch (_) {}
   }
 
   Future<void> _sendChat() async {
+    if (_closedReason != null) {
+      _showToast('会议已结束, 无法发送消息');
+      return;
+    }
     final content = _chatController.text.trim();
     if (content.isEmpty) return;
     _chatController.clear();
     try {
-      await ApiClient.instance.sendChat(
+      final sent = await ApiClient.instance.sendChat(
           session.roomCode, session.identity, session.memberToken, content);
+      // 服务端确认后立即上屏, 不依赖 STOMP 回推(断线重连期间发的消息也能看到)
+      if (mounted) _appendChatMessages([ChatMessageItem.fromJson(sent)]);
     } catch (error) {
       // 发送失败时还原输入, 避免用户重新输入
       if (mounted && _chatController.text.trim().isEmpty) {
@@ -793,9 +856,11 @@ class _RoomPageState extends State<RoomPage> {
     _heartbeatTimer?.cancel();
     _stateTimer?.cancel();
     _clockTimer?.cancel();
+    _ws.connected.removeListener(_onWsConnectionChanged);
     _ws.dispose();
     _recordingGuard.stop();
-    _remoteAudioTracks.clear();
+    _castAudioTracks.clear();
+    _voiceAudioTracks.clear();
     _chatController.dispose();
     _chatFocus.dispose();
     _lkListener?.dispose();
@@ -1250,6 +1315,17 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
+  Widget _sliderLabel(IconData icon, String text) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: Colors.white54),
+        Text(text,
+            style: const TextStyle(fontSize: 10, color: Colors.white54)),
+      ],
+    );
+  }
+
   Widget _buildBottomControls(RoomState state) {
     return Positioned(
       left: 0,
@@ -1270,11 +1346,10 @@ class _RoomPageState extends State<RoomPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 明暗 / 音量(本地调节)
+              // 明暗 / 投屏声音 / 语音声音(本地调节, 三者互不影响)
               Row(
                 children: [
-                  const Icon(Icons.brightness_6,
-                      size: 16, color: Colors.white54),
+                  _sliderLabel(Icons.brightness_6, '明暗'),
                   Expanded(
                     child: Slider(
                       value: _brightness.clamp(0.05, 1.0),
@@ -1284,12 +1359,24 @@ class _RoomPageState extends State<RoomPage> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.volume_up, size: 16, color: Colors.white54),
+                  _sliderLabel(Icons.movie, '投屏'),
                   Expanded(
                     child: Slider(
-                      value: _volume.clamp(0.0, 1.0),
+                      value: _castVolume.clamp(0.0, 1.0),
                       max: 1.0,
-                      onChanged: _setVolume,
+                      onChanged: _setCastVolume,
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  _sliderLabel(Icons.record_voice_over, '语音'),
+                  Expanded(
+                    child: Slider(
+                      value: _voiceVolume.clamp(0.0, 1.0),
+                      max: 1.0,
+                      onChanged: _setVoiceVolume,
                     ),
                   ),
                 ],
