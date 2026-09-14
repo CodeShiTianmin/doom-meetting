@@ -66,6 +66,10 @@ final int Function(int, int, int, int, int, int, int) _setWindowPos =
         Int32 Function(IntPtr, IntPtr, Int32, Int32, Int32, Int32, Uint32),
         int Function(int, int, int, int, int, int, int)>('SetWindowPos');
 
+final int Function(int) _getSystemMetrics =
+    _user32.lookupFunction<Int32 Function(Int32), int Function(int)>(
+        'GetSystemMetrics');
+
 const int _gwlStyle = -16;
 const int _gwlExStyle = -20;
 const int _wsExToolWindow = 0x00000080;
@@ -79,6 +83,12 @@ const int _wsMinimizeBox = 0x00020000;
 const int _wsMaximizeBox = 0x00010000;
 const int _wsSysMenu = 0x00080000;
 const int _swpFrameChangedFlags = 0x0001 | 0x0002 | 0x0004 | 0x0020;
+const int _smXVirtualScreen = 76;
+const int _smYVirtualScreen = 77;
+
+/// 播放窗口尺寸(即窗口捕获推流的画面尺寸)
+const int _playerWindowWidth = 1280;
+const int _playerWindowHeight = 720;
 
 /// 去掉标题栏/边框: 窗口捕获推流时手机端只看到视频画面,
 /// 不出现「投屏播放」标题文字(窗口标题文本仍在, 不影响捕获枚举)
@@ -95,13 +105,17 @@ void _removeWindowChrome(int hwnd) {
 }
 
 /// 后台窗口模式(房间推流): 不进任务栏、不抢焦点、压到最底层,
-/// 推流时不弹出视频窗口干扰操作; 窗口仍可见(未最小化), 不影响窗口捕获
+/// 并整体移到虚拟桌面左侧屏幕外, 推流时不遮挡桌面任何操作。
+/// 窗口保持可见状态(不能最小化/隐藏 —— 最小化或隐藏的窗口无法被窗口捕获,
+/// 而屏幕外窗口仍由 DWM 正常合成, 捕获画面不受影响)
 void _applyBackgroundMode(int hwnd) {
   final exStyle = _getWindowLongPtr(hwnd, _gwlExStyle);
   _setWindowLongPtr(
       hwnd, _gwlExStyle, exStyle | _wsExToolWindow | _wsExNoActivate);
-  _setWindowPos(hwnd, _hwndBottom, 0, 0, 1280, 720,
-      _swpNoActivate | _swpFrameChanged);
+  final x = _getSystemMetrics(_smXVirtualScreen) - _playerWindowWidth - 64;
+  final y = _getSystemMetrics(_smYVirtualScreen);
+  _setWindowPos(hwnd, _hwndBottom, x, y, _playerWindowWidth,
+      _playerWindowHeight, _swpNoActivate | _swpFrameChanged);
 }
 
 int _ownWindowHwnd = 0;

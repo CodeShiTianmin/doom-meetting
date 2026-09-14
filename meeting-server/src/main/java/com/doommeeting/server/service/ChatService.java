@@ -5,7 +5,9 @@ import com.doommeeting.server.dto.ChatDtos.ChatMessageResponse;
 import com.doommeeting.server.entity.Room;
 import com.doommeeting.server.entity.RoomMember;
 import com.doommeeting.server.enums.RoomStatus;
+import com.doommeeting.server.event.RoomClosedEvent;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -15,10 +17,12 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 房间文字聊天: 内存保存近 100 条, 通过房间 STOMP 主题实时广播("CHAT" 事件)。
+ * 房间关闭(结束/重置/删除/到期)时清空该房间记录, 固定房下一场会议不会看到上一场的消息。
  */
 @Service
 @RequiredArgsConstructor
@@ -41,7 +45,7 @@ public class ChatService {
         }
         RoomMember member = memberService.requireOnlineMember(room, identity, memberToken);
         return append(room.getRoomCode(),
-                new ChatMessageResponse(member.getNickname(), member.getIdentity(),
+                new ChatMessageResponse(newMessageId(), member.getNickname(), member.getIdentity(),
                         content.trim(), false, LocalDateTime.now()));
     }
 
@@ -52,7 +56,8 @@ public class ChatService {
             throw new BusinessException("房间已关闭, 无法发送消息");
         }
         return append(room.getRoomCode(),
-                new ChatMessageResponse(operator, null, content.trim(), true, LocalDateTime.now()));
+                new ChatMessageResponse(newMessageId(), operator, null, content.trim(), true,
+                        LocalDateTime.now()));
     }
 
     /** 近期聊天记录(时间正序) */
@@ -75,6 +80,15 @@ public class ChatService {
         history.remove(roomCode);
     }
 
+    @EventListener
+    public void onRoomClosed(RoomClosedEvent event) {
+        clear(event.roomCode());
+    }
+
+    private static String newMessageId() {
+        return UUID.randomUUID().toString();
+    }
+
     private ChatMessageResponse append(String roomCode, ChatMessageResponse message) {
         Deque<ChatMessageResponse> deque =
                 history.computeIfAbsent(roomCode, key -> new ArrayDeque<>());
@@ -85,6 +99,7 @@ public class ChatService {
             }
         }
         Map<String, Object> payload = new HashMap<>();
+        payload.put("id", message.id());
         payload.put("sender", message.sender());
         if (message.identity() != null) {
             payload.put("identity", message.identity());

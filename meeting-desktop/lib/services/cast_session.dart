@@ -4,6 +4,30 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 
 import 'room_video_player.dart';
 
+/// 推流画面参数。播放窗口固定为 1280x720, 采集/编码按 720p 对齐:
+/// 顶层 720p30/4Mbps 独立满码率编码, 另发一层 640x360/1Mbps 全帧率低档层
+/// (整数倍缩放, 非整数比例缩放屏幕/视频内容会产生横向条纹状锯齿波纹)。
+/// 若按 1080p 参数声明而实际只有 720p 画面, simulcast 的缩放系数会基于 1080p
+/// 计算, 低档层实际只有 240p/480p, 手机被 SFU 切到低档后画面非常模糊。
+const lk.VideoDimensions _castDimensions = lk.VideoDimensionsPresets.h720_169;
+const lk.VideoEncoding _castEncoding = lk.VideoEncoding(
+  maxBitrate: 4 * 1000 * 1000,
+  maxFramerate: 30,
+);
+const lk.VideoParameters _castParameters = lk.VideoParameters(
+  dimensions: _castDimensions,
+  encoding: _castEncoding,
+);
+const List<lk.VideoParameters> _castSimulcastLayers = [
+  lk.VideoParameters(
+    dimensions: lk.VideoDimensionsPresets.h360_169,
+    encoding: lk.VideoEncoding(
+      maxBitrate: 1000 * 1000,
+      maxFramerate: 30,
+    ),
+  ),
+];
+
 /// 单房间推流会话:
 ///
 /// 每个房间一个独立的 LiveKit RTC 连接(隐藏推流身份, 只发不收),
@@ -49,26 +73,19 @@ class CastSession extends ChangeNotifier {
         adaptiveStream: false,
         dynacast: true,
         defaultVideoPublishOptions: lk.VideoPublishOptions(
-          // 高清 1080p/30fps; 1080p30 屏幕/视频内容 4Mbps 已接近主观清晰度
-          // 上限, 码率再高只会挤占手机下行带宽造成卡顿
-          videoEncoding: lk.VideoEncoding(
-            maxBitrate: 4 * 1000 * 1000,
-            maxFramerate: 30,
-          ),
+          // 720p30 屏幕/视频内容 4Mbps 已达主观清晰度上限,
+          // 码率再高只会挤占手机下行带宽造成卡顿
+          videoEncoding: _castEncoding,
+          screenShareEncoding: _castEncoding,
           simulcast: true,
+          screenShareSimulcastLayers: _castSimulcastLayers,
           // H264 走硬件编码: 多房并发时大幅降低 CPU/GPU 占用,
           // 避免软编 VP8 算力不足时出现条纹/色块等编码伪影
           videoCodec: 'H264',
         ),
         defaultScreenShareCaptureOptions: lk.ScreenShareCaptureOptions(
           maxFrameRate: 30,
-          params: lk.VideoParameters(
-            dimensions: lk.VideoDimensionsPresets.h1080_169,
-            encoding: lk.VideoEncoding(
-              maxBitrate: 4 * 1000 * 1000,
-              maxFramerate: 30,
-            ),
-          ),
+          params: _castParameters,
         ),
       ),
     );
@@ -162,13 +179,7 @@ class CastSession extends ChangeNotifier {
     final options = lk.ScreenShareCaptureOptions(
       sourceId: sourceId,
       maxFrameRate: 30,
-      params: const lk.VideoParameters(
-        dimensions: lk.VideoDimensionsPresets.h1080_169,
-        encoding: lk.VideoEncoding(
-          maxBitrate: 4 * 1000 * 1000,
-          maxFramerate: 30,
-        ),
-      ),
+      params: _castParameters,
     );
     lk.LocalVideoTrack videoTrack;
     lk.LocalAudioTrack? audioTrack;
@@ -182,35 +193,18 @@ class CastSession extends ChangeNotifier {
     }
     localVideoTrack = videoTrack;
     try {
-      // 顶层 1080p30/4Mbps 独立满码率编码, 另发 720p/360p 全帧率低档层:
-      // 手机下行带宽不足时 SFU 自动切低档层保持流畅, 带宽充足时始终收
-      // 顶层高清; 低档层保持 30fps 避免视频内容切档后掉帧卡顿。
-      // 发送端带宽/性能不足时优先保帧率(降分辨率), 避免卡顿
+      // 顶层满码率编码 + 一层全帧率低档层: 手机下行带宽确实不足时 SFU
+      // 切低档层保持流畅, 带宽恢复后切回顶层; 低档层保持 30fps 避免视频
+      // 内容切档后掉帧卡顿。屏幕共享轨的码率取 screenShareEncoding,
+      // 不显式指定时 SDK 会按分辨率预设自动选一个较低的码率
       await participant.publishVideoTrack(
         videoTrack,
         publishOptions: const lk.VideoPublishOptions(
           simulcast: true,
           videoCodec: 'H264',
-          videoEncoding: lk.VideoEncoding(
-            maxBitrate: 4 * 1000 * 1000,
-            maxFramerate: 30,
-          ),
-          screenShareSimulcastLayers: [
-            lk.VideoParameters(
-              dimensions: lk.VideoDimensionsPresets.h360_169,
-              encoding: lk.VideoEncoding(
-                maxBitrate: 800 * 1000,
-                maxFramerate: 30,
-              ),
-            ),
-            lk.VideoParameters(
-              dimensions: lk.VideoDimensionsPresets.h720_169,
-              encoding: lk.VideoEncoding(
-                maxBitrate: 2200 * 1000,
-                maxFramerate: 30,
-              ),
-            ),
-          ],
+          videoEncoding: _castEncoding,
+          screenShareEncoding: _castEncoding,
+          screenShareSimulcastLayers: _castSimulcastLayers,
           // 保分辨率: 编码器算力/带宽吃紧时降帧率而非动态缩放分辨率,
           // 非整数比例缩放屏幕/视频内容会产生横向条纹状锟齿波纹
           degradationPreference: lk.DegradationPreference.maintainResolution,

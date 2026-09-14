@@ -102,14 +102,15 @@ class ApiClient {
     return ((_unwrap(response))['likeCount'] as num?)?.toInt() ?? 0;
   }
 
-  Future<void> sendChat(String roomCode, String identity, String memberToken,
-      String content) async {
+  /// 发送聊天消息, 返回服务端确认后的消息(含消息 id, 可立即上屏)
+  Future<Map<String, dynamic>> sendChat(String roomCode, String identity,
+      String memberToken, String content) async {
     final response = await _dio.post('/api/mobile/rooms/$roomCode/chat', data: {
       'identity': identity,
       'memberToken': memberToken,
       'content': content,
     });
-    _envelope(response);
+    return _unwrap(response);
   }
 
   Future<List<Map<String, dynamic>>> fetchChat(String roomCode) async {

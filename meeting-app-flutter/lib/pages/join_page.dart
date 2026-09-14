@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 import '../models/join_session.dart';
@@ -24,6 +25,9 @@ class JoinPage extends StatefulWidget {
 }
 
 class _JoinPageState extends State<JoinPage> {
+  /// 本地记住上次入会填写的名字(仅昵称; 会议凭证为一次性, 不落盘)
+  static const String _nicknamePrefKey = 'last_nickname';
+
   final _formKey = GlobalKey<FormState>();
   final _nicknameController = TextEditingController();
   bool _joining = false;
@@ -35,7 +39,27 @@ class _JoinPageState extends State<JoinPage> {
   @override
   void initState() {
     super.initState();
+    _restoreNickname();
     _checkAppVersion();
+  }
+
+  Future<void> _restoreNickname() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_nicknamePrefKey)?.trim() ?? '';
+      // 用户已开始输入时不覆盖
+      if (!mounted || saved.isEmpty || _nicknameController.text.isNotEmpty) {
+        return;
+      }
+      _nicknameController.text = saved;
+    } catch (_) {}
+  }
+
+  Future<void> _saveNickname(String nickname) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_nicknamePrefKey, nickname);
+    } catch (_) {}
   }
 
   /// APK 私发分发: 启动时检查新版本, 提示下载新 APK
@@ -189,13 +213,15 @@ class _JoinPageState extends State<JoinPage> {
   Future<void> _join(String roomCode, String inviteToken) async {
     if (_joining) return;
     setState(() => _joining = true);
+    final nickname = _nicknameController.text.trim();
     try {
       final session = await ApiClient.instance.joinRoom(
         roomCode: roomCode,
         inviteToken: inviteToken,
-        nickname: _nicknameController.text.trim(),
+        nickname: nickname,
         deviceInfo: Platform.operatingSystem,
       );
+      unawaited(_saveNickname(nickname));
       if (!mounted) return;
       // 扫码后停留等待: 显示「正在匹配中」, 两人都扫码成功才同时进房
       Navigator.of(context).push(

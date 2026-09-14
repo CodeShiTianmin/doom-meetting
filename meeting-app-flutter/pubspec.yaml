@@ -33,6 +33,8 @@ dependencies:
     path: packages/livekit_pip
   # 本地亮度调节
   screen_brightness: ^1.0.1
+  # 记住上次入会填写的名字(仅昵称, 不保存会议凭证)
+  shared_preferences: ^2.3.0
   cupertino_icons: ^1.0.8
 
 dev_dependencies:

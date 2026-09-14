@@ -1,18 +1,34 @@
 import 'package:flutter/material.dart';
 
-/// 聊天消息(内存展示)
+/// 聊天消息(内存展示)。[key] 为去重标识: 优先用服务端消息 id,
+/// 兼容无 id 的旧服务端时退化为 发送者+内容+发送时间
 class ChatMessageItem {
-  final int id;
+  final String key;
   final String sender;
   final String content;
   final bool fromAdmin;
 
   const ChatMessageItem({
-    required this.id,
+    required this.key,
     required this.sender,
     required this.content,
     required this.fromAdmin,
   });
+
+  factory ChatMessageItem.fromJson(Map<String, dynamic> json) {
+    final sender = (json['sender'] as String?) ?? '匿名';
+    final content = (json['content'] as String?) ?? '';
+    final id = json['id'];
+    final key = id is String && id.isNotEmpty
+        ? id
+        : '${json['identity'] ?? ''}|$sender|${json['sentAt'] ?? ''}|$content';
+    return ChatMessageItem(
+      key: key,
+      sender: sender,
+      content: content,
+      fromAdmin: json['fromAdmin'] == true,
+    );
+  }
 }
 
 /// 左下角聊天气泡层: 最多显示 6 条, 新消息从下往上滑入
@@ -34,7 +50,7 @@ class ChatOverlay extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (final message in visible)
-            _ChatBubble(key: ValueKey(message.id), message: message),
+            _ChatBubble(key: ValueKey(message.key), message: message),
         ],
       ),
     );
