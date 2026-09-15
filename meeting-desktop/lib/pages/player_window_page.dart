@@ -70,6 +70,14 @@ final int Function(int) _getSystemMetrics =
     _user32.lookupFunction<Int32 Function(Int32), int Function(int)>(
         'GetSystemMetrics');
 
+final int Function(int, int) _monitorFromWindow = _user32.lookupFunction<
+    IntPtr Function(IntPtr, Uint32),
+    int Function(int, int)>('MonitorFromWindow');
+
+final int Function(int, Pointer<Int32>) _getMonitorInfo =
+    _user32.lookupFunction<Int32 Function(IntPtr, Pointer<Int32>),
+        int Function(int, Pointer<Int32>)>('GetMonitorInfoW');
+
 const int _gwlStyle = -16;
 const int _gwlExStyle = -20;
 const int _wsExToolWindow = 0x00000080;
@@ -83,12 +91,27 @@ const int _wsMinimizeBox = 0x00020000;
 const int _wsMaximizeBox = 0x00010000;
 const int _wsSysMenu = 0x00080000;
 const int _swpFrameChangedFlags = 0x0001 | 0x0002 | 0x0004 | 0x0020;
+const int _smCxScreen = 0;
+const int _smCyScreen = 1;
 const int _smXVirtualScreen = 76;
 const int _smYVirtualScreen = 77;
+const int _smCxVirtualScreen = 78;
+const int _smCyVirtualScreen = 79;
+const int _monitorDefaultToPrimary = 1;
+
+/// MONITORINFO 结构大小(字节): cbSize + rcMonitor + rcWork + dwFlags
+const int _monitorInfoSize = 40;
 
 /// 播放窗口尺寸(即窗口捕获推流的画面尺寸)
 const int _playerWindowWidth = 1280;
 const int _playerWindowHeight = 720;
+
+/// 后台模式下播放窗口留在屏幕内的边条宽度(px)。
+/// 窗口不能整体移出所有显示器: 完全不在任何显示器上的窗口会被 DWM 判定为
+/// 被遮挡, Flutter 的 DXGI 交换链 Present 被跳过、画面不再更新, 窗口捕获
+/// 只能得到黑屏; 只要有一条边留在屏幕内, DWM 就会持续合成整个窗口,
+/// 捕获到的是完整画面(捕获读的是窗口重定向表面, 与是否露出无关)
+const int _visibleStripPx = 4;
 
 /// 去掉标题栏/边框: 窗口捕获推流时手机端只看到视频画面,
 /// 不出现「投屏播放」标题文字(窗口标题文本仍在, 不影响捕获枚举)
@@ -104,17 +127,65 @@ void _removeWindowChrome(int hwnd) {
   _setWindowPos(hwnd, 0, 0, 0, 0, 0, _swpFrameChangedFlags);
 }
 
+/// 窗口所在显示器的矩形(left, top, right, bottom); 取不到时回退主显示器
+({int left, int top, int right, int bottom}) _monitorRect(int hwnd) {
+  final monitor = _monitorFromWindow(hwnd, _monitorDefaultToPrimary);
+  final info = calloc<Int32>(_monitorInfoSize ~/ 4);
+  try {
+    info[0] = _monitorInfoSize;
+    if (monitor != 0 && _getMonitorInfo(monitor, info) != 0) {
+      return (left: info[1], top: info[2], right: info[3], bottom: info[4]);
+    }
+  } finally {
+    calloc.free(info);
+  }
+  return (
+    left: 0,
+    top: 0,
+    right: _getSystemMetrics(_smCxScreen),
+    bottom: _getSystemMetrics(_smCyScreen),
+  );
+}
+
+/// 计算后台播放窗口位置: 沿当前显示器一条没有相邻显示器的边缘挂到屏幕外,
+/// 只留 [_visibleStripPx] 宽的边条在屏幕内(见该常量说明)。
+/// 四周都有显示器的极端布局下退回屏幕内左上角(仍压在最底层)
+({int x, int y}) _backgroundWindowPosition(int hwnd) {
+  final monitor = _monitorRect(hwnd);
+  final virtualLeft = _getSystemMetrics(_smXVirtualScreen);
+  final virtualTop = _getSystemMetrics(_smYVirtualScreen);
+  final virtualRight = virtualLeft + _getSystemMetrics(_smCxVirtualScreen);
+  final virtualBottom = virtualTop + _getSystemMetrics(_smCyVirtualScreen);
+  if (monitor.left <= virtualLeft) {
+    return (
+      x: monitor.left - _playerWindowWidth + _visibleStripPx,
+      y: monitor.top,
+    );
+  }
+  if (monitor.top <= virtualTop) {
+    return (
+      x: monitor.left,
+      y: monitor.top - _playerWindowHeight + _visibleStripPx,
+    );
+  }
+  if (monitor.right >= virtualRight) {
+    return (x: monitor.right - _visibleStripPx, y: monitor.top);
+  }
+  if (monitor.bottom >= virtualBottom) {
+    return (x: monitor.left, y: monitor.bottom - _visibleStripPx);
+  }
+  return (x: monitor.left, y: monitor.top);
+}
+
 /// 后台窗口模式(房间推流): 不进任务栏、不抢焦点、压到最底层,
-/// 并整体移到虚拟桌面左侧屏幕外, 推流时不遮挡桌面任何操作。
-/// 窗口保持可见状态(不能最小化/隐藏 —— 最小化或隐藏的窗口无法被窗口捕获,
-/// 而屏幕外窗口仍由 DWM 正常合成, 捕获画面不受影响)
+/// 并沿显示器边缘挂到屏幕外(只露一条细边), 推流时不遮挡桌面操作。
+/// 窗口保持可见状态(最小化/隐藏/整体移出屏幕的窗口都无法被正常捕获)
 void _applyBackgroundMode(int hwnd) {
   final exStyle = _getWindowLongPtr(hwnd, _gwlExStyle);
   _setWindowLongPtr(
       hwnd, _gwlExStyle, exStyle | _wsExToolWindow | _wsExNoActivate);
-  final x = _getSystemMetrics(_smXVirtualScreen) - _playerWindowWidth - 64;
-  final y = _getSystemMetrics(_smYVirtualScreen);
-  _setWindowPos(hwnd, _hwndBottom, x, y, _playerWindowWidth,
+  final position = _backgroundWindowPosition(hwnd);
+  _setWindowPos(hwnd, _hwndBottom, position.x, position.y, _playerWindowWidth,
       _playerWindowHeight, _swpNoActivate | _swpFrameChanged);
 }
 
