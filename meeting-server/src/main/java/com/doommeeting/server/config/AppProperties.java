@@ -18,6 +18,7 @@ public class AppProperties {
     private Room room = new Room();
     private Livekit livekit = new Livekit();
     private MobileApp mobileApp = new MobileApp();
+    private Chat chat = new Chat();
 
     @Getter
     @Setter
@@ -57,6 +58,15 @@ public class AppProperties {
         private int fixedRoomCount = 24;
         /** 固定房间默认会议时长(分钟) */
         private int defaultDurationMinutes = 50;
+    }
+
+    /** 房间聊天图片: 保存在本地目录(按房间号分目录), 房间关闭时随聊天记录一并删除 */
+    @Getter
+    @Setter
+    public static class Chat {
+        private String imageDir = "./data/chat-images";
+        /** 单张图片上限(MB) */
+        private int imageMaxSizeMb = 10;
     }
 
     /** 手机 App 版本检查与 APK 私发下载(不上架应用商店) */

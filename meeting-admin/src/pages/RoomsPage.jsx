@@ -28,7 +28,7 @@ const STATUS_FILTERS = [
 ]
 const DEFAULT_FORM = {
   name: '',
-  durationMinutes: 60,
+  durationMinutes: 50,
   maxMembers: 2,
   videoCallEnabled: true,
   cameraEnabled: true,

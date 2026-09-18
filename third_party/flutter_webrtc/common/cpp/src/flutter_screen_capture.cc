@@ -262,15 +262,45 @@ void FlutterScreenCapture::GetDisplayMedia(
     return;
   }
 
-  scoped_refptr<RTCDesktopCapturer> desktop_capturer =
-      base_->desktop_device_->CreateDesktopCapturer(source);
+  const char* video_source_label = "screen_capture_input";
 
-  if (!desktop_capturer.get()) {
-    result->Error("Bad Arguments", "CreateDesktopCapturer failed!");
-    return;
+  // Window sources are captured through the platform compositor capturer
+  // (Windows.Graphics.Capture) when available. libwebrtc's window capturer
+  // reads the window with GDI/PrintWindow, which yields black frames for
+  // hardware-accelerated video windows (libmpv/media_kit, browsers) and for
+  // windows positioned off-screen. The compositor path pushes frames into a
+  // custom video source instead. Screen sources and platforms without an
+  // implementation fall back to the built-in desktop capturer below.
+  scoped_refptr<RTCVideoSource> video_source;
+  scoped_refptr<WindowFrameCapturer> window_frame_capturer;
+  scoped_refptr<RTCDesktopCapturer> desktop_capturer;
+  if (source->type() == kWindow) {
+    scoped_refptr<RTCVideoSource> custom_source =
+        base_->factory_->CreateCustomVideoSource(
+            video_source_label,
+            base_->ParseMediaConstraints(video_constraints));
+    if (custom_source.get()) {
+      window_frame_capturer = CreateWindowFrameCapturer(
+          source_id, uint32_t(fps), custom_source);
+      if (window_frame_capturer.get() &&
+          window_frame_capturer->StartCapture()) {
+        video_source = custom_source;
+      } else {
+        window_frame_capturer = nullptr;
+      }
+    }
   }
 
-  desktop_capturer->RegisterDesktopCapturerObserver(this);
+  if (!video_source.get()) {
+    desktop_capturer = base_->desktop_device_->CreateDesktopCapturer(source);
+
+    if (!desktop_capturer.get()) {
+      result->Error("Bad Arguments", "CreateDesktopCapturer failed!");
+      return;
+    }
+
+    desktop_capturer->RegisterDesktopCapturerObserver(this);
+  }
 
   if (capture_audio) {
     // Disable all audio processing for loopback capture.  Echo cancellation,
@@ -296,8 +326,13 @@ void FlutterScreenCapture::GetDisplayMedia(
         CreateLoopbackCapturer(source_id);
 
     if (loopback_capturer && loopback_capturer->Start(loopback_audio_source)) {
-      loopback_sessions_[desktop_capturer.get()] =
-          LoopbackSession{std::move(loopback_capturer), loopback_audio_source};
+      if (window_frame_capturer.get()) {
+        window_frame_capturer->AttachLoopback(std::move(loopback_capturer),
+                                              loopback_audio_source);
+      } else {
+        loopback_sessions_[desktop_capturer.get()] = LoopbackSession{
+            std::move(loopback_capturer), loopback_audio_source};
+      }
 
       EncodableMap audio_info;
       audio_info[EncodableValue("id")] =
@@ -323,17 +358,19 @@ void FlutterScreenCapture::GetDisplayMedia(
     params[EncodableValue("audioTracks")] = EncodableValue(EncodableList());
   }
 
-  const char* video_source_label = "screen_capture_input";
-
-  scoped_refptr<RTCVideoSource> video_source =
-      base_->factory_->CreateDesktopSource(
-          desktop_capturer, video_source_label,
-          base_->ParseMediaConstraints(video_constraints));
-
-  // TODO: RTCVideoSource -> RTCVideoTrack
+  if (!video_source.get()) {
+    video_source = base_->factory_->CreateDesktopSource(
+        desktop_capturer, video_source_label,
+        base_->ParseMediaConstraints(video_constraints));
+  }
 
   scoped_refptr<RTCVideoTrack> track =
       base_->factory_->CreateVideoTrack(video_source, uuid.c_str());
+
+  if (window_frame_capturer.get()) {
+    // Track disposal stops the window capture (and its loopback audio).
+    base_->video_capturers_[track->id().std_string()] = window_frame_capturer;
+  }
 
   EncodableList videoTracks;
   EncodableMap info;
@@ -350,7 +387,9 @@ void FlutterScreenCapture::GetDisplayMedia(
 
   base_->local_streams_[uuid] = stream;
 
-  desktop_capturer->Start(uint32_t(fps));
+  if (desktop_capturer.get()) {
+    desktop_capturer->Start(uint32_t(fps));
+  }
 
   result->Success(EncodableValue(params));
 }
