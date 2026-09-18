@@ -11,6 +11,7 @@
 #include "rtc_audio_track.h"
 #include "rtc_desktop_capturer.h"
 #include "rtc_desktop_media_list.h"
+#include "window_frame_capturer.h"
 
 namespace flutter_webrtc_plugin {
 

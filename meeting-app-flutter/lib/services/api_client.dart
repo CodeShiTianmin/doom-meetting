@@ -113,6 +113,37 @@ class ApiClient {
     return _unwrap(response);
   }
 
+  /// 发送图片聊天消息(multipart 上传), 返回含 imageUrl 的消息
+  Future<Map<String, dynamic>> sendChatImage(String roomCode, String identity,
+      String memberToken, String filePath,
+      {String? fileName, String? mimeType}) async {
+    final form = FormData.fromMap({
+      'identity': identity,
+      'memberToken': memberToken,
+      'file': await MultipartFile.fromFile(filePath,
+          filename: fileName,
+          contentType: mimeType == null ? null : DioMediaType.parse(mimeType)),
+    });
+    final response = await _dio.post('/api/mobile/rooms/$roomCode/chat/image',
+        data: form,
+        options: Options(
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
+        ));
+    return _unwrap(response);
+  }
+
+  /// 聊天图片的绝对地址: 服务端返回相对路径, 拼上 API 地址
+  static String resolveImageUrl(String imageUrl) {
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      return imageUrl;
+    }
+    final base = AppConfig.apiBaseUrl.endsWith('/')
+        ? AppConfig.apiBaseUrl.substring(0, AppConfig.apiBaseUrl.length - 1)
+        : AppConfig.apiBaseUrl;
+    return imageUrl.startsWith('/') ? '$base$imageUrl' : '$base/$imageUrl';
+  }
+
   Future<List<Map<String, dynamic>>> fetchChat(String roomCode) async {
     final response = await _dio.get('/api/mobile/rooms/$roomCode/chat');
     final data = _envelope(response)['data'];

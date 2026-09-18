@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # 无域名部署: 直接指向公网 IP + Nginx 端口(见 deploy/windows/README.md)

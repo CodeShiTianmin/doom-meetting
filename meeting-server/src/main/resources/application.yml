@@ -19,6 +19,11 @@ spring:
   jackson:
     time-zone: Asia/Shanghai
     date-format: yyyy-MM-dd HH:mm:ss
+  servlet:
+    multipart:
+      # 手机端聊天发送图片(与 app.chat.image-max-size-mb 保持一致)
+      max-file-size: ${APP_CHAT_IMAGE_MAX_SIZE_MB:10}MB
+      max-request-size: ${APP_CHAT_IMAGE_MAX_SIZE_MB:10}MB
 
 app:
   jwt:
@@ -55,6 +60,11 @@ app:
     # 服务端调用 LiveKit 管理 API 的地址(如 http://host.docker.internal:7880), 为空时由 ws-url 推导
     api-url: ${LIVEKIT_API_URL:}
     token-ttl-minutes: 180
+  chat:
+    # 聊天图片保存目录(按房间号分目录, 房间关闭时自动清理)
+    image-dir: ${APP_CHAT_IMAGE_DIR:./data/chat-images}
+    # 单张图片上限(MB)
+    image-max-size-mb: ${APP_CHAT_IMAGE_MAX_SIZE_MB:10}
   mobile-app:
     # 手机 App 版本检查与 APK 私发下载(不上架应用商店)
     latest-version-code: ${APP_MOBILE_LATEST_VERSION_CODE:1}

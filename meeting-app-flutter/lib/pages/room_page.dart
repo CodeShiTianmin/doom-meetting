@@ -5,6 +5,7 @@ import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
+import 'package:image_picker/image_picker.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:livekit_pip/livekit_pip.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -88,6 +89,9 @@ class _RoomPageState extends State<RoomPage> {
   /// 发送成功后的 REST 回应、STOMP 实时事件、历史拉取三个来源可能重叠
   final List<ChatMessageItem> _chatMessages = [];
   bool _chatInputVisible = false;
+
+  /// 图片消息上传中, 防止重复选图
+  bool _sendingImage = false;
   final TextEditingController _chatController = TextEditingController();
   final FocusNode _chatFocus = FocusNode();
 
@@ -805,6 +809,44 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
+  /// 从相册选择照片并作为图片消息发送(压缩到最长边 1600px 以控制体积)
+  Future<void> _sendChatImage() async {
+    if (_sendingImage) return;
+    if (_closedReason != null) {
+      _showToast('会议已结束, 无法发送消息');
+      return;
+    }
+    final XFile? image;
+    try {
+      image = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 85,
+      );
+    } catch (_) {
+      _showToast('无法打开相册, 请检查相册访问权限');
+      return;
+    }
+    if (image == null || !mounted) return;
+    setState(() => _sendingImage = true);
+    try {
+      final sent = await ApiClient.instance.sendChatImage(
+        session.roomCode,
+        session.identity,
+        session.memberToken,
+        image.path,
+        fileName: image.name,
+        mimeType: image.mimeType,
+      );
+      if (mounted) _appendChatMessages([ChatMessageItem.fromJson(sent)]);
+    } catch (error) {
+      _showToast(describeError(error));
+    } finally {
+      if (mounted) setState(() => _sendingImage = false);
+    }
+  }
+
   void _pushHeart() {
     final heart = HeartItem.random(++_heartId);
     _hearts.add(heart);
@@ -1074,7 +1116,10 @@ class _RoomPageState extends State<RoomPage> {
             left: 10,
             bottom: _uiHidden ? 28 : (_chatInputVisible ? 210 : 160),
             width: MediaQuery.of(context).size.width * 0.68,
-            child: ChatOverlay(messages: _chatMessages),
+            child: ChatOverlay(
+              messages: _chatMessages,
+              onImageTap: (message) => ChatImageViewer.show(context, message),
+            ),
           ),
           if (!_uiHidden && _chatInputVisible) _buildChatInput(),
           _buildBottomControls(state),
@@ -1456,6 +1501,18 @@ class _RoomPageState extends State<RoomPage> {
         ),
         child: Row(
           children: [
+            IconButton(
+              tooltip: '发送照片',
+              onPressed: _sendingImage ? null : _sendChatImage,
+              icon: _sendingImage
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Color(0xFF8AB8FF)))
+                  : const Icon(Icons.photo_outlined,
+                      size: 20, color: Color(0xFF8AB8FF)),
+            ),
             Expanded(
               child: TextField(
                 controller: _chatController,

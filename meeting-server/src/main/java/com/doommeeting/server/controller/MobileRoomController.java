@@ -10,8 +10,14 @@ import com.doommeeting.server.service.MemberService;
 import com.doommeeting.server.service.RoomService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -62,6 +68,34 @@ public class MobileRoomController {
                                                      @Valid @RequestBody MobileChatRequest request) {
         return ApiResponse.ok(chatService.sendFromMember(
                 roomCode, request.identity(), request.memberToken(), request.content()));
+    }
+
+    /** 发送图片聊天消息(multipart: identity/memberToken/file), 返回含 imageUrl 的消息 */
+    @PostMapping(value = "/{roomCode}/chat/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<ChatMessageResponse> sendChatImage(@PathVariable String roomCode,
+                                                          @RequestParam String identity,
+                                                          @RequestParam String memberToken,
+                                                          @RequestParam("file") MultipartFile file) {
+        return ApiResponse.ok(chatService.sendImageFromMember(roomCode, identity, memberToken, file));
+    }
+
+    /** 读取聊天图片(房间内各端通过消息中的 imageUrl 访问) */
+    @GetMapping("/{roomCode}/chat/images/{fileName:.+}")
+    public ResponseEntity<Resource> chatImage(@PathVariable String roomCode,
+                                              @PathVariable String fileName) {
+        Resource image = chatService.loadImage(roomCode, fileName);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.maxAge(Duration.ofHours(6)))
+                .contentType(mediaTypeOf(fileName))
+                .body(image);
+    }
+
+    private static MediaType mediaTypeOf(String fileName) {
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
+        if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
+        if (lower.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
+        return MediaType.IMAGE_JPEG;
     }
 
     /** 近期聊天记录(时间正序) */

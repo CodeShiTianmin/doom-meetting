@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @Slf4j
@@ -48,6 +49,12 @@ public class GlobalExceptionHandler {
     public ApiResponse<Void> handleBadRequest(Exception e) {
         log.debug("请求参数不合法: {}", e.getMessage());
         return ApiResponse.error(400, "请求参数不合法");
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+    public ApiResponse<Void> handleUploadTooLarge(MaxUploadSizeExceededException e) {
+        return ApiResponse.error(413, "图片过大, 请选择更小的图片");
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

@@ -55,7 +55,8 @@ public class RoomService {
         Room room = new Room();
         room.setRoomCode(generateRoomCode());
         room.setName(request.name());
-        room.setDurationMinutes(request.durationMinutes());
+        room.setDurationMinutes(request.durationMinutes() == null
+                ? properties.getRoom().getDefaultDurationMinutes() : request.durationMinutes());
         room.setMaxMembers(request.maxMembers() == null
                 ? properties.getRoom().getMaxClients() : request.maxMembers());
         room.setVideoCallEnabled(request.videoCallEnabled() == null || request.videoCallEnabled());

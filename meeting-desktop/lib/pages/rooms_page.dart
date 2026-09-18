@@ -17,7 +17,8 @@ import 'room_cast_page.dart';
 /// 房间总览(固定 1-24 号房):
 /// 每张房卡显示房号/人员名称/点赞/房间状态(未使用显示绿色空闲)/
 /// 会议倒计时(绿色, 最后 60 秒变红)/推流视频完整文件名(过长换行),
-/// 外置操作按钮: 手动结束会议(重置) / 摄像头权限(默认关闭) / 二维码获取。
+/// 外置操作按钮: 手动结束会议(重置) / 摄像头权限(默认关闭) / 会议时长 / 二维码获取。
+/// 会议时长按房间设置(默认 50 分钟), 顶栏可统一设置全部房间时长。
 /// 顶栏「统一设置视频文件」批量设置各房间的推流文件并直接开始推流(视频暂停在 0 秒),
 /// 各房间手机端随即可看到画面。
 /// 点击房卡空白处进入单房推流页面。
@@ -365,6 +366,139 @@ class _RoomsPageState extends State<RoomsPage> {
             .updateSettings(room.id, cameraEnabled: !room.cameraEnabled),
       );
 
+  /// 会议时长: 服务端按房间保存, 运行中的房间修改后立即按新时长重新计算结束时间
+  static const int defaultDurationMinutes = 50;
+  static const int minDurationMinutes = 1;
+  static const int maxDurationMinutes = 720;
+
+  /// 单房间设置会议时长
+  Future<void> _setDuration(RoomModel room) async {
+    if (room.closed) {
+      _showMessage('房间已关闭, 无法修改会议时长', error: true);
+      return;
+    }
+    final minutes = await _pickDuration(
+      title: '会议时长 · ${room.roomCode} 号房间',
+      initial: room.durationMinutes ?? defaultDurationMinutes,
+      hint: room.running
+          ? '房间正在运行, 修改后按新时长从会议开始时间重新计算结束时间。'
+          : '下一场会议开始计时后按该时长自动结束。',
+    );
+    if (minutes == null || !mounted) return;
+    await _runRoomAction(room, () async {
+      await ApiClient.instance.updateSettings(room.id, durationMinutes: minutes);
+      _showMessage('${room.roomCode} 号房间会议时长已设为 $minutes 分钟');
+    });
+  }
+
+  /// 统一设置全部(未关闭)房间的会议时长
+  Future<void> _setDurationForAll() async {
+    final minutes = await _pickDuration(
+      title: '统一设置会议时长',
+      initial: defaultDurationMinutes,
+      hint: '应用到全部未关闭房间; 运行中的房间按新时长重新计算结束时间。',
+    );
+    if (minutes == null || !mounted) return;
+    final targets = _rooms.where((room) => !room.closed).toList();
+    final failed = <String>[];
+    for (final room in targets) {
+      try {
+        await ApiClient.instance
+            .updateSettings(room.id, durationMinutes: minutes);
+      } catch (_) {
+        failed.add(room.roomCode);
+      }
+    }
+    unawaited(_refresh());
+    if (failed.isEmpty) {
+      _showMessage('已将 ${targets.length} 个房间的会议时长设为 $minutes 分钟');
+    } else {
+      _showMessage('会议时长已设为 $minutes 分钟; 失败: ${failed.join('、')}',
+          error: true);
+    }
+  }
+
+  /// 会议时长输入弹窗, 返回 1~720 的分钟数, 取消返回 null
+  Future<int?> _pickDuration({
+    required String title,
+    required int initial,
+    required String hint,
+  }) {
+    final controller = TextEditingController(text: '$initial');
+    String? errorText;
+    return showDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          void submit() {
+            final value = int.tryParse(controller.text.trim());
+            if (value == null ||
+                value < minDurationMinutes ||
+                value > maxDurationMinutes) {
+              setDialogState(() => errorText =
+                  '请输入 $minDurationMinutes ~ $maxDurationMinutes 之间的整数');
+              return;
+            }
+            Navigator.of(dialogContext).pop(value);
+          }
+
+          return AlertDialog(
+            icon: const Icon(Icons.timer_outlined, color: Colors.teal, size: 32),
+            title: Text(title),
+            content: SizedBox(
+              width: 360,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(hint,
+                      style: const TextStyle(
+                          fontSize: 12.5, color: Colors.white70)),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: InputDecoration(
+                      labelText: '会议时长(分钟)',
+                      suffixText: '分钟',
+                      helperText: '默认 $defaultDurationMinutes 分钟, 范围 '
+                          '$minDurationMinutes ~ $maxDurationMinutes',
+                      errorText: errorText,
+                      border: const OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => submit(),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      for (final preset in const [30, 45, 50, 60, 90, 120])
+                        ActionChip(
+                          label: Text('$preset 分钟'),
+                          onPressed: () {
+                            controller.text = '$preset';
+                            setDialogState(() => errorText = null);
+                          },
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('取消')),
+              FilledButton(onPressed: submit, child: const Text('保存')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _logout({bool expired = false}) async {
     if (!mounted || _loggingOut) return;
     if (!expired) {
@@ -438,6 +572,12 @@ class _RoomsPageState extends State<RoomsPage> {
             ],
             const SizedBox(width: 12),
           ],
+          TextButton.icon(
+            onPressed: _rooms.isEmpty ? null : _setDurationForAll,
+            icon: const Icon(Icons.timer_outlined, size: 18),
+            label: const Text('统一设置时长'),
+          ),
+          const SizedBox(width: 4),
           TextButton.icon(
             onPressed: _rooms.isEmpty || _castAllProgress != null
                 ? null
@@ -542,6 +682,7 @@ class _RoomsPageState extends State<RoomsPage> {
           onReset: () => _resetRoom(room),
           onResetTimer: () => _resetTimer(room),
           onToggleCamera: () => _toggleCamera(room),
+          onSetDuration: () => _setDuration(room),
         );
       },
     );
@@ -606,6 +747,7 @@ class _RoomCard extends StatelessWidget {
   final VoidCallback onReset;
   final VoidCallback onResetTimer;
   final VoidCallback onToggleCamera;
+  final VoidCallback onSetDuration;
 
   const _RoomCard({
     required this.room,
@@ -620,6 +762,7 @@ class _RoomCard extends StatelessWidget {
     required this.onReset,
     required this.onResetTimer,
     required this.onToggleCamera,
+    required this.onSetDuration,
   });
 
   static String _formatRemaining(int seconds) {
@@ -771,6 +914,15 @@ class _RoomCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   Text('点赞 ${room.likeCount}',
                       style: const TextStyle(fontSize: 12)),
+                  if (!room.running && room.durationMinutes != null) ...[
+                    const SizedBox(width: 12),
+                    const Icon(Icons.timer_outlined,
+                        size: 14, color: Colors.white54),
+                    const SizedBox(width: 4),
+                    Text('时长 ${room.durationMinutes} 分钟',
+                        style: const TextStyle(
+                            fontSize: 12, color: Colors.white54)),
+                  ],
                   if (room.running && remaining != null) ...[
                     const SizedBox(width: 12),
                     Icon(Icons.timer_outlined, size: 14, color: countdownColor),
@@ -847,6 +999,13 @@ class _RoomCard extends StatelessWidget {
                       size: 20,
                     ),
                     color: room.cameraEnabled ? Colors.green : Colors.white38,
+                  ),
+                  IconButton(
+                    tooltip: '会议时长: ${room.durationMinutes ?? '--'} 分钟(点击修改)',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: busy || room.closed ? null : onSetDuration,
+                    icon: const Icon(Icons.timer_outlined, size: 20),
+                    color: Colors.teal,
                   ),
                   IconButton(
                     tooltip: '二维码获取',
