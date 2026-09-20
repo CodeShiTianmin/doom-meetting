@@ -16,24 +16,6 @@ set(PLUGIN_NAME "flutter_webrtc_plugin")
 add_definitions(-DLIB_WEBRTC_API_DLL)
 add_definitions(-DRTC_DESKTOP_DEVICE)
 
-# Windows.Graphics.Capture window capturer. Built as a separate static
-# library because C++/WinRT needs exceptions enabled, while the plugin target
-# uses the standard Flutter settings (_HAS_EXCEPTIONS=0, /WX).
-set(WGC_LIB_NAME "flutter_webrtc_wgc")
-add_library(${WGC_LIB_NAME} STATIC
-  "wgc_window_capture.cc"
-)
-target_compile_features(${WGC_LIB_NAME} PUBLIC cxx_std_17)
-target_compile_options(${WGC_LIB_NAME} PRIVATE /EHsc /W3 /permissive- /bigobj)
-target_compile_definitions(${WGC_LIB_NAME} PRIVATE
-  UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_include_directories(${WGC_LIB_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(${WGC_LIB_NAME} PUBLIC
-  d3d11.lib
-  dxgi.lib
-  windowsapp.lib
-)
-
 add_library(${PLUGIN_NAME} SHARED
   "../common/cpp/src/flutter_common.cc"
   "../common/cpp/src/flutter_data_channel.cc"
@@ -49,7 +31,6 @@ add_library(${PLUGIN_NAME} SHARED
   "../common/cpp/src/flutter_webrtc_base.cc"
   "application_loopback_capturer.cc"
   "loopback_capturer_factory.cc"
-  "wgc_video_capturer.cc"
   "flutter_webrtc_plugin.cc"
   "task_runner_windows.cc"
 )
@@ -73,7 +54,6 @@ target_include_directories(${PLUGIN_NAME} INTERFACE
 target_link_libraries(${PLUGIN_NAME} PRIVATE 
   flutter
   flutter_wrapper_plugin
-  ${WGC_LIB_NAME}
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libwebrtc/lib/libwebrtc.dll.lib"
   avrt.lib
   ksuser.lib
